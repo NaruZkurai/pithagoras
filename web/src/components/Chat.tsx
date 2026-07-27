@@ -157,7 +157,7 @@ export function Chat({
           return (
             <div
               key={item.id}
-              className={`rounded-lg px-3 py-2 text-xs ${
+              className={`whitespace-pre-wrap rounded-lg px-3 py-2 text-xs ${
                 item.tone === "error"
                   ? "bg-red-950/40 text-red-300"
                   : "bg-zinc-900 text-zinc-400"
