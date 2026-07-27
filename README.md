@@ -15,6 +15,10 @@ docker compose up -d --build
 
 Then open `http://<host>:4100`.
 
+The container uses host networking, so pi and its extensions reach services on
+the box at `127.0.0.1` — a llama.cpp server on `:8080`, for example — exactly as
+they would outside a container.
+
 ## How it works
 
 ```

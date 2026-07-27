@@ -3,9 +3,7 @@ services:
     build: .
     container_name: pithagoras
     restart: unless-stopped
-    ports:
-      # Tailscale/LAN reachable. Put a password on it — see PORTAL_PASSWORD.
-      - "${PORTAL_BIND:-0.0.0.0}:4100:4100"
+    network_mode: host
     volumes:
       - portal-data:/data
       # Workspaces pi works in. Read-write: the whole point is that it edits code.
@@ -13,6 +11,8 @@ services:
       # Only needed when EXECUTOR=container.
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
+      # With host networking the portal binds PORT directly on the host.
+      PORT: ${PORT:-4100}
       PORTAL_PASSWORD: ${PORTAL_PASSWORD:?set PORTAL_PASSWORD in .env}
       # Keeps logins valid across restarts; generate with: openssl rand -hex 32
       PORTAL_SECRET: ${PORTAL_SECRET:-}
