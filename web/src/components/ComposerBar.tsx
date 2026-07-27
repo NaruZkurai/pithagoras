@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type PiConfig, type PiModel } from "../api";
+import { ContextPill } from "./ContextPill";
 
 const RECENTS_KEY = "pithagoras.recentModels";
 const MAX_RECENTS = 4;
@@ -33,9 +34,14 @@ const shortName = (m: { name: string }) => m.name.split(":").pop()!.trim();
 export function ComposerBar({
   sessionId,
   running,
+  panelRequest,
+  onPanelConsumed,
 }: {
   sessionId: string;
   running: boolean;
+  /** Set by /model so the slash command opens the same picker as the pill. */
+  panelRequest?: "model" | "effort" | null;
+  onPanelConsumed?: () => void;
 }) {
   const [cfg, setCfg] = useState<PiConfig | null>(null);
   const [open, setOpen] = useState<null | "model" | "effort">(null);
@@ -61,6 +67,12 @@ export function ComposerBar({
   useEffect(() => {
     if (!running) load();
   }, [running]);
+
+  useEffect(() => {
+    if (!panelRequest) return;
+    setOpen(panelRequest);
+    onPanelConsumed?.();
+  }, [panelRequest]);
 
   useEffect(() => {
     if (!open) return;
@@ -116,19 +128,9 @@ export function ComposerBar({
 
   const levels = cfg?.thinking.levels ?? [];
   const effortIndex = Math.max(0, levels.indexOf(cfg?.state.thinkingLevel ?? ""));
-  const pct = cfg?.stats.contextUsage.percent ?? 0;
 
   return (
     <div ref={ref} className="relative mt-1.5 flex items-center gap-1 text-xs">
-      {cfg && pct > 0 && (
-        <span
-          className="text-[11px] text-zinc-600"
-          title={`${cfg.stats.contextUsage.tokens.toLocaleString()} / ${cfg.stats.contextUsage.contextWindow.toLocaleString()} tokens · $${cfg.stats.cost.toFixed(4)}`}
-        >
-          {pct.toFixed(0)}% ctx
-        </span>
-      )}
-
       <div className="ml-auto flex items-center gap-1">
         <button
           type="button"
@@ -152,6 +154,7 @@ export function ComposerBar({
         >
           {cfg?.state.thinkingLevel ?? "—"}
         </button>
+        {cfg && <ContextPill sessionId={sessionId} cfg={cfg} onChanged={load} />}
         <span
           className={`ml-1 h-2 w-2 rounded-full ${running ? "animate-pulse bg-amber-400" : "bg-zinc-700"}`}
           title={running ? "working" : "idle"}

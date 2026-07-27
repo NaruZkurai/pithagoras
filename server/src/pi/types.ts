@@ -47,6 +47,9 @@ export interface PiClient extends EventEmitter {
   setAutoCompaction(enabled: boolean): Promise<void>;
   setAutoRetry(enabled: boolean): Promise<void>;
   compact(): Promise<void>;
+  reload(): Promise<void>;
+  /** Write the session to disk; returns the file path. */
+  exportSession(target?: string): Promise<string>;
 
   /** Answer an extension dialog. Returns false if the request is unknown/expired. */
   respondUi(id: string, response: { cancelled?: boolean; value?: unknown }): boolean;

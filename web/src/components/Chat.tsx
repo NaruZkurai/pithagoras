@@ -9,14 +9,18 @@ export function Chat({
   events,
   onSend,
   onAbort,
+  onClientCommand,
 }: {
   session: Session;
   events: PortalEvent[];
   onSend: (message: string) => Promise<void>;
   onAbort: () => Promise<void>;
+  /** Builtins the portal itself services — /settings, /new, /name. */
+  onClientCommand: (name: string, args: string) => void | Promise<void>;
 }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [panelRequest, setPanelRequest] = useState<"model" | "effort" | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
   const running = session.status === "running";
@@ -46,6 +50,20 @@ export function Chat({
   const send = async () => {
     const msg = input.trim();
     if (!msg || sending) return;
+
+    // Some builtins are UI, not prompts: /model opens the picker the pill uses,
+    // /settings opens the modal. Sending them to pi would just be a chat line.
+    const parsed = /^\/([\w-]+)\s*(.*)$/.exec(msg);
+    const client = parsed
+      ? commands.find((c) => c.name === parsed[1] && c.where === "client")
+      : undefined;
+    if (client && parsed) {
+      setInput("");
+      if (client.name === "model") setPanelRequest("model");
+      else await onClientCommand(client.name, parsed[2]);
+      return;
+    }
+
     setSending(true);
     setInput("");
     try {
@@ -197,7 +215,12 @@ export function Chat({
           placeholder={running ? "pi is working — send to queue a follow-up…" : "Describe the task…"}
           className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-cyan-600"
         />
-          <ComposerBar sessionId={session.id} running={running} />
+          <ComposerBar
+            sessionId={session.id}
+            running={running}
+            panelRequest={panelRequest}
+            onPanelConsumed={() => setPanelRequest(null)}
+          />
         </div>
       </form>
     </div>

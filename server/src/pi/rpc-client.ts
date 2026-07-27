@@ -177,6 +177,14 @@ export class PiRpcClient extends EventEmitter implements PiClient {
     await this.data("compact");
   }
 
+  async reload(): Promise<void> {
+    await this.data("reload");
+  }
+
+  async exportSession(): Promise<string> {
+    throw new Error("Export is not available for container sessions");
+  }
+
   /** RPC mode answers dialogs with its own message type. */
   respondUi(id: string, response: { cancelled?: boolean; value?: unknown }): boolean {
     this.child.stdin.write(

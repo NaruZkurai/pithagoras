@@ -332,4 +332,14 @@ export class SdkPiClient extends EventEmitter implements PiClient {
   async compact(): Promise<void> {
     await this.session.compact();
   }
+
+  async reload(): Promise<void> {
+    await this.session.reload();
+  }
+
+  /** HTML unless a .jsonl path is given, matching pi's own /export. */
+  async exportSession(target?: string): Promise<string> {
+    if (target && target.endsWith(".jsonl")) return this.session.exportToJsonl(target);
+    return await this.session.exportToHtml(target);
+  }
 }

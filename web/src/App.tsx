@@ -169,6 +169,18 @@ function Shell({ settings = false }: { settings?: boolean }) {
               await api.abort(active.id);
               refreshSessions();
             }}
+            onClientCommand={async (name, args) => {
+              if (name === "settings") {
+                navigate(`/s/${active.id}/settings/session`);
+              } else if (name === "new") {
+                const s = await api.createSession(active.workspace);
+                await refreshSessions();
+                navigate(`/s/${s.id}`);
+              } else if (name === "name" && args.trim()) {
+                await api.renameSession(active.id, args.trim());
+                refreshSessions();
+              }
+            }}
           />
         ) : (
           <EmptyState hasSessions={sessions.length > 0} />

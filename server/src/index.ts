@@ -16,6 +16,7 @@ import { sessions, EXECUTOR_KIND } from "./session-manager.js";
 import { authEnabled, checkPassword, isAuthed, issueCookie, requireAuth } from "./auth.js";
 import { packagesRouter } from "./api/packages.js";
 import { extensionsRouter } from "./api/extensions.js";
+import { getBuiltinCommands } from "./pi/builtins.js";
 import { isValidSlug, slugify } from "./slug.js";
 import { getSettings, setSettings } from "./db.js";
 
@@ -273,7 +274,12 @@ app.get("/api/sessions/:id/commands", async (req, res) => {
   if (!session) return res.status(404).json({ error: "Not found" });
   try {
     const client = await sessions.client(session.id);
-    res.json({ commands: await client.getCommands() });
+    // Builtins first: they are the ones people reach for most.
+    const [builtins, discovered] = await Promise.all([
+      getBuiltinCommands(),
+      client.getCommands(),
+    ]);
+    res.json({ commands: [...builtins, ...discovered] });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }

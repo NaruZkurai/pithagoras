@@ -149,6 +149,8 @@ export interface GlobalSettings {
 export interface PiCommand {
   name: string;
   description?: string;
-  source: "extension" | "prompt" | "skill" | string;
+  source: "builtin" | "extension" | "prompt" | "skill" | string;
+  /** Builtins only: "client" commands are handled here, not sent to pi. */
+  where?: "server" | "client";
   sourceInfo?: { path?: string; scope?: string; origin?: string };
 }

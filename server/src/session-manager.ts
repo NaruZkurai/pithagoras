@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { PiClient } from "./pi/types.js";
+import { findServerBuiltin, runBuiltin } from "./pi/builtins.js";
 import { buildExecutor, type Executor, type ExecutorKind } from "./executors/index.js";
 import {
   appendEvent,
@@ -140,6 +141,28 @@ class SessionManager extends EventEmitter {
     // a bare leading slash, so a message that merely starts with a path like
     // "/etc/hosts is wrong" is still shown.
     const isCommand = await this.looksLikeCommand(client, message);
+
+    // Portal builtins never reach the model — they act on the session itself.
+    const builtin = /^\/([\w-]+)\s*(.*)$/.exec(message.trim());
+    const serverBuiltin = builtin ? await findServerBuiltin(builtin[1]) : undefined;
+    if (serverBuiltin) {
+      // Not awaited: /compact is a model call and would hold the request open.
+      // Same contract as a prompt — accept it, report through the event stream.
+      updateSession(sessionId, { status: "running", last_error: null });
+      this.record(sessionId, "portal_status", { status: "running" });
+      void (async () => {
+        try {
+          const text = await runBuiltin(serverBuiltin.name, builtin![2], client);
+          this.record(sessionId, "portal_notice", { text });
+        } catch (e) {
+          this.record(sessionId, "portal_notice", { text: (e as Error).message, error: true });
+        } finally {
+          updateSession(sessionId, { status: "idle" });
+          this.record(sessionId, "portal_status", { status: "idle" });
+        }
+      })();
+      return;
+    }
 
     updateSession(sessionId, { status: "running", last_error: null });
     if (!isCommand) this.record(sessionId, "portal_prompt", { message });

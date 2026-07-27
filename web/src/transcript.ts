@@ -74,6 +74,16 @@ export function buildTranscript(events: PortalEvent[]): Item[] {
         break;
       }
 
+      // Output from a builtin like /session or /compact — pi never saw it.
+      case "portal_notice":
+        items.push({
+          kind: "notice",
+          id: `n${ev.seq}`,
+          text: String(p.text ?? ""),
+          tone: p.error ? "error" : "info",
+        });
+        break;
+
       case "portal_status":
         if (p.status === "error" && p.error) {
           items.push({ kind: "notice", id: `n${ev.seq}`, text: String(p.error), tone: "error" });
