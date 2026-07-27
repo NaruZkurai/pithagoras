@@ -231,15 +231,11 @@ app.post("/api/sessions/:id/config", async (req, res) => {
   try {
     const client = await sessions.client(session.id);
     if (typeof modelId === "string" && modelId) {
-      const resolved = provider || getSettings().provider;
-      await client.setModel(resolved, modelId);
-      // Recorded so the choice survives a restart, not just this pi process.
-      updateSession(session.id, { provider: resolved, model: modelId });
+      await client.setModel(provider || getSettings().provider, modelId);
       applied.push("model");
     }
     if (typeof thinkingLevel === "string" && thinkingLevel) {
       await client.setThinkingLevel(thinkingLevel);
-      updateSession(session.id, { thinking_level: thinkingLevel });
       applied.push("thinkingLevel");
     }
     if (typeof autoCompaction === "boolean") {
@@ -250,7 +246,19 @@ app.post("/api/sessions/:id/config", async (req, res) => {
       await client.setAutoRetry(autoRetry);
       applied.push("autoRetry");
     }
-    res.json({ ok: true, applied, state: await client.getState() });
+    const state = await client.getState();
+    // Recorded so the choice survives a restart, not just this pi process.
+    // Taken from the resolved state rather than the request: pi coerces the
+    // thinking level on a non-reasoning model, and storing what was asked for
+    // would reapply the rejected value on every relaunch.
+    if (applied.includes("model") || applied.includes("thinkingLevel")) {
+      updateSession(session.id, {
+        provider: state.model.provider,
+        model: state.model.id,
+        thinking_level: state.thinkingLevel,
+      });
+    }
+    res.json({ ok: true, applied, state });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message, applied });
   }
