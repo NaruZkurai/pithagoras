@@ -133,8 +133,16 @@ class SessionManager extends EventEmitter {
    */
   async prompt(sessionId: string, message: string): Promise<void> {
     const client = await this.ensureClient(sessionId);
+
+    // A slash command is an instruction to the agent, not something said in the
+    // conversation, so it should not appear as a chat message — its dialog or
+    // output is the feedback. Matched against the real command list rather than
+    // a bare leading slash, so a message that merely starts with a path like
+    // "/etc/hosts is wrong" is still shown.
+    const isCommand = await this.looksLikeCommand(client, message);
+
     updateSession(sessionId, { status: "running", last_error: null });
-    this.record(sessionId, "portal_prompt", { message });
+    if (!isCommand) this.record(sessionId, "portal_prompt", { message });
     this.record(sessionId, "portal_status", { status: "running" });
     try {
       await client.prompt(message);
@@ -161,6 +169,18 @@ class SessionManager extends EventEmitter {
   /** Access the live client for config reads and writes, starting pi if needed. */
   client(sessionId: string): Promise<PiClient> {
     return this.ensureClient(sessionId);
+  }
+
+  /** True when the message invokes a command pi actually knows about. */
+  private async looksLikeCommand(client: PiClient, message: string): Promise<boolean> {
+    const match = /^\/([\w:-]+)/.exec(message.trim());
+    if (!match) return false;
+    try {
+      const commands = await client.getCommands();
+      return commands.some((c) => c.name === match[1]);
+    } catch {
+      return false;
+    }
   }
 
   /** Answer an extension dialog for a live session. */
