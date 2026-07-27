@@ -13,6 +13,10 @@ export interface SessionRow {
   created_at: string;
   updated_at: string;
   last_error: string | null;
+  /** Per-session overrides of the portal defaults; null means "use the default". */
+  provider: string | null;
+  model: string | null;
+  thinking_level: string | null;
 }
 
 export interface EventRow {
@@ -40,7 +44,10 @@ export function getDb(): Database.Database {
       status TEXT NOT NULL DEFAULT 'idle',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      last_error TEXT
+      last_error TEXT,
+      provider TEXT,
+      model TEXT,
+      thinking_level TEXT
     );
 
     -- Every event pi emits is appended here. This is what makes the portal
@@ -67,14 +74,20 @@ export function getDb(): Database.Database {
 }
 
 /**
- * `project` was renamed to `workspace`. Rename in place rather than recreating
- * the table so existing sessions survive the upgrade.
+ * Migrations run in place rather than recreating the table, so existing
+ * sessions and their event history survive an upgrade.
  */
 function migrate(d: Database.Database): void {
-  const cols = d.prepare("PRAGMA table_info(sessions)").all() as { name: string }[];
-  const names = cols.map((c) => c.name);
+  const names = (d.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]).map(
+    (c) => c.name
+  );
   if (names.includes("project") && !names.includes("workspace")) {
     d.exec("ALTER TABLE sessions RENAME COLUMN project TO workspace");
+  }
+  // Model and effort used to live only in the running pi process, so a restart
+  // silently reverted every session to the portal defaults.
+  for (const col of ["provider", "model", "thinking_level"]) {
+    if (!names.includes(col)) d.exec(`ALTER TABLE sessions ADD COLUMN ${col} TEXT`);
   }
 }
 
@@ -103,7 +116,9 @@ export function getSession(id: string): SessionRow | undefined {
 
 export function updateSession(
   id: string,
-  fields: Partial<Pick<SessionRow, "title" | "status" | "last_error">>
+  fields: Partial<
+    Pick<SessionRow, "title" | "status" | "last_error" | "provider" | "model" | "thinking_level">
+  >
 ): void {
   const sets: string[] = [];
   const values: unknown[] = [];

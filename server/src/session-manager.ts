@@ -84,14 +84,15 @@ class SessionManager extends EventEmitter {
     const executor = buildExecutor(EXECUTOR_KIND, SESSION_ROOT);
     mkdirSync(path.join(SESSION_ROOT, sessionId), { recursive: true });
 
-    // Portal-wide defaults, overridable per session from the config panel.
+    // The session's own choices win over the portal defaults. Without this a
+    // restart relaunched pi on the default model, quietly undoing the pick.
     const settings = getSettings();
     const client = await executor.launch({
       sessionId,
       workspacePath: session.workspace,
-      provider: settings.provider,
-      model: settings.model || undefined,
-      thinkingLevel: settings.thinkingLevel || undefined,
+      provider: session.provider || settings.provider,
+      model: session.model || settings.model || undefined,
+      thinkingLevel: session.thinking_level || settings.thinkingLevel || undefined,
     });
 
     client.on("event", (msg) => {
