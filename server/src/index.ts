@@ -319,6 +319,12 @@ app.get("/api/sessions/:id/events", (req, res) => {
   res.write(`event: caught-up\ndata: ${JSON.stringify({ seq: lastSent })}\n\n`);
 
   const onEvent = (row: { seq: number; type: string; payload: string }) => {
+    // Live-only events carry a negative seq: deliver them, but never let one
+    // move the replay cursor, or a reconnect would skip stored history.
+    if (row.seq < 0) {
+      write(row);
+      return;
+    }
     // Guard against double-sending anything the replay already covered.
     if (row.seq <= lastSent) return;
     lastSent = row.seq;

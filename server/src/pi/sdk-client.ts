@@ -2,6 +2,11 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
 
+function asArray(v: any): any[] {
+  const resolved = typeof v === "function" ? v() : v;
+  return Array.isArray(resolved) ? resolved : [];
+}
+
 /** Read a member that may be a getter or a method, without assuming which. */
 function callable(obj: any, key: string): any {
   const v = obj?.[key];
@@ -202,6 +207,15 @@ export class SdkPiClient extends EventEmitter implements PiClient {
     await this.session.abort();
   }
 
+  /** True when nothing is streaming — a command that ran no agent turn is idle. */
+  isIdle(): boolean {
+    try {
+      return this.session.isIdle?.() ?? !this.session.isStreaming?.();
+    } catch {
+      return true;
+    }
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -269,17 +283,32 @@ export class SdkPiClient extends EventEmitter implements PiClient {
     }));
   }
 
+  /**
+   * Commands come from three places, matching how pi builds this list.
+   * Extension commands live on the runner — promptTemplates alone is only the
+   * templates, which is why an installed extension contributed nothing here.
+   */
   async getCommands(): Promise<PiCommand[]> {
-    // promptTemplates is a getter in some builds and a method in others;
-    // optional-call would throw on the non-callable form, so check first.
-    const raw = this.session.promptTemplates;
-    const templates = typeof raw === "function" ? raw.call(this.session) : raw;
-    const list = Array.isArray(templates) ? templates : (templates?.prompts ?? []);
-    return list.map((t: any) => ({
-      name: t.name,
-      description: t.description,
-      source: t.source ?? "prompt",
-    }));
+    const commands: PiCommand[] = [];
+
+    for (const c of this.session.extensionRunner?.getRegisteredCommands?.() ?? []) {
+      commands.push({
+        name: c.invocationName ?? c.name,
+        description: c.description,
+        source: "extension",
+      });
+    }
+    for (const t of asArray(this.session.promptTemplates)) {
+      commands.push({ name: t.name, description: t.description, source: "prompt" });
+    }
+    for (const skill of asArray(this.session.resourceLoader?.getSkills?.()?.skills)) {
+      commands.push({
+        name: `skill:${skill.name}`,
+        description: skill.description,
+        source: "skill",
+      });
+    }
+    return commands;
   }
 
   async setModel(provider: string, modelId: string): Promise<void> {

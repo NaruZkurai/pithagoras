@@ -90,7 +90,9 @@ function Shell({ settings = false }: { settings?: boolean }) {
       esRef.current = es;
       es.onmessage = (m) => {
         const ev: PortalEvent = JSON.parse(m.data);
-        seq = ev.seq;
+        // Live-only events (dialogs) use a negative seq and must not move the
+        // resume cursor, or reconnecting would skip real history.
+        if (ev.seq > 0) seq = ev.seq;
         setEvents((prev) => [...prev, ev]);
         if (ev.type === "portal_status") refreshSessions().catch(() => {});
         // Dialogs an extension is blocking on. notify/setStatus/setWidget are

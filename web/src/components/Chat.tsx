@@ -29,7 +29,9 @@ export function Chat({
       .commands(session.id)
       .then((r) => setCommands(r.commands))
       .catch(() => setCommands([]));
-  }, [session.id]);
+    // Refetch when a run ends: installing an extension mid-session should make
+    // its commands show up without a reload.
+  }, [session.id, running]);
 
   // Show the palette while the composer holds a bare "/name" prefix.
   const slashQuery = /^\/([\w:-]*)$/.exec(input.trimStart());

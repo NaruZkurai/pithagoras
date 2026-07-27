@@ -14,8 +14,18 @@ import {
 const SESSION_ROOT = path.resolve(process.env.SESSION_DIR || "./data/sessions");
 const EXECUTOR_KIND = (process.env.EXECUTOR || "host") as ExecutorKind;
 
-/** Events that carry no useful history and would bloat the log if persisted. */
-const EPHEMERAL_EVENTS = new Set(["queue_update"]);
+/**
+ * Events that must not be persisted.
+ *
+ * Beyond noise, extension dialogs are strictly live: a stored
+ * extension_ui_request would be replayed to every future reader, so reloading
+ * the page reopened a dialog whose extension had long since stopped waiting.
+ */
+const EPHEMERAL_EVENTS = new Set([
+  "queue_update",
+  "extension_ui_request",
+  "extension_ui_cancel",
+]);
 
 interface LiveSession {
   client: PiClient;
@@ -48,7 +58,17 @@ class SessionManager extends EventEmitter {
 
   /** Record an event: persist it, then fan out to any attached SSE clients. */
   private record(sessionId: string, type: string, payload: unknown): void {
-    if (EPHEMERAL_EVENTS.has(type)) return;
+    if (EPHEMERAL_EVENTS.has(type)) {
+      // Still deliver it to anyone attached right now, with a negative seq so
+      // it can never be confused with a stored event during replay.
+      this.emit(`session:${sessionId}`, {
+        seq: -Date.now(),
+        session_id: sessionId,
+        type,
+        payload: JSON.stringify(payload),
+      });
+      return;
+    }
     const row = appendEvent(sessionId, type, payload);
     this.emit(`session:${sessionId}`, row);
   }
@@ -118,6 +138,14 @@ class SessionManager extends EventEmitter {
     this.record(sessionId, "portal_status", { status: "running" });
     try {
       await client.prompt(message);
+      // A slash command completes inside prompt() without starting an agent
+      // turn, so no agent_end arrives to clear the status. Settle it here
+      // rather than leaving "working" on screen forever.
+      const idle = (client as { isIdle?: () => boolean }).isIdle?.();
+      if (idle) {
+        updateSession(sessionId, { status: "idle" });
+        this.record(sessionId, "portal_status", { status: "idle" });
+      }
     } catch (e) {
       const message = (e as Error).message;
       updateSession(sessionId, { status: "error", last_error: message });
