@@ -184,6 +184,16 @@ app.post("/api/sessions/:id/prompt", async (req, res) => {
   }
 });
 
+/** The browser answering a dialog an extension is waiting on. */
+app.post("/api/sessions/:id/ui-response", (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Not found" });
+  const { id, value, cancelled } = req.body ?? {};
+  if (typeof id !== "string") return res.status(400).json({ error: "id required" });
+  const delivered = sessions.respondUi(session.id, id, { value, cancelled: Boolean(cancelled) });
+  res.json({ ok: delivered, note: delivered ? undefined : "Request already resolved or expired" });
+});
+
 app.post("/api/sessions/:id/abort", async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Not found" });

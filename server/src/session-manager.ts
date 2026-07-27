@@ -135,6 +135,11 @@ class SessionManager extends EventEmitter {
     return this.ensureClient(sessionId);
   }
 
+  /** Answer an extension dialog for a live session. */
+  respondUi(sessionId: string, id: string, response: { cancelled?: boolean; value?: unknown }): boolean {
+    return this.live.get(sessionId)?.client.respondUi(id, response) ?? false;
+  }
+
   async abort(sessionId: string): Promise<void> {
     const live = this.live.get(sessionId);
     if (!live?.client.running) return;

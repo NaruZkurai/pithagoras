@@ -54,6 +54,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message }),
     }),
+  respondUi: (sessionId: string, id: string, payload: { value?: unknown; cancelled?: boolean }) =>
+    json<{ ok: boolean }>(`/api/sessions/${sessionId}/ui-response`, {
+      method: "POST",
+      body: JSON.stringify({ id, ...payload }),
+    }),
+
   abort: (id: string) => json<{ ok: true }>(`/api/sessions/${id}/abort`, { method: "POST" }),
 
   config: (id: string) => json<PiConfig>(`/api/sessions/${id}/config`),

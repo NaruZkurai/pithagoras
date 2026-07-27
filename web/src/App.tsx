@@ -5,6 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Login } from "./components/Login";
 import { ConfigModal } from "./components/ConfigModal";
+import { ExtensionDialog, type UiRequest } from "./components/ExtensionDialog";
 
 type Tab = "session" | "global" | "extensions";
 
@@ -49,6 +50,7 @@ function Shell({ settings = false }: { settings?: boolean }) {
   const [executor, setExecutor] = useState("host");
   const [events, setEvents] = useState<PortalEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [uiQueue, setUiQueue] = useState<UiRequest[]>([]);
   const esRef = useRef<EventSource | null>(null);
 
   const refreshSessions = useCallback(async () => {
@@ -77,6 +79,7 @@ function Shell({ settings = false }: { settings?: boolean }) {
   useEffect(() => {
     esRef.current?.close();
     setEvents([]);
+    setUiQueue([]);
     if (!sessionId) return;
 
     let cancelled = false;
@@ -90,6 +93,18 @@ function Shell({ settings = false }: { settings?: boolean }) {
         seq = ev.seq;
         setEvents((prev) => [...prev, ev]);
         if (ev.type === "portal_status") refreshSessions().catch(() => {});
+        // Dialogs an extension is blocking on. notify/setStatus/setWidget are
+        // one-way and must not open a modal.
+        if (ev.type === "extension_ui_request") {
+          const req = ev.payload as UiRequest;
+          if (["select", "confirm", "input", "editor"].includes(req.method)) {
+            setUiQueue((q) => (q.some((x) => x.id === req.id) ? q : [...q, req]));
+          }
+        }
+        if (ev.type === "extension_ui_cancel") {
+          const id = (ev.payload as { id: string }).id;
+          setUiQueue((q) => q.filter((x) => x.id !== id));
+        }
       };
       es.onerror = () => {
         es.close();
@@ -157,6 +172,14 @@ function Shell({ settings = false }: { settings?: boolean }) {
           <EmptyState hasSessions={sessions.length > 0} />
         )}
       </main>
+
+      {active && uiQueue[0] && (
+        <ExtensionDialog
+          sessionId={active.id}
+          request={uiQueue[0]}
+          onDone={() => setUiQueue((q) => q.slice(1))}
+        />
+      )}
 
       {settings && (
         <ConfigModal

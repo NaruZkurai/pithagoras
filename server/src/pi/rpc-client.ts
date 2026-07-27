@@ -177,6 +177,14 @@ export class PiRpcClient extends EventEmitter implements PiClient {
     await this.data("compact");
   }
 
+  /** RPC mode answers dialogs with its own message type. */
+  respondUi(id: string, response: { cancelled?: boolean; value?: unknown }): boolean {
+    this.child.stdin.write(
+      JSON.stringify({ type: "extension_ui_response", id, ...response }) + "\n"
+    );
+    return true;
+  }
+
   get running(): boolean {
     return !this.closed;
   }
