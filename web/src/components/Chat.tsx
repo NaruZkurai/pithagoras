@@ -9,15 +9,15 @@ export function Chat({
   events,
   onSend,
   onAbort,
-  onToggleConfig,
-  configOpen,
+  onOpenSettings,
+  settingsOpen,
 }: {
   session: Session;
   events: PortalEvent[];
   onSend: (message: string) => Promise<void>;
   onAbort: () => Promise<void>;
-  onToggleConfig: () => void;
-  configOpen: boolean;
+  onOpenSettings: (tab?: "session" | "global" | "extensions") => void;
+  settingsOpen: boolean;
 }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -166,7 +166,10 @@ export function Chat({
               <button
                 key={c.name}
                 type="button"
-                onClick={() => setInput(`/${c.name} `)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setInput(`/${c.name} `);
+                }}
                 className="flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-zinc-800"
               >
                 <span className="font-mono text-xs text-cyan-300">/{c.name}</span>
@@ -194,8 +197,8 @@ export function Chat({
         <ComposerBar
           sessionId={session.id}
           running={running}
-          onOpenPanel={onToggleConfig}
-          panelOpen={configOpen}
+          onOpenSettings={onOpenSettings}
+          settingsOpen={settingsOpen}
         />
       </form>
     </div>

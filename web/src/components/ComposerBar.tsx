@@ -34,13 +34,13 @@ const shortName = (m: { name: string }) => m.name.split(":").pop()!.trim();
 export function ComposerBar({
   sessionId,
   running,
-  onOpenPanel,
-  panelOpen,
+  onOpenSettings,
+  settingsOpen,
 }: {
   sessionId: string;
   running: boolean;
-  onOpenPanel: () => void;
-  panelOpen: boolean;
+  onOpenSettings: (tab?: "session" | "global" | "extensions") => void;
+  settingsOpen: boolean;
 }) {
   const [cfg, setCfg] = useState<PiConfig | null>(null);
   const [open, setOpen] = useState<null | "model" | "effort">(null);
@@ -127,9 +127,9 @@ export function ComposerBar({
     <div ref={ref} className="relative mt-1.5 flex items-center gap-1 text-xs">
       <button
         type="button"
-        onClick={onOpenPanel}
+        onClick={() => onOpenSettings("session")}
         title="Global settings, packages, context"
-        className={`rounded px-1.5 py-1 ${panelOpen ? "text-cyan-300" : "text-zinc-500 hover:text-zinc-200"}`}
+        className={`rounded px-1.5 py-1 ${settingsOpen ? "text-cyan-300" : "text-zinc-500 hover:text-zinc-200"}`}
       >
         ⚙
       </button>
