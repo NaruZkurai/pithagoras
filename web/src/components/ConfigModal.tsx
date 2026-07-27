@@ -331,14 +331,44 @@ const SOURCES = [
   { label: "path", placeholder: "/absolute/path/to/package", hint: "a local directory" },
 ];
 
-/** Pull package specs out of `pi list` output without assuming a fixed layout. */
-function parsePackages(output: string): string[] {
-  return output
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((l) => l.match(/(npm:[^\s]+|git:[^\s]+|https?:\/\/[^\s]+|\/[^\s]+)/)?.[1])
-    .filter((x): x is string => Boolean(x));
+interface InstalledPackage {
+  spec: string;
+  path?: string;
+  scope?: string;
+}
+
+/**
+ * Parse `pi list`, which nests by indentation:
+ *
+ *   User packages:
+ *     npm:pi-llama-cpp
+ *       /data/home/.pi/agent/npm/node_modules/pi-llama-cpp
+ *
+ * The deeper line is where that package is installed, not another package —
+ * treating every path-looking line as an entry listed each one twice.
+ */
+function parsePackages(output: string): InstalledPackage[] {
+  const packages: InstalledPackage[] = [];
+  let scope: string | undefined;
+
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue;
+    const indent = line.length - line.trimStart().length;
+    const text = line.trim();
+
+    if (indent === 0) {
+      scope = text.replace(/packages:?$/i, "").trim() || undefined;
+      continue;
+    }
+    if (indent <= 2) {
+      packages.push({ spec: text, scope });
+      continue;
+    }
+    // Deeper than the spec: the install location for the entry above it.
+    const last = packages[packages.length - 1];
+    if (last && !last.path) last.path = text;
+  }
+  return packages;
 }
 
 function ExtensionsTab({ onError }: { onError: (e: string) => void }) {
@@ -419,16 +449,28 @@ function ExtensionsTab({ onError }: { onError: (e: string) => void }) {
           <ul className="space-y-1">
             {installed.map((pkg) => (
               <li
-                key={pkg}
-                className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2"
+                key={pkg.spec}
+                className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2"
               >
-                <span className="truncate font-mono text-xs text-zinc-300">{pkg}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-mono text-xs text-zinc-200">{pkg.spec}</p>
+                  {pkg.path && (
+                    <p className="truncate font-mono text-[10px] text-zinc-600" title={pkg.path}>
+                      {pkg.path}
+                    </p>
+                  )}
+                </div>
+                {pkg.scope && (
+                  <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
+                    {pkg.scope}
+                  </span>
+                )}
                 <button
                   disabled={busy !== null}
-                  onClick={() => act(pkg, () => api.removePackage(pkg))}
-                  className="ml-auto shrink-0 rounded-lg px-2 py-1 text-xs text-zinc-500 transition hover:bg-red-950/50 hover:text-red-300 disabled:opacity-40"
+                  onClick={() => act(pkg.spec, () => api.removePackage(pkg.spec))}
+                  className="shrink-0 rounded-lg px-2 py-1 text-xs text-zinc-500 transition hover:bg-red-950/50 hover:text-red-300 disabled:opacity-40"
                 >
-                  {busy === pkg ? "Removing…" : "Remove"}
+                  {busy === pkg.spec ? "Removing…" : "Remove"}
                 </button>
               </li>
             ))}
