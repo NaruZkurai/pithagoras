@@ -1,0 +1,50 @@
+import type { EventEmitter } from "node:events";
+
+export interface PiState {
+  model: { id: string; name: string; provider: string; contextWindow?: number };
+  thinkingLevel: string;
+  autoCompactionEnabled?: boolean;
+  messageCount?: number;
+}
+
+export interface PiStats {
+  tokens: { input: number; output: number; cacheRead?: number; cacheWrite?: number; total: number };
+  cost: number;
+  contextUsage: { tokens: number; contextWindow: number; percent: number };
+  toolCalls: number;
+  totalMessages: number;
+}
+
+export interface PiCommand {
+  name: string;
+  description?: string;
+  source: string;
+}
+
+/**
+ * What the portal needs from a pi session, regardless of how it is reached.
+ *
+ * Two implementations exist because the two executors are genuinely different
+ * situations: the host executor runs pi in this process via the SDK, while the
+ * container executor talks to pi inside another container, where only the RPC
+ * protocol can reach.
+ */
+export interface PiClient extends EventEmitter {
+  readonly running: boolean;
+
+  prompt(message: string): Promise<void>;
+  abort(): Promise<void>;
+  dispose(): void;
+
+  getState(): Promise<PiState>;
+  getStats(): Promise<PiStats>;
+  getThinkingLevels(): Promise<string[]>;
+  getModels(): Promise<PiState["model"][]>;
+  getCommands(): Promise<PiCommand[]>;
+
+  setModel(provider: string, modelId: string): Promise<void>;
+  setThinkingLevel(level: string): Promise<void>;
+  setAutoCompaction(enabled: boolean): Promise<void>;
+  setAutoRetry(enabled: boolean): Promise<void>;
+  compact(): Promise<void>;
+}

@@ -196,15 +196,16 @@ app.get("/api/sessions/:id/config", async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Not found" });
   try {
-    // Reading config starts pi if it isn't already up, so the values shown are
-    // the live ones rather than a guess from env defaults.
-    const [state, thinking, models, stats] = await Promise.all([
-      sessions.command(session.id, "get_state"),
-      sessions.command(session.id, "get_available_thinking_levels"),
-      sessions.command(session.id, "get_available_models"),
-      sessions.command(session.id, "get_session_stats"),
+    // Reading config starts pi if it isn't already up, so these are the live
+    // values rather than a guess from env defaults.
+    const client = await sessions.client(session.id);
+    const [state, levels, models, stats] = await Promise.all([
+      client.getState(),
+      client.getThinkingLevels(),
+      client.getModels(),
+      client.getStats(),
     ]);
-    res.json({ state, thinking, models, stats });
+    res.json({ state, thinking: { levels }, models: { models }, stats });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }
@@ -216,27 +217,24 @@ app.post("/api/sessions/:id/config", async (req, res) => {
   const { provider, modelId, thinkingLevel, autoCompaction, autoRetry } = req.body ?? {};
   const applied: string[] = [];
   try {
+    const client = await sessions.client(session.id);
     if (typeof modelId === "string" && modelId) {
-      // pi resolves a model as `${provider}/${modelId}` — both are required.
-      await sessions.command(session.id, "set_model", {
-        provider: provider || process.env.PI_PROVIDER || "openrouter",
-        modelId,
-      });
+      await client.setModel(provider || getSettings().provider, modelId);
       applied.push("model");
     }
     if (typeof thinkingLevel === "string" && thinkingLevel) {
-      await sessions.command(session.id, "set_thinking_level", { level: thinkingLevel });
+      await client.setThinkingLevel(thinkingLevel);
       applied.push("thinkingLevel");
     }
     if (typeof autoCompaction === "boolean") {
-      await sessions.command(session.id, "set_auto_compaction", { enabled: autoCompaction });
+      await client.setAutoCompaction(autoCompaction);
       applied.push("autoCompaction");
     }
     if (typeof autoRetry === "boolean") {
-      await sessions.command(session.id, "set_auto_retry", { enabled: autoRetry });
+      await client.setAutoRetry(autoRetry);
       applied.push("autoRetry");
     }
-    res.json({ ok: true, applied, state: await sessions.command(session.id, "get_state") });
+    res.json({ ok: true, applied, state: await client.getState() });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message, applied });
   }
@@ -246,7 +244,8 @@ app.post("/api/sessions/:id/compact", async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Not found" });
   try {
-    await sessions.command(session.id, "compact");
+    const client = await sessions.client(session.id);
+    await client.compact();
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
@@ -255,21 +254,15 @@ app.post("/api/sessions/:id/compact", async (req, res) => {
 
 /**
  * Commands available in this session: built-ins plus anything contributed by
- * installed packages (extensions, prompt templates, skills). Discovered at
- * runtime, so installing a package immediately makes its commands available in
- * the UI without any portal change.
- *
- * pi has no "run command" RPC — commands are invoked by sending them as user
- * input, exactly as the TUI does, so the client just puts `/name` in a prompt.
+ * installed packages. Discovered at runtime, so installing a package makes its
+ * commands available immediately.
  */
 app.get("/api/sessions/:id/commands", async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Not found" });
   try {
-    const data = (await sessions.command(session.id, "get_commands")) as {
-      commands?: unknown[];
-    };
-    res.json({ commands: data?.commands ?? data ?? [] });
+    const client = await sessions.client(session.id);
+    res.json({ commands: await client.getCommands() });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }

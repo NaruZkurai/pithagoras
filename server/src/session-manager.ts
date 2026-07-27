@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { PiRpcClient } from "./pi-rpc.js";
+import type { PiClient } from "./pi/types.js";
 import { buildExecutor, type Executor, type ExecutorKind } from "./executors/index.js";
 import {
   appendEvent,
@@ -18,7 +18,7 @@ const EXECUTOR_KIND = (process.env.EXECUTOR || "host") as ExecutorKind;
 const EPHEMERAL_EVENTS = new Set(["queue_update"]);
 
 interface LiveSession {
-  client: PiRpcClient;
+  client: PiClient;
   executor: Executor;
 }
 
@@ -53,7 +53,7 @@ class SessionManager extends EventEmitter {
     this.emit(`session:${sessionId}`, row);
   }
 
-  private async ensureClient(sessionId: string): Promise<PiRpcClient> {
+  private async ensureClient(sessionId: string): Promise<PiClient> {
     const existing = this.live.get(sessionId);
     if (existing?.client.running) return existing.client;
 
@@ -65,11 +65,12 @@ class SessionManager extends EventEmitter {
 
     // Portal-wide defaults, overridable per session from the config panel.
     const settings = getSettings();
-    const client = executor.launch({
+    const client = await executor.launch({
       sessionId,
       workspacePath: session.workspace,
       provider: settings.provider,
       model: settings.model || undefined,
+      thinkingLevel: settings.thinkingLevel || undefined,
     });
 
     client.on("event", (msg) => {
@@ -102,14 +103,6 @@ class SessionManager extends EventEmitter {
 
     this.live.set(sessionId, { client, executor });
 
-    // The thinking level has no CLI flag, so apply the global default once the
-    // process is up. Best-effort: a failure here must not block the session.
-    if (settings.thinkingLevel) {
-      client
-        .send("set_thinking_level", { level: settings.thinkingLevel })
-        .catch((e) => console.error(`[portal] could not set thinking level: ${e.message}`));
-    }
-
     return client;
   }
 
@@ -137,15 +130,9 @@ class SessionManager extends EventEmitter {
    * Send a raw RPC command to a session's pi process, starting it if needed.
    * Backs the config panel — the equivalent of the TUI's slash commands.
    */
-  async command(
-    sessionId: string,
-    type: string,
-    params: Record<string, unknown> = {}
-  ): Promise<unknown> {
-    const client = await this.ensureClient(sessionId);
-    const res = await client.send(type, params);
-    if (res.success === false) throw new Error(res.error || `pi rejected '${type}'`);
-    return res.data;
+  /** Access the live client for config reads and writes, starting pi if needed. */
+  client(sessionId: string): Promise<PiClient> {
+    return this.ensureClient(sessionId);
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -159,7 +146,7 @@ class SessionManager extends EventEmitter {
   async stop(sessionId: string): Promise<void> {
     const live = this.live.get(sessionId);
     if (!live) return;
-    live.client.kill();
+    live.client.dispose();
     this.live.delete(sessionId);
     await live.executor.cleanup?.(sessionId).catch(() => {});
   }

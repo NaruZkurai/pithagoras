@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { PiRpcClient } from "../pi-rpc.js";
+import { PiRpcClient } from "../pi/rpc-client.js";
+import { SdkPiClient } from "../pi/sdk-client.js";
+import type { PiClient } from "../pi/types.js";
 
 export type ExecutorKind = "host" | "container";
 
@@ -10,11 +12,12 @@ export interface LaunchOptions {
   workspacePath: string;
   provider?: string;
   model?: string;
+  thinkingLevel?: string;
 }
 
 export interface Executor {
   readonly kind: ExecutorKind;
-  launch(opts: LaunchOptions): PiRpcClient;
+  launch(opts: LaunchOptions): Promise<PiClient>;
   /** Best-effort cleanup of anything left behind outside the child process. */
   cleanup?(sessionId: string): Promise<void>;
 }
@@ -46,14 +49,15 @@ export class HostExecutor implements Executor {
 
   constructor(private readonly sessionRoot: string) {}
 
-  launch(opts: LaunchOptions): PiRpcClient {
-    const sessionDir = path.join(this.sessionRoot, opts.sessionId);
-    const child = spawn("pi", piArgs(opts, sessionDir), {
+  /** In-process via the SDK — see SdkPiClient for why this beats a subprocess. */
+  launch(opts: LaunchOptions): Promise<PiClient> {
+    return SdkPiClient.create({
       cwd: opts.workspacePath,
-      env: piEnv(),
-      stdio: ["pipe", "pipe", "pipe"],
+      sessionDir: path.join(this.sessionRoot, opts.sessionId),
+      provider: opts.provider,
+      modelId: opts.model,
+      thinkingLevel: opts.thinkingLevel,
     });
-    return new PiRpcClient(child);
   }
 }
 
@@ -73,7 +77,7 @@ export class ContainerExecutor implements Executor {
     private readonly limits: { memoryMb: number; cpus: number; pidsLimit: number }
   ) {}
 
-  launch(opts: LaunchOptions): PiRpcClient {
+  async launch(opts: LaunchOptions): Promise<PiClient> {
     const containerName = `pithagoras-${opts.sessionId}`;
     const sessionDir = path.join(this.sessionRoot, opts.sessionId);
 

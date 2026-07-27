@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
 
 /** A message pi emits on stdout. `type: 'response'` replies to a command; everything else is an event. */
 export interface PiMessage {
@@ -19,7 +20,7 @@ export interface PiMessage {
  * `readline` also splits on U+2028/U+2029, which would corrupt any payload
  * containing those characters, so the buffer is split manually.
  */
-export class PiRpcClient extends EventEmitter {
+export class PiRpcClient extends EventEmitter implements PiClient {
   private buffer = "";
   private nextId = 1;
   private pending = new Map<
@@ -116,12 +117,64 @@ export class PiRpcClient extends EventEmitter {
     if (res.success === false) throw new Error(res.error || "pi rejected the prompt");
   }
 
-  abort(): Promise<PiMessage> {
-    return this.send("abort");
+  async abort(): Promise<void> {
+    await this.send("abort");
   }
 
-  kill(signal: NodeJS.Signals = "SIGTERM"): void {
-    if (!this.closed) this.child.kill(signal);
+  dispose(): void {
+    if (!this.closed) this.child.kill("SIGTERM");
+  }
+
+  // --- config, expressed as RPC commands ---
+
+  private async data<T>(type: string, params: Record<string, unknown> = {}): Promise<T> {
+    const res = await this.send(type, params);
+    if (res.success === false) throw new Error(res.error || `pi rejected '${type}'`);
+    return res.data as T;
+  }
+
+  async getState(): Promise<PiState> {
+    return this.data<PiState>("get_state");
+  }
+
+  async getStats(): Promise<PiStats> {
+    return this.data<PiStats>("get_session_stats");
+  }
+
+  async getThinkingLevels(): Promise<string[]> {
+    const d = await this.data<{ levels: string[] }>("get_available_thinking_levels");
+    return d?.levels ?? [];
+  }
+
+  async getModels(): Promise<PiState["model"][]> {
+    const d = await this.data<{ models: PiState["model"][] }>("get_available_models");
+    return d?.models ?? [];
+  }
+
+  async getCommands(): Promise<PiCommand[]> {
+    const d = await this.data<{ commands: PiCommand[] }>("get_commands");
+    return d?.commands ?? [];
+  }
+
+  async setModel(provider: string, modelId: string): Promise<void> {
+    // pi resolves the pair as `${provider}/${modelId}`; both are required.
+    await this.data("set_model", { provider, modelId });
+  }
+
+  async setThinkingLevel(level: string): Promise<void> {
+    await this.data("set_thinking_level", { level });
+  }
+
+  async setAutoCompaction(enabled: boolean): Promise<void> {
+    await this.data("set_auto_compaction", { enabled });
+  }
+
+  async setAutoRetry(enabled: boolean): Promise<void> {
+    await this.data("set_auto_retry", { enabled });
+  }
+
+  async compact(): Promise<void> {
+    await this.data("compact");
   }
 
   get running(): boolean {
