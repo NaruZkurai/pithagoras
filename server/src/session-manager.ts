@@ -67,7 +67,7 @@ class SessionManager extends EventEmitter {
     const settings = getSettings();
     const client = executor.launch({
       sessionId,
-      projectPath: session.workspace,
+      workspacePath: session.workspace,
       provider: settings.provider,
       model: settings.model || undefined,
     });

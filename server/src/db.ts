@@ -86,7 +86,7 @@ export function createSession(row: {
 }): void {
   getDb()
     .prepare(
-      "INSERT INTO sessions (id, title, project, executor) VALUES (@id, @title, @project, @executor)"
+      "INSERT INTO sessions (id, title, workspace, executor) VALUES (@id, @title, @workspace, @executor)"
     )
     .run(row);
 }

@@ -63,7 +63,7 @@ app.put("/api/settings", (req, res) => {
   res.json({ settings, note: "Applies to newly started sessions" });
 });
 
-// --- projects ---
+// --- workspaces ---
 
 /** Directories pi can be pointed at. Anything directly under WORKSPACE_ROOT. */
 app.get("/api/workspaces", (_req, res) => {
@@ -124,7 +124,7 @@ app.post("/api/sessions", (req, res) => {
   if (typeof workspace !== "string" || !workspace) {
     return res.status(400).json({ error: "workspace required" });
   }
-  // Keep pi inside the mounted project area — no escaping to the rest of the FS.
+  // Keep pi inside the mounted workspace area — no escaping to the rest of the FS.
   const resolved = path.resolve(workspace);
   if (resolved !== WORKSPACE_ROOT && !resolved.startsWith(WORKSPACE_ROOT + path.sep)) {
     return res.status(400).json({ error: "workspace must be inside the workspace root" });

@@ -6,8 +6,8 @@ export type ExecutorKind = "host" | "container";
 
 export interface LaunchOptions {
   sessionId: string;
-  /** Absolute path of the project pi should work in (as seen by this process). */
-  projectPath: string;
+  /** Absolute path of the workspace pi should work in (as seen by this process). */
+  workspacePath: string;
   provider?: string;
   model?: string;
 }
@@ -37,7 +37,7 @@ function piEnv(): NodeJS.ProcessEnv {
 }
 
 /**
- * Runs pi as a child process of the portal, working directly on mounted project
+ * Runs pi as a child process of the portal, working directly on mounted workspace
  * directories. Fast and simple; pi has the portal's own permissions, so this
  * assumes you trust the tasks you submit.
  */
@@ -49,7 +49,7 @@ export class HostExecutor implements Executor {
   launch(opts: LaunchOptions): PiRpcClient {
     const sessionDir = path.join(this.sessionRoot, opts.sessionId);
     const child = spawn("pi", piArgs(opts, sessionDir), {
-      cwd: opts.projectPath,
+      cwd: opts.workspacePath,
       env: piEnv(),
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -58,7 +58,7 @@ export class HostExecutor implements Executor {
 }
 
 /**
- * Runs pi inside a throwaway Docker container with only the project directory
+ * Runs pi inside a throwaway Docker container with only the workspace directory
  * mounted, so a task cannot reach the rest of the host.
  *
  * `docker run -i` keeps stdin open, which is what the JSONL protocol needs, and
@@ -96,9 +96,9 @@ export class ContainerExecutor implements Executor {
       "--label",
       "pithagoras.managed=true",
       "-w",
-      "/project",
+      "/workspace",
       "-v",
-      `${opts.projectPath}:/project`,
+      `${opts.workspacePath}:/workspace`,
       "-v",
       `${sessionDir}:/sessions`,
       // Same hardening posture as the sandboxes: no extra capabilities, no
