@@ -51,6 +51,8 @@ export function ContextPill({
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<null | "compact" | "auto">(null);
+  /** pi refuses to compact a short session, so its reason has to be visible. */
+  const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -69,9 +71,13 @@ export function ContextPill({
 
   const compactNow = async () => {
     setBusy("compact");
+    setNote(null);
     try {
       await api.compact(sessionId);
       await onChanged();
+      setNote({ text: "Compacted.", error: false });
+    } catch (e) {
+      setNote({ text: (e as Error).message, error: true });
     } finally {
       setBusy(null);
     }
@@ -79,9 +85,12 @@ export function ContextPill({
 
   const toggleAuto = async () => {
     setBusy("auto");
+    setNote(null);
     try {
       await api.setConfig(sessionId, { autoCompaction: !auto });
       await onChanged();
+    } catch (e) {
+      setNote({ text: (e as Error).message, error: true });
     } finally {
       setBusy(null);
     }
@@ -168,6 +177,12 @@ export function ContextPill({
               <LuChevronRight className="h-4 w-4 shrink-0 text-zinc-600" />
             )}
           </button>
+
+          {note && (
+            <p className={`mt-2 text-[11px] ${note.error ? "text-red-400" : "text-emerald-400"}`}>
+              {note.text}
+            </p>
+          )}
 
           <div className="my-3 border-t border-zinc-800" />
 
