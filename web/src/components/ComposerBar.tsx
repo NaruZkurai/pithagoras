@@ -49,6 +49,8 @@ export function ComposerBar({
   const [filter, setFilter] = useState("");
   const [recents, setRecents] = useState<string[]>(readRecents);
   const [busy, setBusy] = useState(false);
+  /** Where the handle sits mid-drag, before the change is sent. */
+  const [dragEffort, setDragEffort] = useState<number | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   const load = () =>
@@ -60,6 +62,7 @@ export function ComposerBar({
   useEffect(() => {
     setCfg(null);
     setOpen(null);
+    setDragEffort(null);
     load();
   }, [sessionId]);
 
@@ -116,18 +119,28 @@ export function ComposerBar({
     }
   };
 
-  const applyEffort = async (level: string) => {
+  const levels = cfg?.thinking.levels ?? [];
+  const serverEffort = Math.max(0, levels.indexOf(cfg?.state.thinkingLevel ?? ""));
+  // While dragging, the slider follows the pointer rather than the server. It
+  // used to be disabled during the request, which dropped pointer capture and
+  // ended the drag after a single step.
+  const effortIndex = dragEffort ?? serverEffort;
+
+  const commitEffort = async (index: number) => {
+    const level = levels[index];
+    if (!level || level === cfg?.state.thinkingLevel) {
+      setDragEffort(null);
+      return;
+    }
     setBusy(true);
     try {
       await api.setConfig(sessionId, { thinkingLevel: level });
       await load();
     } finally {
       setBusy(false);
+      setDragEffort(null);
     }
   };
-
-  const levels = cfg?.thinking.levels ?? [];
-  const effortIndex = Math.max(0, levels.indexOf(cfg?.state.thinkingLevel ?? ""));
 
   return (
     <div ref={ref} className="relative mt-1.5 flex items-center gap-1 text-xs">
@@ -228,7 +241,7 @@ export function ComposerBar({
       {open === "effort" && cfg && levels.length > 0 && (
         <div className="absolute bottom-full right-0 mb-2 w-72 rounded-xl border border-zinc-700 bg-zinc-900 p-3 shadow-2xl">
           <p className="text-sm text-zinc-400">
-            Effort <span className="capitalize text-zinc-100">{cfg.state.thinkingLevel}</span>
+            Effort <span className="capitalize text-zinc-100">{levels[effortIndex]}</span>
           </p>
           <div className="mt-3 flex justify-between text-[11px] text-zinc-500">
             <span>Faster</span>
@@ -240,8 +253,10 @@ export function ComposerBar({
             max={levels.length - 1}
             step={1}
             value={effortIndex}
-            disabled={busy}
-            onChange={(e) => applyEffort(levels[Number(e.target.value)])}
+            onChange={(e) => setDragEffort(Number(e.target.value))}
+            onPointerUp={(e) => commitEffort(Number(e.currentTarget.value))}
+            onKeyUp={(e) => commitEffort(Number(e.currentTarget.value))}
+            onBlur={(e) => commitEffort(Number(e.currentTarget.value))}
             className="mt-1 w-full accent-amber-400"
           />
           <div className="mt-1 flex justify-between">
@@ -250,7 +265,7 @@ export function ComposerBar({
                 key={lvl}
                 title={lvl}
                 className={`h-1 w-1 rounded-full ${
-                  lvl === cfg.state.thinkingLevel ? "bg-amber-400" : "bg-zinc-700"
+                  lvl === levels[effortIndex] ? "bg-amber-400" : "bg-zinc-700"
                 }`}
               />
             ))}
