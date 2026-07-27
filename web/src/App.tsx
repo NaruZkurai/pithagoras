@@ -3,6 +3,7 @@ import { api, type PortalEvent, type Project, type Session } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Login } from "./components/Login";
+import { ConfigPanel } from "./components/ConfigPanel";
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
@@ -12,6 +13,7 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [events, setEvents] = useState<PortalEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -101,6 +103,12 @@ export default function App() {
           await api.renameSession(id, title);
           refreshSessions();
         }}
+        onCreateProject={async (name) => {
+          const created = await api.createProject(name);
+          const list = await api.projects();
+          setProjects(list.projects);
+          return created;
+        }}
       />
       <main className="flex min-w-0 flex-1 flex-col">
         {error && <div className="bg-red-950/60 px-4 py-2 text-sm text-red-300">{error}</div>}
@@ -116,6 +124,8 @@ export default function App() {
               await api.abort(active.id);
               refreshSessions();
             }}
+            onToggleConfig={() => setConfigOpen((v) => !v)}
+            configOpen={configOpen}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-zinc-600">
@@ -123,6 +133,9 @@ export default function App() {
           </div>
         )}
       </main>
+      {active && configOpen && (
+        <ConfigPanel sessionId={active.id} onClose={() => setConfigOpen(false)} />
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -14,6 +14,8 @@ import {
 } from "./db.js";
 import { sessions, EXECUTOR_KIND } from "./session-manager.js";
 import { authEnabled, checkPassword, isAuthed, issueCookie, requireAuth } from "./auth.js";
+import { packagesRouter } from "./api/packages.js";
+import { getSettings, setSettings } from "./db.js";
 
 const PROJECT_ROOT = path.resolve(process.env.PROJECT_ROOT || "/projects");
 const PORT = Number(process.env.PORT || 4100);
@@ -39,6 +41,24 @@ app.post("/api/auth/login", (req, res) => {
 
 app.use("/api", requireAuth);
 
+// --- global settings (defaults for every new session) ---
+
+app.get("/api/settings", (_req, res) => {
+  res.json({ settings: getSettings(), executor: EXECUTOR_KIND, projectRoot: PROJECT_ROOT });
+});
+
+app.put("/api/settings", (req, res) => {
+  const { provider, model, thinkingLevel } = req.body ?? {};
+  const patch: Record<string, string> = {};
+  if (typeof provider === "string") patch.provider = provider.trim();
+  if (typeof model === "string") patch.model = model.trim();
+  if (typeof thinkingLevel === "string") patch.thinkingLevel = thinkingLevel.trim();
+  const settings = setSettings(patch);
+  // Existing sessions keep their own settings; this applies to sessions started
+  // from here on, which matches how the TUI treats a changed default.
+  res.json({ settings, note: "Applies to newly started sessions" });
+});
+
 // --- projects ---
 
 /** Directories pi can be pointed at. Anything directly under PROJECT_ROOT. */
@@ -60,6 +80,33 @@ app.get("/api/projects", (_req, res) => {
       isGit: existsSync(path.join(PROJECT_ROOT, name, ".git")),
     }));
   res.json({ root: PROJECT_ROOT, projects });
+});
+
+// A project name is a single directory under PROJECT_ROOT: no separators, no
+// traversal, nothing that could resolve outside the mounted area.
+const PROJECT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+
+app.post("/api/projects", (req, res) => {
+  const name = req.body?.name;
+  if (typeof name !== "string" || !PROJECT_NAME_RE.test(name) || name === "." || name === "..") {
+    return res.status(400).json({
+      error: "Name must be 1-64 chars: letters, digits, dot, dash, underscore; no slashes",
+    });
+  }
+
+  const target = path.join(PROJECT_ROOT, name);
+  // Belt and braces: even with the regex, confirm the result is really inside.
+  if (path.resolve(target) !== target || !target.startsWith(PROJECT_ROOT + path.sep)) {
+    return res.status(400).json({ error: "Invalid project name" });
+  }
+  if (existsSync(target)) return res.status(409).json({ error: "That project already exists" });
+
+  try {
+    mkdirSync(target, { recursive: false });
+  } catch (e) {
+    return res.status(500).json({ error: (e as Error).message });
+  }
+  res.json({ name, path: target, isGit: false });
 });
 
 // --- sessions ---
@@ -139,6 +186,72 @@ app.post("/api/sessions/:id/abort", async (req, res) => {
   res.json({ ok: true });
 });
 
+// --- per-session config (the web equivalent of the TUI's slash commands) ---
+
+app.get("/api/sessions/:id/config", async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Not found" });
+  try {
+    // Reading config starts pi if it isn't already up, so the values shown are
+    // the live ones rather than a guess from env defaults.
+    const [state, thinking, models, stats] = await Promise.all([
+      sessions.command(session.id, "get_state"),
+      sessions.command(session.id, "get_available_thinking_levels"),
+      sessions.command(session.id, "get_available_models"),
+      sessions.command(session.id, "get_session_stats"),
+    ]);
+    res.json({ state, thinking, models, stats });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+app.post("/api/sessions/:id/config", async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Not found" });
+  const { provider, modelId, thinkingLevel, autoCompaction, autoRetry } = req.body ?? {};
+  const applied: string[] = [];
+  try {
+    if (typeof modelId === "string" && modelId) {
+      // pi resolves a model as `${provider}/${modelId}` — both are required.
+      await sessions.command(session.id, "set_model", {
+        provider: provider || process.env.PI_PROVIDER || "openrouter",
+        modelId,
+      });
+      applied.push("model");
+    }
+    if (typeof thinkingLevel === "string" && thinkingLevel) {
+      await sessions.command(session.id, "set_thinking_level", { level: thinkingLevel });
+      applied.push("thinkingLevel");
+    }
+    if (typeof autoCompaction === "boolean") {
+      await sessions.command(session.id, "set_auto_compaction", { enabled: autoCompaction });
+      applied.push("autoCompaction");
+    }
+    if (typeof autoRetry === "boolean") {
+      await sessions.command(session.id, "set_auto_retry", { enabled: autoRetry });
+      applied.push("autoRetry");
+    }
+    res.json({ ok: true, applied, state: await sessions.command(session.id, "get_state") });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message, applied });
+  }
+});
+
+app.post("/api/sessions/:id/compact", async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Not found" });
+  try {
+    await sessions.command(session.id, "compact");
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+// --- pi packages (extensions, skills, prompts, themes) ---
+app.use("/api", packagesRouter());
+
 // --- event stream ---
 
 /**
@@ -198,7 +311,7 @@ if (existsSync(webDist)) {
 }
 
 const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`pi-portal listening on :${PORT}`);
+  console.log(`pithagoras listening on :${PORT}`);
   console.log(`  executor: ${EXECUTOR_KIND}`);
   console.log(`  projects: ${PROJECT_ROOT}`);
   console.log(`  auth:     ${authEnabled ? "password" : "DISABLED"}`);

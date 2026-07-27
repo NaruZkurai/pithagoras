@@ -54,6 +54,13 @@ export function getDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq);
+
+    -- Portal-wide defaults applied to every new session. Env vars are the
+    -- fallback, so an untouched install still works out of the box.
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
   return db;
 }
@@ -138,4 +145,42 @@ export function markOrphanedSessionsInterrupted(): number {
     )
     .run();
   return info.changes;
+}
+
+// --- global settings ---
+
+export interface GlobalSettings {
+  provider: string;
+  model: string;
+  thinkingLevel: string;
+}
+
+const SETTING_DEFAULTS = (): GlobalSettings => ({
+  provider: process.env.PI_PROVIDER || "openrouter",
+  model: process.env.PI_MODEL || "",
+  thinkingLevel: process.env.PI_THINKING_LEVEL || "medium",
+});
+
+export function getSettings(): GlobalSettings {
+  const rows = getDb().prepare("SELECT key, value FROM settings").all() as {
+    key: string;
+    value: string;
+  }[];
+  const stored = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  const defaults = SETTING_DEFAULTS();
+  return {
+    provider: stored.provider || defaults.provider,
+    model: stored.model || defaults.model,
+    thinkingLevel: stored.thinkingLevel || defaults.thinkingLevel,
+  };
+}
+
+export function setSettings(patch: Partial<GlobalSettings>): GlobalSettings {
+  const stmt = getDb().prepare(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  );
+  for (const [k, v] of Object.entries(patch)) {
+    if (typeof v === "string") stmt.run(k, v);
+  }
+  return getSettings();
 }

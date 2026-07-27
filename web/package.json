@@ -1,5 +1,5 @@
 {
-  "name": "@pi-portal/web",
+  "name": "@pithagoras/web",
   "private": true,
   "type": "module",
   "scripts": {

@@ -1,4 +1,4 @@
-# pi portal
+# Pithagoras
 
 A web front end for the [pi coding agent](https://github.com/earendil-works/pi), built to be
 left alone: **give it a task, close the browser, come back later and read what it did.**
@@ -38,6 +38,20 @@ pi has **no approval prompts** — by design it runs with the permissions of its
 ("real isolation needs to come from the OS or a container boundary"). That is what makes
 unattended runs possible, and also why `PORTAL_PASSWORD` is required and why the portal
 should stay on Tailscale/LAN rather than the public internet.
+
+## Config panel
+
+The **Config** button in a task opens the web equivalent of pi's TUI slash commands, in three tabs:
+
+- **Session** — model (searchable across the whole provider catalogue), thinking level, live
+  context usage / tokens / cost, auto-compaction toggle, and compact-now. Read from the running
+  pi process, so it reflects what that session is actually using.
+- **Global** — provider, default model and default thinking level applied to every **newly
+  started** session. Stored in the portal database, so they outlive restarts and override the
+  env defaults. Running sessions keep their own settings.
+- **Packages** — install, remove and update pi packages (extensions, skills, prompts, themes)
+  from npm, git, a URL or a path. They install under a persistent home directory, so they
+  survive container rebuilds.
 
 ## Configuration
 

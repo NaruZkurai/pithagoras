@@ -24,6 +24,7 @@ export function Sidebar({
   onCreate,
   onDelete,
   onRename,
+  onCreateProject,
 }: {
   sessions: Session[];
   projects: Project[];
@@ -33,24 +34,51 @@ export function Sidebar({
   onCreate: (title: string, project: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onRename: (id: string, title: string) => Promise<void>;
+  onCreateProject: (name: string) => Promise<Project>;
 }) {
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
   const [project, setProject] = useState("");
+  const [newProject, setNewProject] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Sentinel value in the dropdown that swaps in the "name your folder" field.
+  const NEW = "__new__";
+  const makingNew = project === NEW;
 
   const submit = async () => {
-    const chosen = project || projects[0]?.path;
-    if (!chosen) return;
-    await onCreate(title.trim() || "New task", chosen);
-    setTitle("");
-    setCreating(false);
+    setError(null);
+    setBusy(true);
+    try {
+      let chosen: string | undefined;
+      if (makingNew) {
+        const created = await onCreateProject(newProject.trim());
+        chosen = created.path;
+      } else {
+        chosen = project || projects[0]?.path;
+      }
+      if (!chosen) {
+        setError("Pick or create a project first");
+        return;
+      }
+      await onCreate(title.trim() || "New task", chosen);
+      setTitle("");
+      setNewProject("");
+      setProject("");
+      setCreating(false);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r border-zinc-800">
       <div className="border-b border-zinc-800 p-3">
         <div className="flex items-center gap-2">
-          <h1 className="text-sm font-bold tracking-wide text-cyan-300">pi portal</h1>
+          <h1 className="text-sm font-bold tracking-wide text-cyan-300">Pithagoras</h1>
           <span
             className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400"
             title="How tasks are executed"
@@ -79,20 +107,32 @@ export function Sidebar({
               onChange={(e) => setProject(e.target.value)}
               className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm text-zinc-300"
             >
-              {projects.length === 0 && <option value="">No projects found</option>}
+              {projects.length === 0 && <option value="">No projects yet</option>}
               {projects.map((p) => (
                 <option key={p.path} value={p.path}>
                   {p.name}
                   {p.isGit ? " (git)" : ""}
                 </option>
               ))}
+              <option value={NEW}>+ New folder…</option>
             </select>
+            {makingNew && (
+              <input
+                autoFocus
+                value={newProject}
+                onChange={(e) => setNewProject(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && submit()}
+                placeholder="folder-name"
+                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-sm outline-none focus:border-cyan-600"
+              />
+            )}
+            {error && <p className="text-xs text-red-400">{error}</p>}
             <button
               onClick={submit}
-              disabled={projects.length === 0}
+              disabled={busy || (projects.length === 0 && !makingNew)}
               className="w-full rounded bg-zinc-800 px-2 py-1 text-sm hover:bg-zinc-700 disabled:opacity-40"
             >
-              Create
+              {busy ? "Creating…" : makingNew ? "Create folder + task" : "Create"}
             </button>
           </div>
         )}

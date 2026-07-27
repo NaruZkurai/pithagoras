@@ -8,11 +8,15 @@ export function Chat({
   events,
   onSend,
   onAbort,
+  onToggleConfig,
+  configOpen,
 }: {
   session: Session;
   events: PortalEvent[];
   onSend: (message: string) => Promise<void>;
   onAbort: () => Promise<void>;
+  onToggleConfig: () => void;
+  configOpen: boolean;
 }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -49,6 +53,17 @@ export function Chat({
               interrupted — send a message to resume
             </span>
           )}
+          <button
+            onClick={onToggleConfig}
+            title="Model, thinking level, context, packages"
+            className={`rounded border px-2 py-1 text-xs ${
+              configOpen
+                ? "border-cyan-800 bg-cyan-950/50 text-cyan-300"
+                : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+            }`}
+          >
+            Config
+          </button>
           {running && (
             <button
               onClick={onAbort}

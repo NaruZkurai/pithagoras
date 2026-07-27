@@ -26,11 +26,15 @@ RUN npm install --omit=dev -w server
 COPY --from=build /app/server/dist server/dist
 COPY --from=build /app/web/dist web/dist
 
+# HOME lives on the data volume so pi packages and settings (~/.pi/agent)
+# survive image rebuilds instead of being silently wiped.
 ENV NODE_ENV=production \
     PORT=4100 \
     DATA_DIR=/data \
     SESSION_DIR=/data/sessions \
-    PROJECT_ROOT=/projects
+    PROJECT_ROOT=/projects \
+    HOME=/data/home
+RUN mkdir -p /data/home
 EXPOSE 4100
 VOLUME /data
 CMD ["node", "server/dist/index.js"]

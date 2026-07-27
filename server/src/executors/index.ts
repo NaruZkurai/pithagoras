@@ -74,7 +74,7 @@ export class ContainerExecutor implements Executor {
   ) {}
 
   launch(opts: LaunchOptions): PiRpcClient {
-    const containerName = `pi-portal-${opts.sessionId}`;
+    const containerName = `pithagoras-${opts.sessionId}`;
     const sessionDir = path.join(this.sessionRoot, opts.sessionId);
 
     const passthrough = [
@@ -92,9 +92,9 @@ export class ContainerExecutor implements Executor {
       "--name",
       containerName,
       "--label",
-      "pi-portal.session=" + opts.sessionId,
+      "pithagoras.session=" + opts.sessionId,
       "--label",
-      "pi-portal.managed=true",
+      "pithagoras.managed=true",
       "-w",
       "/project",
       "-v",
@@ -127,7 +127,7 @@ export class ContainerExecutor implements Executor {
 
   async cleanup(sessionId: string): Promise<void> {
     await new Promise<void>((resolve) => {
-      const rm = spawn("docker", ["rm", "-f", `pi-portal-${sessionId}`], { stdio: "ignore" });
+      const rm = spawn("docker", ["rm", "-f", `pithagoras-${sessionId}`], { stdio: "ignore" });
       rm.on("exit", () => resolve());
       rm.on("error", () => resolve());
     });
@@ -137,7 +137,7 @@ export class ContainerExecutor implements Executor {
 export function buildExecutor(kind: ExecutorKind, sessionRoot: string): Executor {
   if (kind === "container") {
     return new ContainerExecutor(
-      process.env.PI_IMAGE || "pi-portal-runner:latest",
+      process.env.PI_IMAGE || "pithagoras-runner:latest",
       sessionRoot,
       {
         memoryMb: Number(process.env.TASK_MEMORY_MB) || 2048,

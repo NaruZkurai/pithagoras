@@ -23,7 +23,7 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
   return (
     <div className="flex h-screen items-center justify-center">
       <form onSubmit={submit} className="w-72 space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-        <h1 className="text-sm font-bold tracking-wide text-cyan-300">pi portal</h1>
+        <h1 className="text-sm font-bold tracking-wide text-cyan-300">Pithagoras</h1>
         <input
           autoFocus
           type="password"

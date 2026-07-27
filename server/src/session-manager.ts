@@ -6,6 +6,7 @@ import { buildExecutor, type Executor, type ExecutorKind } from "./executors/ind
 import {
   appendEvent,
   getSession,
+  getSettings,
   markOrphanedSessionsInterrupted,
   updateSession,
 } from "./db.js";
@@ -62,11 +63,13 @@ class SessionManager extends EventEmitter {
     const executor = buildExecutor(EXECUTOR_KIND, SESSION_ROOT);
     mkdirSync(path.join(SESSION_ROOT, sessionId), { recursive: true });
 
+    // Portal-wide defaults, overridable per session from the config panel.
+    const settings = getSettings();
     const client = executor.launch({
       sessionId,
       projectPath: session.project,
-      provider: process.env.PI_PROVIDER,
-      model: process.env.PI_MODEL,
+      provider: settings.provider,
+      model: settings.model || undefined,
     });
 
     client.on("event", (msg) => {
@@ -98,6 +101,15 @@ class SessionManager extends EventEmitter {
     });
 
     this.live.set(sessionId, { client, executor });
+
+    // The thinking level has no CLI flag, so apply the global default once the
+    // process is up. Best-effort: a failure here must not block the session.
+    if (settings.thinkingLevel) {
+      client
+        .send("set_thinking_level", { level: settings.thinkingLevel })
+        .catch((e) => console.error(`[portal] could not set thinking level: ${e.message}`));
+    }
+
     return client;
   }
 
@@ -119,6 +131,21 @@ class SessionManager extends EventEmitter {
       this.record(sessionId, "portal_status", { status: "error", error: message });
       throw e;
     }
+  }
+
+  /**
+   * Send a raw RPC command to a session's pi process, starting it if needed.
+   * Backs the config panel — the equivalent of the TUI's slash commands.
+   */
+  async command(
+    sessionId: string,
+    type: string,
+    params: Record<string, unknown> = {}
+  ): Promise<unknown> {
+    const client = await this.ensureClient(sessionId);
+    const res = await client.send(type, params);
+    if (res.success === false) throw new Error(res.error || `pi rejected '${type}'`);
+    return res.data;
   }
 
   async abort(sessionId: string): Promise<void> {
