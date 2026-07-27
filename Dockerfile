@@ -32,7 +32,7 @@ ENV NODE_ENV=production \
     PORT=4100 \
     DATA_DIR=/data \
     SESSION_DIR=/data/sessions \
-    PROJECT_ROOT=/projects \
+    WORKSPACE_ROOT=/workspaces \
     HOME=/data/home
 RUN mkdir -p /data/home
 EXPOSE 4100

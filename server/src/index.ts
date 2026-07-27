@@ -15,9 +15,13 @@ import {
 import { sessions, EXECUTOR_KIND } from "./session-manager.js";
 import { authEnabled, checkPassword, isAuthed, issueCookie, requireAuth } from "./auth.js";
 import { packagesRouter } from "./api/packages.js";
+import { isValidSlug, slugify } from "./slug.js";
 import { getSettings, setSettings } from "./db.js";
 
-const PROJECT_ROOT = path.resolve(process.env.PROJECT_ROOT || "/projects");
+// WORKSPACE_ROOT is the new name; WORKSPACE_ROOT still works for existing deploys.
+const WORKSPACE_ROOT = path.resolve(
+  process.env.WORKSPACE_ROOT || process.env.WORKSPACE_ROOT || "/workspaces"
+);
 const PORT = Number(process.env.PORT || 4100);
 
 const app = express();
@@ -44,7 +48,7 @@ app.use("/api", requireAuth);
 // --- global settings (defaults for every new session) ---
 
 app.get("/api/settings", (_req, res) => {
-  res.json({ settings: getSettings(), executor: EXECUTOR_KIND, projectRoot: PROJECT_ROOT });
+  res.json({ settings: getSettings(), executor: EXECUTOR_KIND, workspaceRoot: WORKSPACE_ROOT });
 });
 
 app.put("/api/settings", (req, res) => {
@@ -61,14 +65,14 @@ app.put("/api/settings", (req, res) => {
 
 // --- projects ---
 
-/** Directories pi can be pointed at. Anything directly under PROJECT_ROOT. */
-app.get("/api/projects", (_req, res) => {
-  if (!existsSync(PROJECT_ROOT)) return res.json({ root: PROJECT_ROOT, projects: [] });
-  const projects = readdirSync(PROJECT_ROOT)
+/** Directories pi can be pointed at. Anything directly under WORKSPACE_ROOT. */
+app.get("/api/workspaces", (_req, res) => {
+  if (!existsSync(WORKSPACE_ROOT)) return res.json({ root: WORKSPACE_ROOT, workspaces: [] });
+  const workspaces = readdirSync(WORKSPACE_ROOT)
     .filter((name) => !name.startsWith("."))
     .filter((name) => {
       try {
-        return statSync(path.join(PROJECT_ROOT, name)).isDirectory();
+        return statSync(path.join(WORKSPACE_ROOT, name)).isDirectory();
       } catch {
         return false;
       }
@@ -76,33 +80,32 @@ app.get("/api/projects", (_req, res) => {
     .sort()
     .map((name) => ({
       name,
-      path: path.join(PROJECT_ROOT, name),
-      isGit: existsSync(path.join(PROJECT_ROOT, name, ".git")),
+      path: path.join(WORKSPACE_ROOT, name),
+      isGit: existsSync(path.join(WORKSPACE_ROOT, name, ".git")),
     }));
-  res.json({ root: PROJECT_ROOT, projects });
+  res.json({ root: WORKSPACE_ROOT, workspaces });
 });
 
-// A project name is a single directory under PROJECT_ROOT: no separators, no
-// traversal, nothing that could resolve outside the mounted area.
-const PROJECT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
-
-app.post("/api/projects", (req, res) => {
-  const name = req.body?.name;
-  if (typeof name !== "string" || !PROJECT_NAME_RE.test(name) || name === "." || name === "..") {
-    return res.status(400).json({
-      error: "Name must be 1-64 chars: letters, digits, dot, dash, underscore; no slashes",
-    });
+app.post("/api/workspaces", (req, res) => {
+  const raw = req.body?.name;
+  if (typeof raw !== "string" || !raw.trim()) {
+    return res.status(400).json({ error: "name required" });
+  }
+  // "Cool Project" becomes the directory "cool-project", and that same slug
+  // becomes the session title — one name drives both.
+  const name = slugify(raw);
+  if (!isValidSlug(name)) {
+    return res.status(400).json({ error: `"${raw}" does not produce a usable folder name` });
   }
 
-  const target = path.join(PROJECT_ROOT, name);
-  // Belt and braces: even with the regex, confirm the result is really inside.
-  if (path.resolve(target) !== target || !target.startsWith(PROJECT_ROOT + path.sep)) {
-    return res.status(400).json({ error: "Invalid project name" });
+  const target = path.join(WORKSPACE_ROOT, name);
+  if (path.resolve(target) !== target || !target.startsWith(WORKSPACE_ROOT + path.sep)) {
+    return res.status(400).json({ error: "Invalid workspace name" });
   }
-  if (existsSync(target)) return res.status(409).json({ error: "That project already exists" });
+  if (existsSync(target)) return res.status(409).json({ error: `Workspace "${name}" already exists` });
 
   try {
-    mkdirSync(target, { recursive: false });
+    mkdirSync(target, { recursive: true });
   } catch (e) {
     return res.status(500).json({ error: (e as Error).message });
   }
@@ -117,22 +120,23 @@ app.get("/api/sessions", (_req, res) => {
 });
 
 app.post("/api/sessions", (req, res) => {
-  const { title, project } = req.body ?? {};
-  if (typeof project !== "string" || !project) {
-    return res.status(400).json({ error: "project required" });
+  const { title, workspace } = req.body ?? {};
+  if (typeof workspace !== "string" || !workspace) {
+    return res.status(400).json({ error: "workspace required" });
   }
   // Keep pi inside the mounted project area — no escaping to the rest of the FS.
-  const resolved = path.resolve(project);
-  if (resolved !== PROJECT_ROOT && !resolved.startsWith(PROJECT_ROOT + path.sep)) {
-    return res.status(400).json({ error: "project must be inside the project root" });
+  const resolved = path.resolve(workspace);
+  if (resolved !== WORKSPACE_ROOT && !resolved.startsWith(WORKSPACE_ROOT + path.sep)) {
+    return res.status(400).json({ error: "workspace must be inside the workspace root" });
   }
-  if (!existsSync(resolved)) return res.status(400).json({ error: "project does not exist" });
+  if (!existsSync(resolved)) return res.status(400).json({ error: "workspace does not exist" });
 
   const id = nanoid(12);
   createSession({
     id,
-    title: (typeof title === "string" && title.trim()) || "New task",
-    project: resolved,
+    // Default the session name to the workspace folder name.
+    title: (typeof title === "string" && title.trim()) || path.basename(resolved),
+    workspace: resolved,
     executor: EXECUTOR_KIND,
   });
   res.json(getSession(id));
@@ -335,7 +339,7 @@ if (existsSync(webDist)) {
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`pithagoras listening on :${PORT}`);
   console.log(`  executor: ${EXECUTOR_KIND}`);
-  console.log(`  projects: ${PROJECT_ROOT}`);
+  console.log(`  workspaces: ${WORKSPACE_ROOT}`);
   console.log(`  auth:     ${authEnabled ? "password" : "DISABLED"}`);
 });
 

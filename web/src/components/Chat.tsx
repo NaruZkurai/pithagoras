@@ -61,7 +61,7 @@ export function Chat({
       <header className="flex items-center gap-3 border-b border-zinc-800 px-4 py-2">
         <div className="min-w-0">
           <h2 className="truncate text-sm font-semibold text-zinc-200">{session.title}</h2>
-          <p className="truncate font-mono text-[11px] text-zinc-500">{session.project}</p>
+          <p className="truncate font-mono text-[11px] text-zinc-500">{session.workspace}</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
           {session.status === "interrupted" && (

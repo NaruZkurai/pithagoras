@@ -7,7 +7,7 @@ export type SessionStatus = "idle" | "running" | "error" | "interrupted";
 export interface SessionRow {
   id: string;
   title: string;
-  project: string;
+  workspace: string;
   executor: string;
   status: SessionStatus;
   created_at: string;
@@ -35,7 +35,7 @@ export function getDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
-      project TEXT NOT NULL,
+      workspace TEXT NOT NULL,
       executor TEXT NOT NULL DEFAULT 'host',
       status TEXT NOT NULL DEFAULT 'idle',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -62,13 +62,26 @@ export function getDb(): Database.Database {
       value TEXT NOT NULL
     );
   `);
+  migrate(db);
   return db;
+}
+
+/**
+ * `project` was renamed to `workspace`. Rename in place rather than recreating
+ * the table so existing sessions survive the upgrade.
+ */
+function migrate(d: Database.Database): void {
+  const cols = d.prepare("PRAGMA table_info(sessions)").all() as { name: string }[];
+  const names = cols.map((c) => c.name);
+  if (names.includes("project") && !names.includes("workspace")) {
+    d.exec("ALTER TABLE sessions RENAME COLUMN project TO workspace");
+  }
 }
 
 export function createSession(row: {
   id: string;
   title: string;
-  project: string;
+  workspace: string;
   executor: string;
 }): void {
   getDb()

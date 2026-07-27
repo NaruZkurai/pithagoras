@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type PortalEvent, type Project, type Session } from "./api";
+import { api, type PortalEvent, type Session, type Workspace } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Login } from "./components/Login";
@@ -8,7 +8,7 @@ import { ConfigPanel } from "./components/ConfigPanel";
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [executor, setExecutor] = useState("host");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [events, setEvents] = useState<PortalEvent[]>([]);
@@ -32,7 +32,7 @@ export default function App() {
     refreshSessions()
       .then((list) => setActiveId((cur) => cur ?? list[0]?.id ?? null))
       .catch((e) => setError(String(e)));
-    api.projects().then((p) => setProjects(p.projects)).catch(() => {});
+    api.workspaces().then((r) => setWorkspaces(r.workspaces)).catch(() => {});
     // Session list carries live status; poll so the sidebar reflects runs
     // started from another tab or device.
     const t = setInterval(() => refreshSessions().catch(() => {}), 5000);
@@ -72,8 +72,10 @@ export default function App() {
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
 
-  const onCreate = async (title: string, project: string) => {
-    const s = await api.createSession(title, project);
+  const onCreate = async (workspacePath: string) => {
+    // Title is omitted on purpose: the server names the session after the
+    // workspace folder.
+    const s = await api.createSession(workspacePath);
     await refreshSessions();
     setActiveId(s.id);
   };
@@ -93,7 +95,7 @@ export default function App() {
     <div className="flex h-screen">
       <Sidebar
         sessions={sessions}
-        projects={projects}
+        workspaces={workspaces}
         executor={executor}
         activeId={activeId}
         onSelect={setActiveId}
@@ -103,10 +105,10 @@ export default function App() {
           await api.renameSession(id, title);
           refreshSessions();
         }}
-        onCreateProject={async (name) => {
-          const created = await api.createProject(name);
-          const list = await api.projects();
-          setProjects(list.projects);
+        onCreateWorkspace={async (name) => {
+          const created = await api.createWorkspace(name);
+          const list = await api.workspaces();
+          setWorkspaces(list.workspaces);
           return created;
         }}
       />

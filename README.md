@@ -59,23 +59,28 @@ The **Config** button in a task opens the web equivalent of pi's TUI slash comma
 |---|---|---|
 | `PORTAL_PASSWORD` | — | **Required.** Shared password for the UI. |
 | `PORTAL_SECRET` | random | HMAC key for the auth cookie. Set it so logins survive restarts. |
-| `PROJECTS_DIR` | `/root/repos` | Host directory holding the repos pi may work on. |
+| `WORKSPACES_DIR` | `/root/repos` | Host directory holding the workspaces pi may work in. |
 | `EXECUTOR` | `host` | `host` or `container`. |
 | `PI_PROVIDER` / `PI_MODEL` | `openrouter` / `anthropic/claude-sonnet-5` | Passed through to pi. |
 | `OPENROUTER_API_KEY` etc. | — | Provider credentials, forwarded to pi. |
 | `TASK_MEMORY_MB` / `TASK_CPUS` / `TASK_PIDS_LIMIT` | `2048` / `2` / `512` | Per-task caps in `container` mode. |
 
-## Sessions
+## Sessions and workspaces
 
-Each task is a session with its own pi conversation, project, and status. The sidebar shows
+A **workspace** is a folder pi works in; a **session** is a conversation against one.
+Creating a session defaults to making a fresh workspace — name it however you like and the
+folder is slugified (`"Cool Project"` becomes `cool-project`), with the session taking that
+same name. Pick an existing workspace from the dropdown to continue in one you already have.
+
+Each session has its own pi conversation, workspace, and status. The sidebar shows
 them all with a live status dot: running, idle, error, or **interrupted** — meaning the
 server restarted while that task was mid-run. Sessions are marked interrupted rather than
 left spinning forever; sending another message resumes the conversation.
 
 ## Limitations
 
-- A task does not survive a **portal restart**, only a browser disconnect. pi persists its
+- A session does not survive a **portal restart**, only a browser disconnect. pi persists its
   own session files, so the conversation is intact and can be continued, but the in-flight
   run stops.
-- Two tasks pointed at the same directory in `host` mode will edit the same working tree.
-  Use `container` mode or separate checkouts if you want to run those in parallel.
+- Two sessions pointed at the same workspace in `host` mode will edit the same working tree.
+  Use `container` mode or separate workspaces if you want to run those in parallel.

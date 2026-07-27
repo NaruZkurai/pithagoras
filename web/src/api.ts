@@ -3,7 +3,7 @@ export type SessionStatus = "idle" | "running" | "error" | "interrupted";
 export interface Session {
   id: string;
   title: string;
-  project: string;
+  workspace: string;
   executor: string;
   status: SessionStatus;
   created_at: string;
@@ -12,7 +12,7 @@ export interface Session {
   live?: boolean;
 }
 
-export interface Project {
+export interface Workspace {
   name: string;
   path: string;
   isGit: boolean;
@@ -37,12 +37,15 @@ export const api = {
   authStatus: () => json<{ authRequired: boolean; authed: boolean }>("/api/auth/status"),
   login: (password: string) =>
     json<{ ok: true }>("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) }),
-  projects: () => json<{ root: string; projects: Project[] }>("/api/projects"),
-  createProject: (name: string) =>
-    json<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name }) }),
+  workspaces: () => json<{ root: string; workspaces: Workspace[] }>("/api/workspaces"),
+  createWorkspace: (name: string) =>
+    json<Workspace>("/api/workspaces", { method: "POST", body: JSON.stringify({ name }) }),
   sessions: () => json<{ sessions: Session[]; executor: string }>("/api/sessions"),
-  createSession: (title: string, project: string) =>
-    json<Session>("/api/sessions", { method: "POST", body: JSON.stringify({ title, project }) }),
+  createSession: (workspace: string, title?: string) =>
+    json<Session>("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify({ workspace, title }),
+    }),
   renameSession: (id: string, title: string) =>
     json<Session>(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   deleteSession: (id: string) => json<{ ok: true }>(`/api/sessions/${id}`, { method: "DELETE" }),
@@ -71,7 +74,7 @@ export const api = {
     }),
 
   settings: () =>
-    json<{ settings: GlobalSettings; executor: string; projectRoot: string }>("/api/settings"),
+    json<{ settings: GlobalSettings; executor: string; workspaceRoot: string }>("/api/settings"),
   saveSettings: (patch: Partial<GlobalSettings>) =>
     json<{ settings: GlobalSettings; note: string }>("/api/settings", {
       method: "PUT",

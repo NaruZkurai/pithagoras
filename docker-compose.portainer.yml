@@ -9,8 +9,8 @@ services:
       - "${PORTAL_BIND:-0.0.0.0}:4100:4100"
     volumes:
       - pithagoras-data:/data
-      # Repos the agent may work on.
-      - ${PROJECTS_DIR:-/root/repos}:/projects
+      # Workspaces the agent may work in.
+      - ${WORKSPACES_DIR:-/root/repos}:/workspaces
       # Only needed when EXECUTOR=container.
       - /var/run/docker.sock:/var/run/docker.sock
     environment:

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Project, Session, SessionStatus } from "../api";
+import type { Session, SessionStatus, Workspace } from "../api";
 
 const STATUS_STYLE: Record<SessionStatus, string> = {
   running: "bg-cyan-400 animate-pulse",
@@ -15,57 +15,63 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
   interrupted: "interrupted — server restarted mid-run",
 };
 
+/** Mirrors the server's slugify so the preview matches what actually gets created. */
+function slugify(input: string): string {
+  return input
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-._]+|[-._]+$/g, "")
+    .slice(0, 64);
+}
+
+// Sentinel for the dropdown — a new workspace is the default choice.
+const NEW = "__new__";
+
 export function Sidebar({
   sessions,
-  projects,
+  workspaces,
   executor,
   activeId,
   onSelect,
   onCreate,
   onDelete,
   onRename,
-  onCreateProject,
+  onCreateWorkspace,
 }: {
   sessions: Session[];
-  projects: Project[];
+  workspaces: Workspace[];
   executor: string;
   activeId: string | null;
   onSelect: (id: string) => void;
-  onCreate: (title: string, project: string) => Promise<void>;
+  onCreate: (workspacePath: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onRename: (id: string, title: string) => Promise<void>;
-  onCreateProject: (name: string) => Promise<Project>;
+  onCreateWorkspace: (name: string) => Promise<Workspace>;
 }) {
   const [creating, setCreating] = useState(false);
-  const [title, setTitle] = useState("");
-  const [project, setProject] = useState("");
-  const [newProject, setNewProject] = useState("");
+  const [choice, setChoice] = useState<string>(NEW);
+  const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Sentinel value in the dropdown that swaps in the "name your folder" field.
-  const NEW = "__new__";
-  const makingNew = project === NEW;
+  const makingNew = choice === NEW;
+  const slug = slugify(name);
+  const canSubmit = makingNew ? slug.length > 0 : Boolean(choice);
 
   const submit = async () => {
+    if (!canSubmit) return;
     setError(null);
     setBusy(true);
     try {
-      let chosen: string | undefined;
-      if (makingNew) {
-        const created = await onCreateProject(newProject.trim());
-        chosen = created.path;
-      } else {
-        chosen = project || projects[0]?.path;
-      }
-      if (!chosen) {
-        setError("Pick or create a project first");
-        return;
-      }
-      await onCreate(title.trim() || "New task", chosen);
-      setTitle("");
-      setNewProject("");
-      setProject("");
+      // Either branch produces a workspace path; the session takes its name
+      // from that folder.
+      const workspacePath = makingNew ? (await onCreateWorkspace(name.trim())).path : choice;
+      await onCreate(workspacePath);
+      setName("");
+      setChoice(NEW);
       setCreating(false);
     } catch (e) {
       setError((e as Error).message);
@@ -81,7 +87,7 @@ export function Sidebar({
           <h1 className="text-sm font-bold tracking-wide text-cyan-300">Pithagoras</h1>
           <span
             className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400"
-            title="How tasks are executed"
+            title="How sessions are executed"
           >
             {executor}
           </span>
@@ -90,58 +96,61 @@ export function Sidebar({
           onClick={() => setCreating((v) => !v)}
           className="mt-2 w-full rounded-lg bg-cyan-900/50 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-900/80"
         >
-          + New task
+          + New session
         </button>
+
         {creating && (
           <div className="mt-2 space-y-2">
-            <input
-              autoFocus
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-              placeholder="Task name"
-              className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm outline-none focus:border-cyan-600"
-            />
             <select
-              value={project}
-              onChange={(e) => setProject(e.target.value)}
+              value={choice}
+              onChange={(e) => setChoice(e.target.value)}
               className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm text-zinc-300"
             >
-              {projects.length === 0 && <option value="">No projects yet</option>}
-              {projects.map((p) => (
-                <option key={p.path} value={p.path}>
-                  {p.name}
-                  {p.isGit ? " (git)" : ""}
-                </option>
-              ))}
-              <option value={NEW}>+ New folder…</option>
+              <option value={NEW}>New workspace</option>
+              {workspaces.length > 0 && (
+                <optgroup label="Existing workspaces">
+                  {workspaces.map((w) => (
+                    <option key={w.path} value={w.path}>
+                      {w.name}
+                      {w.isGit ? " (git)" : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
+
             {makingNew && (
-              <input
-                autoFocus
-                value={newProject}
-                onChange={(e) => setNewProject(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && submit()}
-                placeholder="folder-name"
-                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono text-sm outline-none focus:border-cyan-600"
-              />
+              <div>
+                <input
+                  autoFocus
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submit()}
+                  placeholder="Cool Project"
+                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm outline-none focus:border-cyan-600"
+                />
+                {name.trim() && (
+                  <p className="mt-1 truncate font-mono text-[11px] text-zinc-500">
+                    {slug ? `→ ${slug}` : "needs at least one letter or digit"}
+                  </p>
+                )}
+              </div>
             )}
+
             {error && <p className="text-xs text-red-400">{error}</p>}
             <button
               onClick={submit}
-              disabled={busy || (projects.length === 0 && !makingNew)}
+              disabled={busy || !canSubmit}
               className="w-full rounded bg-zinc-800 px-2 py-1 text-sm hover:bg-zinc-700 disabled:opacity-40"
             >
-              {busy ? "Creating…" : makingNew ? "Create folder + task" : "Create"}
+              {busy ? "Creating…" : "Start session"}
             </button>
           </div>
         )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-2">
-        {sessions.length === 0 && (
-          <p className="px-2 py-4 text-xs text-zinc-500">No tasks yet.</p>
-        )}
+        {sessions.length === 0 && <p className="px-2 py-4 text-xs text-zinc-500">No sessions yet.</p>}
         {sessions.map((s) => (
           <div
             key={s.id}
@@ -159,7 +168,7 @@ export function Sidebar({
                 className="truncate text-sm text-zinc-200"
                 onDoubleClick={(e) => {
                   e.stopPropagation();
-                  const next = prompt("Rename task", s.title);
+                  const next = prompt("Rename session", s.title);
                   if (next?.trim()) onRename(s.id, next.trim());
                 }}
               >
@@ -168,25 +177,25 @@ export function Sidebar({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (confirm(`Delete "${s.title}"? This stops the task if it is running.`)) {
+                  if (confirm(`Delete "${s.title}"? This stops it if it is running.`)) {
                     onDelete(s.id);
                   }
                 }}
                 className="ml-auto hidden shrink-0 px-1 text-xs text-zinc-500 hover:text-red-400 group-hover:block"
-                title="Delete task"
+                title="Delete session"
               >
                 ✕
               </button>
             </div>
             <div className="truncate pl-4 text-[11px] text-zinc-500">
-              {s.project.split("/").pop()}
+              {s.workspace.split("/").pop()}
             </div>
           </div>
         ))}
       </div>
 
       <div className="border-t border-zinc-800 px-3 py-2 text-[11px] text-zinc-600">
-        Tasks keep running if you close this tab.
+        Sessions keep running if you close this tab.
       </div>
     </aside>
   );

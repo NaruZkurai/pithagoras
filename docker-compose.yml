@@ -8,8 +8,8 @@ services:
       - "${PORTAL_BIND:-0.0.0.0}:4100:4100"
     volumes:
       - portal-data:/data
-      # Repos pi works on. Read-write: the whole point is that it edits code.
-      - ${PROJECTS_DIR:-/root/repos}:/projects
+      # Workspaces pi works in. Read-write: the whole point is that it edits code.
+      - ${WORKSPACES_DIR:-/root/repos}:/workspaces
       # Only needed when EXECUTOR=container.
       - /var/run/docker.sock:/var/run/docker.sock
     environment:

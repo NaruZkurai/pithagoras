@@ -284,7 +284,7 @@ function Global({
   levels: string[];
 }) {
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
-  const [meta, setMeta] = useState<{ executor: string; projectRoot: string } | null>(null);
+  const [meta, setMeta] = useState<{ executor: string; workspaceRoot: string } | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -293,7 +293,7 @@ function Global({
       .settings()
       .then((r) => {
         setSettings(r.settings);
-        setMeta({ executor: r.executor, projectRoot: r.projectRoot });
+        setMeta({ executor: r.executor, workspaceRoot: r.workspaceRoot });
       })
       .catch((e) => onError((e as Error).message));
   }, []);
@@ -377,8 +377,8 @@ function Global({
             <span className="font-mono text-zinc-400">{meta.executor}</span>
           </div>
           <div className="flex justify-between">
-            <span>project root</span>
-            <span className="truncate font-mono text-zinc-400">{meta.projectRoot}</span>
+            <span>workspace root</span>
+            <span className="truncate font-mono text-zinc-400">{meta.workspaceRoot}</span>
           </div>
           <p className="mt-1 text-zinc-600">Both are set at deploy time via environment.</p>
         </div>
