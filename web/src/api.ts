@@ -87,6 +87,14 @@ export const api = {
       body: JSON.stringify(patch),
     }),
 
+  extensions: () =>
+    json<{ extensions: ExtensionInfo[]; settingsPath: string }>("/api/extensions"),
+  setExtensionSetting: (key: string, value: unknown) =>
+    json<{ ok: true }>("/api/extensions/settings", {
+      method: "PUT",
+      body: JSON.stringify({ key, value }),
+    }),
+
   packages: () => json<{ output: string }>("/api/packages"),
   installPackage: (spec: string) =>
     json<{ ok: true; output: string }>("/api/packages", {
@@ -139,6 +147,24 @@ export interface ConfigPatch {
   autoRetry?: boolean;
 }
 
+
+/** One setting an extension reads, recovered from its source by the server. */
+export interface DetectedSetting {
+  key: string;
+  value: unknown;
+  configured: boolean;
+}
+
+export interface ExtensionInfo {
+  spec: string;
+  name: string;
+  path?: string;
+  scope?: string;
+  description?: string;
+  homepage?: string;
+  version?: string;
+  settings: DetectedSetting[];
+}
 
 export interface GlobalSettings {
   provider: string;

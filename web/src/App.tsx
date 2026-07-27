@@ -7,7 +7,9 @@ import { Login } from "./components/Login";
 import { ConfigModal } from "./components/ConfigModal";
 import { ExtensionDialog, type UiRequest } from "./components/ExtensionDialog";
 
-type Tab = "session" | "global" | "extensions";
+// Legacy routes ("session", "global") still resolve — old links stay valid.
+type Tab = "general" | "extensions" | "advanced";
+const LEGACY_TABS: Record<string, Tab> = { session: "general", global: "general" };
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
@@ -145,7 +147,7 @@ function Shell({ settings = false }: { settings?: boolean }) {
           refreshSessions();
         }}
         onOpenSettings={() =>
-          navigate(sessionId ? `/s/${sessionId}/settings/session` : "/settings/global")
+          navigate(sessionId ? `/s/${sessionId}/settings/general` : "/settings/general")
         }
         onCreateWorkspace={async (name) => {
           const created = await api.createWorkspace(name);
@@ -171,7 +173,7 @@ function Shell({ settings = false }: { settings?: boolean }) {
             }}
             onClientCommand={async (name, args) => {
               if (name === "settings") {
-                navigate(`/s/${active.id}/settings/session`);
+                navigate(`/s/${active.id}/settings/general`);
               } else if (name === "new") {
                 const s = await api.createSession(active.workspace);
                 await refreshSessions();
@@ -197,8 +199,7 @@ function Shell({ settings = false }: { settings?: boolean }) {
 
       {settings && (
         <ConfigModal
-          sessionId={active?.id}
-          initialTab={(tab as Tab) || (active ? "session" : "global")}
+          initialTab={LEGACY_TABS[tab ?? ""] ?? (tab as Tab) ?? "general"}
           onClose={() => navigate(active ? `/s/${active.id}` : "/")}
         />
       )}
