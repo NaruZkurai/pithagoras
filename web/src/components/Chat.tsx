@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { api, type PiCommand, type PortalEvent, type Session } from "../api";
 import { buildTranscript } from "../transcript";
+import { ComposerBar } from "./ComposerBar";
 
 export function Chat({
   session,
@@ -69,17 +70,6 @@ export function Chat({
               interrupted — send a message to resume
             </span>
           )}
-          <button
-            onClick={onToggleConfig}
-            title="Model, thinking level, context, packages"
-            className={`rounded border px-2 py-1 text-xs ${
-              configOpen
-                ? "border-cyan-800 bg-cyan-950/50 text-cyan-300"
-                : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-            }`}
-          >
-            Config
-          </button>
           {running && (
             <button
               onClick={onAbort}
@@ -200,6 +190,12 @@ export function Chat({
           rows={2}
           placeholder={running ? "pi is working — send to queue a follow-up…" : "Describe the task…"}
           className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-cyan-600"
+        />
+        <ComposerBar
+          sessionId={session.id}
+          running={running}
+          onOpenPanel={onToggleConfig}
+          panelOpen={configOpen}
         />
       </form>
     </div>
