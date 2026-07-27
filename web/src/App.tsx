@@ -33,6 +33,8 @@ export default function App() {
       <Route path="/s/:sessionId" element={<Shell />} />
       <Route path="/s/:sessionId/settings" element={<Shell settings />} />
       <Route path="/s/:sessionId/settings/:tab" element={<Shell settings />} />
+      <Route path="/settings" element={<Shell settings />} />
+      <Route path="/settings/:tab" element={<Shell settings />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -60,7 +62,7 @@ function Shell({ settings = false }: { settings?: boolean }) {
     refreshSessions()
       .then((list) => {
         // Landing on "/" opens the most recent session.
-        if (!sessionId && list[0]) navigate(`/s/${list[0].id}`, { replace: true });
+        if (!sessionId && !settings && list[0]) navigate(`/s/${list[0].id}`, { replace: true });
       })
       .catch((e) => setError(String(e)));
     api
@@ -69,7 +71,7 @@ function Shell({ settings = false }: { settings?: boolean }) {
       .catch(() => {});
     const t = setInterval(() => refreshSessions().catch(() => {}), 5000);
     return () => clearInterval(t);
-  }, [refreshSessions, sessionId, navigate]);
+  }, [refreshSessions, sessionId, settings, navigate]);
 
   // Replay-then-tail for whichever session is in the URL.
   useEffect(() => {
@@ -125,6 +127,9 @@ function Shell({ settings = false }: { settings?: boolean }) {
           await api.renameSession(id, title);
           refreshSessions();
         }}
+        onOpenSettings={() =>
+          navigate(sessionId ? `/s/${sessionId}/settings/session` : "/settings/global")
+        }
         onCreateWorkspace={async (name) => {
           const created = await api.createWorkspace(name);
           const list = await api.workspaces();
@@ -147,19 +152,17 @@ function Shell({ settings = false }: { settings?: boolean }) {
               await api.abort(active.id);
               refreshSessions();
             }}
-            onOpenSettings={(t: Tab = "session") => navigate(`/s/${active.id}/settings/${t}`)}
-            settingsOpen={settings}
           />
         ) : (
           <EmptyState hasSessions={sessions.length > 0} />
         )}
       </main>
 
-      {settings && active && (
+      {settings && (
         <ConfigModal
-          sessionId={active.id}
-          initialTab={(tab as Tab) || "session"}
-          onClose={() => navigate(`/s/${active.id}`)}
+          sessionId={active?.id}
+          initialTab={(tab as Tab) || (active ? "session" : "global")}
+          onClose={() => navigate(active ? `/s/${active.id}` : "/")}
         />
       )}
     </div>

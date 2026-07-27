@@ -9,15 +9,11 @@ export function Chat({
   events,
   onSend,
   onAbort,
-  onOpenSettings,
-  settingsOpen,
 }: {
   session: Session;
   events: PortalEvent[];
   onSend: (message: string) => Promise<void>;
   onAbort: () => Promise<void>;
-  onOpenSettings: (tab?: "session" | "global" | "extensions") => void;
-  settingsOpen: boolean;
 }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -197,8 +193,6 @@ export function Chat({
         <ComposerBar
           sessionId={session.id}
           running={running}
-          onOpenSettings={onOpenSettings}
-          settingsOpen={settingsOpen}
         />
       </form>
     </div>

@@ -40,6 +40,7 @@ export function Sidebar({
   onDelete,
   onRename,
   onCreateWorkspace,
+  onOpenSettings,
 }: {
   sessions: Session[];
   workspaces: Workspace[];
@@ -50,6 +51,7 @@ export function Sidebar({
   onDelete: (id: string) => Promise<void>;
   onRename: (id: string, title: string) => Promise<void>;
   onCreateWorkspace: (name: string) => Promise<Workspace>;
+  onOpenSettings: () => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [choice, setChoice] = useState<string>(NEW);
@@ -194,8 +196,17 @@ export function Sidebar({
         ))}
       </div>
 
-      <div className="border-t border-zinc-800 px-3 py-2 text-[11px] text-zinc-600">
-        Sessions keep running if you close this tab.
+      <div className="border-t border-zinc-800 p-2">
+        <button
+          onClick={onOpenSettings}
+          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+        >
+          <span className="text-base leading-none">⚙</span>
+          Settings
+        </button>
+        <p className="px-2 pt-1 text-[11px] text-zinc-600">
+          Sessions keep running if you close this tab.
+        </p>
       </div>
     </aside>
   );

@@ -4,7 +4,7 @@ import { Modal } from "./Modal";
 
 type Tab = "session" | "global" | "extensions";
 
-const TABS: { id: Tab; label: string }[] = [
+const ALL_TABS: { id: Tab; label: string }[] = [
   { id: "session", label: "Session" },
   { id: "global", label: "Global" },
   { id: "extensions", label: "Extensions" },
@@ -13,13 +13,17 @@ const TABS: { id: Tab; label: string }[] = [
 export function ConfigModal({
   sessionId,
   onClose,
-  initialTab = "session",
+  initialTab = "global",
 }: {
-  sessionId: string;
+  /** Absent when settings are opened without a session — the Session tab needs one. */
+  sessionId?: string;
   onClose: () => void;
   initialTab?: Tab;
 }) {
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const tabs = sessionId ? ALL_TABS : ALL_TABS.filter((t) => t.id !== "session");
+  const [tab, setTab] = useState<Tab>(
+    initialTab === "session" && !sessionId ? "global" : initialTab
+  );
   const [error, setError] = useState<string | null>(null);
 
   return (
@@ -27,7 +31,7 @@ export function ConfigModal({
       onClose={onClose}
       title={
         <div className="flex items-center gap-1">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
@@ -51,7 +55,7 @@ export function ConfigModal({
           </button>
         </div>
       )}
-      {tab === "session" && <SessionTab sessionId={sessionId} onError={setError} />}
+      {tab === "session" && sessionId && <SessionTab sessionId={sessionId} onError={setError} />}
       {tab === "global" && <GlobalTab onError={setError} />}
       {tab === "extensions" && <ExtensionsTab onError={setError} />}
     </Modal>

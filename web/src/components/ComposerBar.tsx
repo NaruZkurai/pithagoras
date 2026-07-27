@@ -28,19 +28,14 @@ const shortName = (m: { name: string }) => m.name.split(":").pop()!.trim();
 
 /**
  * Toolbar under the composer: the session's live model and effort level as
- * pills you can click to change, plus context usage and a link into the fuller
- * config panel.
+ * pills you can click to change, plus context usage.
  */
 export function ComposerBar({
   sessionId,
   running,
-  onOpenSettings,
-  settingsOpen,
 }: {
   sessionId: string;
   running: boolean;
-  onOpenSettings: (tab?: "session" | "global" | "extensions") => void;
-  settingsOpen: boolean;
 }) {
   const [cfg, setCfg] = useState<PiConfig | null>(null);
   const [open, setOpen] = useState<null | "model" | "effort">(null);
@@ -125,15 +120,6 @@ export function ComposerBar({
 
   return (
     <div ref={ref} className="relative mt-1.5 flex items-center gap-1 text-xs">
-      <button
-        type="button"
-        onClick={() => onOpenSettings("session")}
-        title="Global settings, packages, context"
-        className={`rounded px-1.5 py-1 ${settingsOpen ? "text-cyan-300" : "text-zinc-500 hover:text-zinc-200"}`}
-      >
-        ⚙
-      </button>
-
       {cfg && pct > 0 && (
         <span
           className="text-[11px] text-zinc-600"
