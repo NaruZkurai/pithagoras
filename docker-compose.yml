@@ -1,0 +1,27 @@
+services:
+  portal:
+    build: .
+    container_name: pi-portal
+    restart: unless-stopped
+    ports:
+      # Tailscale/LAN reachable. Put a password on it — see PORTAL_PASSWORD.
+      - "${PORTAL_BIND:-0.0.0.0}:4100:4100"
+    volumes:
+      - portal-data:/data
+      # Repos pi works on. Read-write: the whole point is that it edits code.
+      - ${PROJECTS_DIR:-/root/repos}:/projects
+      # Only needed when EXECUTOR=container.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      PORTAL_PASSWORD: ${PORTAL_PASSWORD:?set PORTAL_PASSWORD in .env}
+      # Keeps logins valid across restarts; generate with: openssl rand -hex 32
+      PORTAL_SECRET: ${PORTAL_SECRET:-}
+      # host = pi runs in this container | container = one container per task
+      EXECUTOR: ${EXECUTOR:-host}
+      PI_PROVIDER: ${PI_PROVIDER:-openrouter}
+      PI_MODEL: ${PI_MODEL:-anthropic/claude-sonnet-5}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+volumes:
+  portal-data:

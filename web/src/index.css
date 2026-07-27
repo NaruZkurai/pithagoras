@@ -1,0 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { @apply bg-zinc-950 text-zinc-100 antialiased; }
+.md p { @apply my-1.5 leading-relaxed; }
+.md ul, .md ol { @apply my-1.5 ml-5 list-disc space-y-1; }
+.md code { @apply bg-zinc-800 px-1 py-0.5 rounded text-[0.85em] text-amber-300; }
+.md pre { @apply bg-zinc-900 border border-zinc-800 rounded-lg p-3 my-2 overflow-x-auto; }
+.md pre code { @apply bg-transparent p-0 text-zinc-200; }
+.md h1,.md h2,.md h3 { @apply font-semibold mt-3 mb-1; }
+.md a { @apply text-cyan-400 hover:underline; }
