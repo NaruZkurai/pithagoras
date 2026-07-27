@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import express, { type Router } from "express";
 
 const run = promisify(execFile);
@@ -69,6 +71,46 @@ export function packagesRouter(): Router {
     try {
       const { stdout, stderr } = await pi(["update", "--all"]);
       res.json({ ok: true, output: (stdout + stderr).trim() });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  /**
+   * Raw pi settings file.
+   *
+   * Extensions configure themselves through settings.json and pi exposes no
+   * schema for that over RPC, so the honest option is to let you edit the file
+   * directly rather than pretend to generate a form for it.
+   */
+  const settingsPath = () =>
+    path.join(process.env.HOME || "/data/home", ".pi", "agent", "settings.json");
+
+  router.get("/pi-settings", (_req, res) => {
+    const file = settingsPath();
+    try {
+      const content = existsSync(file) ? readFileSync(file, "utf8") : "{}\n";
+      res.json({ path: file, content });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  router.put("/pi-settings", (req, res) => {
+    const content = req.body?.content;
+    if (typeof content !== "string") return res.status(400).json({ error: "content required" });
+    // Refuse to write anything pi could not parse — a broken settings.json
+    // stops every future session from starting.
+    try {
+      JSON.parse(content);
+    } catch (e) {
+      return res.status(400).json({ error: `Not valid JSON: ${(e as Error).message}` });
+    }
+    const file = settingsPath();
+    try {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, content, "utf8");
+      res.json({ ok: true, path: file, note: "Applies to newly started sessions" });
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });
     }

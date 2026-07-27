@@ -368,6 +368,8 @@ function Global({
         {busy ? "Saving…" : saved ? "Saved ✓" : "Save global defaults"}
       </button>
 
+      <PiSettingsEditor onError={onError} />
+
       {meta && (
         <div className="rounded border border-zinc-800 bg-zinc-900/50 p-2 text-[11px] text-zinc-500">
           <div className="flex justify-between">
@@ -379,6 +381,79 @@ function Global({
             <span className="truncate font-mono text-zinc-400">{meta.projectRoot}</span>
           </div>
           <p className="mt-1 text-zinc-600">Both are set at deploy time via environment.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Extensions configure themselves through pi's settings.json, and pi exposes no
+ * schema for that over RPC — so rather than fake a generated form, edit the file.
+ */
+function PiSettingsEditor({ onError }: { onError: (e: string) => void }) {
+  const [content, setContent] = useState("");
+  const [file, setFile] = useState("");
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    api
+      .piSettings()
+      .then((r) => {
+        setContent(r.content);
+        setFile(r.path);
+      })
+      .catch((e) => onError((e as Error).message));
+  }, [open]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.savePiSettings(content);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded border border-zinc-800">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center px-2 py-1.5 text-xs text-zinc-300 hover:bg-zinc-900"
+      >
+        pi settings.json
+        <span className="ml-auto text-zinc-500">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="space-y-2 border-t border-zinc-800 p-2">
+          <p className="text-[11px] text-zinc-500">
+            Where installed extensions keep their own configuration. Applies to newly started
+            sessions.
+          </p>
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            rows={12}
+            spellCheck={false}
+            className="w-full resize-y rounded border border-zinc-700 bg-zinc-900 p-2 font-mono text-[11px] outline-none focus:border-cyan-600"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={save}
+              disabled={busy}
+              className="rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700 disabled:opacity-40"
+            >
+              {busy ? "Saving…" : saved ? "Saved ✓" : "Save"}
+            </button>
+            <span className="truncate font-mono text-[10px] text-zinc-600">{file}</span>
+          </div>
         </div>
       )}
     </div>

@@ -249,6 +249,28 @@ app.post("/api/sessions/:id/compact", async (req, res) => {
   }
 });
 
+/**
+ * Commands available in this session: built-ins plus anything contributed by
+ * installed packages (extensions, prompt templates, skills). Discovered at
+ * runtime, so installing a package immediately makes its commands available in
+ * the UI without any portal change.
+ *
+ * pi has no "run command" RPC — commands are invoked by sending them as user
+ * input, exactly as the TUI does, so the client just puts `/name` in a prompt.
+ */
+app.get("/api/sessions/:id/commands", async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Not found" });
+  try {
+    const data = (await sessions.command(session.id, "get_commands")) as {
+      commands?: unknown[];
+    };
+    res.json({ commands: data?.commands ?? data ?? [] });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
 // --- pi packages (extensions, skills, prompts, themes) ---
 app.use("/api", packagesRouter());
 

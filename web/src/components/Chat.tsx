@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import type { PortalEvent, Session } from "../api";
+import { api, type PiCommand, type PortalEvent, type Session } from "../api";
 import { buildTranscript } from "../transcript";
 
 export function Chat({
@@ -23,6 +23,22 @@ export function Chat({
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
   const running = session.status === "running";
+
+  // Commands come from pi at runtime, so anything a newly installed package
+  // registers shows up here without the portal knowing about it in advance.
+  const [commands, setCommands] = useState<PiCommand[]>([]);
+  useEffect(() => {
+    api
+      .commands(session.id)
+      .then((r) => setCommands(r.commands))
+      .catch(() => setCommands([]));
+  }, [session.id]);
+
+  // Show the palette while the composer holds a bare "/name" prefix.
+  const slashQuery = /^\/([\w:-]*)$/.exec(input.trimStart());
+  const matches = slashQuery
+    ? commands.filter((c) => c.name.toLowerCase().startsWith(slashQuery[1].toLowerCase())).slice(0, 8)
+    : [];
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -152,8 +168,26 @@ export function Chat({
           e.preventDefault();
           send();
         }}
-        className="border-t border-zinc-800 p-3"
+        className="relative border-t border-zinc-800 p-3"
       >
+        {matches.length > 0 && (
+          <div className="absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl">
+            {matches.map((c) => (
+              <button
+                key={c.name}
+                type="button"
+                onClick={() => setInput(`/${c.name} `)}
+                className="flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-zinc-800"
+              >
+                <span className="font-mono text-xs text-cyan-300">/{c.name}</span>
+                <span className="truncate text-xs text-zinc-500">{c.description}</span>
+                <span className="ml-auto shrink-0 rounded bg-zinc-800 px-1 text-[10px] text-zinc-500">
+                  {c.source}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}

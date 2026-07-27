@@ -62,6 +62,14 @@ export const api = {
   compact: (id: string) =>
     json<{ ok: true }>(`/api/sessions/${id}/compact`, { method: "POST" }),
 
+  commands: (id: string) => json<{ commands: PiCommand[] }>(`/api/sessions/${id}/commands`),
+  piSettings: () => json<{ path: string; content: string }>("/api/pi-settings"),
+  savePiSettings: (content: string) =>
+    json<{ ok: true; path: string; note: string }>("/api/pi-settings", {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    }),
+
   settings: () =>
     json<{ settings: GlobalSettings; executor: string; projectRoot: string }>("/api/settings"),
   saveSettings: (patch: Partial<GlobalSettings>) =>
@@ -127,4 +135,11 @@ export interface GlobalSettings {
   provider: string;
   model: string;
   thinkingLevel: string;
+}
+
+export interface PiCommand {
+  name: string;
+  description?: string;
+  source: "extension" | "prompt" | "skill" | string;
+  sourceInfo?: { path?: string; scope?: string; origin?: string };
 }
