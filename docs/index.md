@@ -22,7 +22,7 @@ features:
   - title: One workspace per session
     details: Sessions are created against a workspace directory and keep their own model, effort level and conversation. Pinned ones stay at the top of the sidebar.
   - title: Pluggable channels
-    details: Reach the agent from Telegram, a webhook, or anything you write yourself. Channel types are packages, installable from a GitHub repo.
+    details: Reach the agent from Telegram, Slack, Discord, a webhook, or anything you write yourself. Channel types are packages, installable from a GitHub repo.
   - title: pi's own extensions
     details: Packages installed through pi contribute their slash commands to the portal, dialogs and all — /models opens the same menu the TUI draws.
 ---

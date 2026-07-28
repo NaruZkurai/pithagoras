@@ -4,6 +4,10 @@ A channel is a two-way link into the agent: messages arrive through it, and the
 agent's replies go back out the same way. Every channel talks to the same
 agent session, so they are different doors into one conversation.
 
+Four ship here — `telegram` (long polling), `slack` (Socket Mode), `discord`
+(the Gateway) and `webhook` (a listener) — covering every transport shape, and
+none of them needs a dependency.
+
 Channels are packages. The ones in this directory are loaded by default; any
 other package following this convention can be installed from npm, a git URL or
 a GitHub repo, and is treated identically — there is nothing special about the

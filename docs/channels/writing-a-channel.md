@@ -4,7 +4,7 @@ A channel package is a normal npm package with a marker, a manifest, and a
 `start()` that owns its transport. Publish it to a GitHub repo and it installs
 straight into the portal.
 
-The two packages in the repo's `channels/` directory are reference
+The four packages in the repo's `channels/` directory are reference
 implementations of exactly this format — read them alongside this page.
 
 ## Layout
@@ -105,7 +105,7 @@ await sendBack(reply);
 Honour `ctx.signal`. A polling loop should check `signal.aborted` and pass the
 signal to `fetch`, or disabling the channel will leave it running.
 
-## Two shapes
+## Three shapes
 
 **Polling**, from the Telegram package. Outbound only, which is what makes it
 work on a machine with no inbound route:
@@ -118,6 +118,25 @@ while (running && !ctx.signal.aborted) {
     await send(update.chatId, reply);
   }
 }
+```
+
+**A socket**, from the Slack and Discord packages. `WebSocket` is a global on
+Node 22, so this needs no dependency either. Reconnect on close unless you are
+being stopped, and honour whatever keepalive the service demands — Discord drops
+a connection that misses its heartbeats:
+
+```js
+const connect = () => {
+  if (stopped || ctx.signal.aborted) return;
+  const socket = new WebSocket(url);
+  socket.addEventListener("message", async (frame) => {
+    const { text, channel } = parse(frame.data);
+    await send(channel, await ctx.ask(text, { channel }));
+  });
+  socket.addEventListener("close", () => {
+    if (!stopped && !ctx.signal.aborted) setTimeout(connect, 3000);
+  });
+};
 ```
 
 **Listening**, from the webhook package. Needs a reachable port, and you should

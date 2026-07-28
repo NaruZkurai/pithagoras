@@ -1,0 +1,8 @@
+{
+  "name": "pithagoras-channel-slack",
+  "version": "0.1.0",
+  "description": "Reach the agent from Slack over Socket Mode",
+  "type": "module",
+  "main": "index.js",
+  "pithagoras": { "channel": true }
+}

@@ -19,16 +19,32 @@ your own ─┘
 ## Channel types are packages
 
 Nothing about Telegram is hardcoded. A channel type is a package with a
-manifest and a `start()`, and the two that ship in the repo are ordinary
+manifest and a `start()`, and the ones that ship in the repo are ordinary
 examples of the format rather than privileged cases. Install another from a
 GitHub repo and it behaves identically.
 
-The builtins are chosen to demonstrate both shapes:
+Four ship in the repo, between them covering every shape a transport takes:
 
-| Package | Shape |
-| --- | --- |
-| `pithagoras-channel-telegram` | Long polling — outbound only, so it works behind Tailscale with no inbound route |
-| `pithagoras-channel-webhook` | A listener — POST a message, the reply comes back in the response |
+| Package | Shape | Notes |
+| --- | --- | --- |
+| `pithagoras-channel-telegram` | Long polling | Outbound only. The Bot API has no socket — see below. |
+| `pithagoras-channel-slack` | WebSocket | Socket Mode, which exists so an app needs no public URL. |
+| `pithagoras-channel-discord` | WebSocket | The Gateway, with the heartbeat it demands. |
+| `pithagoras-channel-webhook` | A listener | POST a message, the reply comes back in the response. |
+
+None of them needs a dependency: `fetch` and `WebSocket` are both globals on
+Node 22, which the portal requires anyway.
+
+::: tip Why Telegram polls and the others do not
+Telegram's Bot API offers two delivery modes — `getUpdates`, or a webhook it
+POSTs to. There is no Socket Mode equivalent. Since the portal is meant to run
+somewhere with no inbound route, polling is what is left.
+
+It is *long* polling, though: the request parks on Telegram's servers for up to
+50 seconds and returns the instant a message arrives. One mostly-idle held
+connection, not a request every second — close enough to a socket that you will
+not notice.
+:::
 
 Builtins ship inside the image and cannot be uninstalled. Everything else
 installs to `CHANNELS_DIR` on the data volume and survives image rebuilds.
