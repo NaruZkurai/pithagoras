@@ -146,6 +146,8 @@ export const api = {
       config?: Record<string, string>;
       instructions?: string;
       slug?: string;
+      relayProgress?: boolean;
+      relayTools?: boolean;
     }
   ) =>
     json<Channel>(`/api/channels/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
@@ -259,6 +261,10 @@ export interface Channel {
   secretsSet: string[];
   /** Appended to the agent's system prompt for messages arriving here. */
   instructions: string;
+  /** Relay what the agent says between tool calls, not just the final answer. */
+  relayProgress: boolean;
+  /** Relay the name of each tool as it runs. */
+  relayTools: boolean;
   /** Conversations keyed to this channel's slug. */
   sessionCount: number;
   /** What the supervisor is doing with it right now. */

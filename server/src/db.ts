@@ -109,6 +109,10 @@ export function getDb(): Database.Database {
       -- Appended to the agent's system prompt for messages arriving here, so
       -- one door can carry standing guidance the others do not.
       instructions TEXT NOT NULL DEFAULT '',
+      -- What the channel relays while the agent works, rather than only at the
+      -- end. Both are per channel: a phone wants less noise than a war room.
+      relay_progress INTEGER NOT NULL DEFAULT 1,
+      relay_tools INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -175,6 +179,12 @@ function migrate(d: Database.Database): void {
     d.exec("ALTER TABLE channels ADD COLUMN slug TEXT NOT NULL DEFAULT ''");
     // Nothing sensible to backfill from, and no data to lose.
     d.exec("DELETE FROM channels WHERE slug = ''");
+  }
+  if (channelCols.length && !channelCols.includes("relay_progress")) {
+    d.exec("ALTER TABLE channels ADD COLUMN relay_progress INTEGER NOT NULL DEFAULT 1");
+  }
+  if (channelCols.length && !channelCols.includes("relay_tools")) {
+    d.exec("ALTER TABLE channels ADD COLUMN relay_tools INTEGER NOT NULL DEFAULT 1");
   }
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_slug ON channels(slug)");
 }

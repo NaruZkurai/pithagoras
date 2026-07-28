@@ -46,6 +46,8 @@ interface ChannelRow {
   enabled: number;
   config: string;
   instructions: string;
+  relay_progress: number;
+  relay_tools: number;
   created_at: string;
   updated_at: string;
 }
@@ -86,6 +88,8 @@ function toApi(row: ChannelRow, kind?: LoadedChannel) {
     config: visible,
     secretsSet,
     instructions: row.instructions ?? "",
+    relayProgress: Boolean(row.relay_progress),
+    relayTools: Boolean(row.relay_tools),
     /** Conversations keyed to this slug — what a delete would strand. */
     sessionCount: countChannelSessions(row.slug),
     // What the supervisor is actually doing, not a hardcoded guess.
@@ -175,7 +179,8 @@ export function channelsRouter(): Router {
       });
     }
 
-    const { name, enabled, config, instructions, slug } = req.body ?? {};
+    const { name, enabled, config, instructions, slug, relayProgress, relayTools } =
+      req.body ?? {};
     const sets: string[] = [];
     const values: unknown[] = [];
 
@@ -200,6 +205,14 @@ export function channelsRouter(): Router {
     if (typeof instructions === "string") {
       sets.push("instructions = ?");
       values.push(instructions.trim());
+    }
+    if (typeof relayProgress === "boolean") {
+      sets.push("relay_progress = ?");
+      values.push(relayProgress ? 1 : 0);
+    }
+    if (typeof relayTools === "boolean") {
+      sets.push("relay_tools = ?");
+      values.push(relayTools ? 1 : 0);
     }
     if (typeof enabled === "boolean") {
       sets.push("enabled = ?");

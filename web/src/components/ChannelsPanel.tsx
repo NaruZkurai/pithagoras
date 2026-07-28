@@ -285,6 +285,42 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
   );
 }
 
+function Toggle({
+  on,
+  onChange,
+  label,
+  hint,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  hint: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!on)}
+      className="flex w-full items-center gap-3 rounded-lg px-1 py-1.5 text-left transition hover:bg-white/5"
+    >
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-zinc-200">{label}</p>
+        <p className="text-[11px] text-zinc-500">{hint}</p>
+      </div>
+      <span
+        className={`relative h-5 w-9 shrink-0 rounded-full transition ${
+          on ? "bg-cyan-500/70" : "bg-zinc-700"
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+            on ? "left-[1.125rem]" : "left-0.5"
+          }`}
+        />
+      </span>
+    </button>
+  );
+}
+
 /** A row in the list. Clicking it opens the channel's own page. */
 function ChannelRow({
   channel: ch,
@@ -352,6 +388,8 @@ function ChannelDetail({
   const [values, setValues] = useState<Record<string, string>>({ ...ch.config });
   const [instructions, setInstructions] = useState(ch.instructions ?? "");
   const [slug, setSlug] = useState(ch.slug);
+  const [relayProgress, setRelayProgress] = useState(ch.relayProgress);
+  const [relayTools, setRelayTools] = useState(ch.relayTools);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -360,11 +398,15 @@ function ChannelDetail({
     setValues({ ...ch.config });
     setInstructions(ch.instructions ?? "");
     setSlug(ch.slug);
+    setRelayProgress(ch.relayProgress);
+    setRelayTools(ch.relayTools);
   }, [ch.id, ch.updated_at]);
 
   const dirty =
     name !== ch.name ||
     slug !== ch.slug ||
+    relayProgress !== ch.relayProgress ||
+    relayTools !== ch.relayTools ||
     instructions !== (ch.instructions ?? "") ||
     kind?.fields.some((f) => (values[f.key] ?? "") !== (ch.config[f.key] ?? ""));
 
@@ -382,7 +424,14 @@ function ChannelDetail({
 
   const save = () =>
     act(async () => {
-      await api.updateChannel(ch.id, { name, slug, config: values, instructions });
+      await api.updateChannel(ch.id, {
+        name,
+        slug,
+        config: values,
+        instructions,
+        relayProgress,
+        relayTools,
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     });
@@ -460,6 +509,30 @@ function ChannelDetail({
             ? `${ch.sessionCount} conversation${ch.sessionCount === 1 ? "" : "s"} keyed to "${ch.slug}".`
             : "No conversations yet."}
         </p>
+      </section>
+
+      <section className="mb-6">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          While it works
+        </h3>
+        <p className="mt-0.5 text-xs text-zinc-500">
+          A real task takes minutes. These decide whether the chat shows that, or stays quiet until
+          there is an answer.
+        </p>
+        <div className="mt-2 space-y-1">
+          <Toggle
+            on={relayProgress}
+            onChange={setRelayProgress}
+            label="Progress"
+            hint="What the agent says between tool calls, as it says it"
+          />
+          <Toggle
+            on={relayTools}
+            onChange={setRelayTools}
+            label="Tool activity"
+            hint="The name of each tool as it runs — ⚙ bash · npm test"
+          />
+        </div>
       </section>
 
       <section className="mb-6">

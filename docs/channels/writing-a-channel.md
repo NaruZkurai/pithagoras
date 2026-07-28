@@ -141,10 +141,23 @@ await ctx.ask(text, {
 });
 ```
 
-When you pass `onReply`, `ask` resolves with `""` — everything has already been
-given to you, and returning it again would post it twice. Without it, `ask`
-resolves with the whole reply at the end, which suits a webhook that has one
-response to fill.
+You also get a line for every tool as it starts, so the chat shows what the
+agent is doing rather than only that it is busy:
+
+```
+⚙ bash · npm test
+⚙ read · src/index.ts
+```
+
+What actually reaches you is the channel's choice, not yours — **Progress** and
+**Tool activity** are toggles on the channel's page in settings. Your package
+passes `onReply` and the portal decides what to put through it.
+
+When progress is on, `ask` resolves with `""` — the prose has already been given
+to you, and returning it too would post everything twice. When it is off, only
+tool lines are relayed and `ask` resolves with the whole answer at the end. Both
+off and nothing is relayed at all. So the safe shape is: send everything
+`onReply` gives you, then send the return value if it is non-empty.
 
 ### Interrupting
 

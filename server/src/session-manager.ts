@@ -12,6 +12,20 @@ import {
   updateSession,
 } from "./db.js";
 
+/** Mirrors what the web transcript shows, so a chat and the UI agree. */
+function summarizeToolInput(p: any): string | undefined {
+  const input = p.input ?? p.args ?? p.parameters;
+  if (!input) return undefined;
+  const trim = (v: string) => (v.length > 80 ? `${v.slice(0, 79)}…` : v);
+  if (typeof input === "string") return trim(input);
+  if (typeof input === "object") {
+    const first = input.command ?? input.file_path ?? input.path ?? input.pattern ?? input.query;
+    if (typeof first === "string") return trim(first);
+    return trim(JSON.stringify(input));
+  }
+  return undefined;
+}
+
 const SESSION_ROOT = path.resolve(process.env.SESSION_DIR || "./data/sessions");
 const EXECUTOR_KIND = (process.env.EXECUTOR || "host") as ExecutorKind;
 
@@ -221,18 +235,27 @@ class SessionManager extends EventEmitter {
     opts: {
       timeoutMs?: number;
       /**
-       * Called with each assistant message as it completes, so a channel can
-       * send what the agent says between tool calls instead of going quiet for
-       * minutes. When supplied, ask() resolves with "" — everything has already
-       * been handed over, and returning it again would post it twice.
+       * Relays what happens during the run — assistant prose as each stretch
+       * completes, and the name of every tool as it starts.
        */
       onReply?: (text: string) => void | Promise<void>;
+      /**
+       * Whether prose goes through onReply as well as tool lines.
+       *
+       * When it does, ask() resolves with "" — it has all been handed over, and
+       * returning it too would post everything twice. When it does not, only
+       * tool lines are relayed and the prose comes back at the end, which is
+       * what a channel showing activity but not partial answers wants.
+       */
+      streamText?: boolean;
     } = {}
   ): Promise<string> {
     const previous = this.asking.get(sessionId) ?? Promise.resolve("");
     const next = previous
       .catch(() => "")
-      .then(() => this.askNow(sessionId, message, opts.timeoutMs ?? 15 * 60_000, opts.onReply));
+      .then(() =>
+        this.askNow(sessionId, message, opts.timeoutMs ?? 15 * 60_000, opts.onReply, opts.streamText)
+      );
     // Kept only while it is the newest, so a finished chain is not held forever.
     this.asking.set(sessionId, next);
     void next.catch(() => {}).finally(() => {
@@ -245,7 +268,8 @@ class SessionManager extends EventEmitter {
     sessionId: string,
     message: string,
     timeoutMs: number,
-    onReply?: (text: string) => void | Promise<void>
+    onReply?: (text: string) => void | Promise<void>,
+    streamText = true
   ): Promise<string> {
     await this.ensureClient(sessionId);
 
@@ -257,14 +281,16 @@ class SessionManager extends EventEmitter {
     let settle: (() => void) | undefined;
     let fail: ((e: Error) => void) | undefined;
 
+    // Delivery is the channel's problem; a failure there must not take down the
+    // run that produced it.
+    const relay = (line: string) => void Promise.resolve(onReply?.(line)).catch(() => {});
+
     const flush = () => {
       const done = current.trim();
       current = "";
       if (!done) return;
       all.push(done);
-      // Delivery is the channel's problem; a failure there must not take down
-      // the run that produced it.
-      void Promise.resolve(onReply?.(done)).catch(() => {});
+      if (streamText) relay(done);
     };
 
     const onEvent = (row: { type: string; payload: string }) => {
@@ -286,6 +312,16 @@ class SessionManager extends EventEmitter {
         case "message_end":
           flush();
           break;
+
+        case "tool_execution_start": {
+          if (!onReply) break;
+          // Prose first: a tool line landing mid-sentence reads badly.
+          flush();
+          const name = String(payload.toolName ?? payload.name ?? "tool");
+          const detail = summarizeToolInput(payload);
+          relay(detail ? `⚙ ${name} · ${detail}` : `⚙ ${name}`);
+          break;
+        }
         case "agent_end":
           // Anything not closed by a message_end still belongs to the answer.
           flush();
@@ -317,7 +353,8 @@ class SessionManager extends EventEmitter {
       await this.prompt(sessionId, message);
       await finished;
       // Already relayed piece by piece; handing it back would post it twice.
-      return onReply ? "" : all.join("\n\n").trim();
+      // Streamed already, so handing it back would post it twice.
+      return onReply && streamText ? "" : all.join("\n\n").trim();
     } finally {
       clearTimeout(timer);
       this.off(`session:${sessionId}`, onEvent);

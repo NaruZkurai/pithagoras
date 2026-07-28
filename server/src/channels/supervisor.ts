@@ -21,6 +21,8 @@ interface ChannelRow {
   enabled: number;
   config: string;
   instructions: string;
+  relay_progress: number;
+  relay_tools: number;
   updated_at: string;
 }
 
@@ -206,11 +208,21 @@ class ChannelSupervisor {
       return "Stopped.";
     }
 
-    const onReply = typeof meta.onReply === "function"
-      ? (meta.onReply as (text: string) => void | Promise<void>)
-      : undefined;
+    const packageReply =
+      typeof meta.onReply === "function"
+        ? (meta.onReply as (text: string) => void | Promise<void>)
+        : undefined;
 
-    return sessions.ask(session.id, withInstructions(text, row.instructions), { onReply });
+    // Both off and nothing is relayed: the package gets one reply at the end,
+    // which is also what a package that never passed onReply gets.
+    const wantsProgress = Boolean(row.relay_progress);
+    const wantsTools = Boolean(row.relay_tools);
+    const relaying = packageReply && (wantsProgress || wantsTools);
+
+    return sessions.ask(session.id, withInstructions(text, row.instructions), {
+      onReply: relaying ? packageReply : undefined,
+      streamText: wantsProgress,
+    });
   }
 
   /** One line for the boot log. */

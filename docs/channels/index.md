@@ -136,9 +136,18 @@ looking healthy.
 4. The session is prompted, and `ask` **waits** — unlike the portal's own
    prompting, which returns immediately, because somebody is sitting in a chat
    expecting an answer.
-5. The assistant's text goes back to the package — piece by piece via
-   `onReply` as each stretch between tool calls completes, so a long task shows
-   progress rather than going silent.
+5. The assistant's text goes back to the package, along with a line for each
+   tool as it starts (`⚙ bash · npm test`).
+
+Each channel decides how much of that it wants, on its own page:
+
+| Toggle | Effect |
+| --- | --- |
+| **Progress** | Relay what the agent says between tool calls, as it says it |
+| **Tool activity** | Relay the name of each tool as it runs |
+
+Both off and the channel stays quiet until there is an answer. A phone over
+Telegram probably wants less than a war-room Slack channel does.
 
 A message that is only `stop`, `wait`, `cancel`, `abort`, `halt`, `hold on` or
 `nevermind` aborts the current run instead. It is checked before the queue, so
