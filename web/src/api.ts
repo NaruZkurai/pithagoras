@@ -9,6 +9,7 @@ export interface Session {
   created_at: string;
   updated_at: string;
   last_error: string | null;
+  pinned: boolean;
   live?: boolean;
 }
 
@@ -58,6 +59,12 @@ export const api = {
     json<{ ok: boolean }>(`/api/sessions/${sessionId}/ui-response`, {
       method: "POST",
       body: JSON.stringify({ id, ...payload }),
+    }),
+
+  pinSession: (id: string, pinned: boolean) =>
+    json<Session>(`/api/sessions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ pinned }),
     }),
 
   abort: (id: string) => json<{ ok: true }>(`/api/sessions/${id}/abort`, { method: "POST" }),

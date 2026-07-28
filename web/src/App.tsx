@@ -6,6 +6,8 @@ import { Chat } from "./components/Chat";
 import { Login } from "./components/Login";
 import { ConfigModal } from "./components/ConfigModal";
 import { ExtensionDialog, type UiRequest } from "./components/ExtensionDialog";
+import { SessionsPage } from "./components/SessionsPage";
+import { AgentsPage } from "./components/AgentsPage";
 
 // Legacy routes ("session", "global") still resolve — old links stay valid.
 type Tab = "general" | "extensions" | "advanced";
@@ -33,6 +35,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Shell />} />
+      <Route path="/sessions" element={<Shell view="sessions" />} />
+      <Route path="/agents" element={<Shell view="agents" />} />
       <Route path="/s/:sessionId" element={<Shell />} />
       <Route path="/s/:sessionId/settings" element={<Shell settings />} />
       <Route path="/s/:sessionId/settings/:tab" element={<Shell settings />} />
@@ -43,7 +47,13 @@ export default function App() {
   );
 }
 
-function Shell({ settings = false }: { settings?: boolean }) {
+function Shell({
+  settings = false,
+  view = "chat",
+}: {
+  settings?: boolean;
+  view?: "chat" | "sessions" | "agents";
+}) {
   const { sessionId, tab } = useParams<{ sessionId?: string; tab?: string }>();
   const navigate = useNavigate();
 
@@ -131,6 +141,8 @@ function Shell({ settings = false }: { settings?: boolean }) {
         workspaces={workspaces}
         executor={executor}
         activeId={sessionId ?? null}
+        view={view}
+        onNavigate={(to) => navigate(`/${to}`)}
         onSelect={(id) => navigate(`/s/${id}`)}
         onCreate={async (workspacePath) => {
           const s = await api.createSession(workspacePath);
@@ -146,6 +158,10 @@ function Shell({ settings = false }: { settings?: boolean }) {
           await api.renameSession(id, title);
           refreshSessions();
         }}
+        onPin={async (id, pinned) => {
+          await api.pinSession(id, pinned);
+          refreshSessions();
+        }}
         onOpenSettings={() =>
           navigate(sessionId ? `/s/${sessionId}/settings/general` : "/settings/general")
         }
@@ -159,7 +175,22 @@ function Shell({ settings = false }: { settings?: boolean }) {
 
       <main className="flex min-w-0 flex-1 flex-col">
         {error && <div className="bg-red-950/60 px-4 py-2 text-sm text-red-300">{error}</div>}
-        {active ? (
+        {view === "sessions" ? (
+          <SessionsPage
+            sessions={sessions}
+            onSelect={(id) => navigate(`/s/${id}`)}
+            onDelete={async (id) => {
+              await api.deleteSession(id);
+              await refreshSessions();
+            }}
+            onPin={async (id, pinned) => {
+              await api.pinSession(id, pinned);
+              refreshSessions();
+            }}
+          />
+        ) : view === "agents" ? (
+          <AgentsPage />
+        ) : active ? (
           <Chat
             session={active}
             events={events}

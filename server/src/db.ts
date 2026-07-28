@@ -18,6 +18,8 @@ export interface SessionRow {
   provider: string | null;
   model: string | null;
   thinking_level: string | null;
+  /** SQLite has no boolean; 0 or 1. */
+  pinned: number;
 }
 
 export interface EventRow {
@@ -48,7 +50,8 @@ export function getDb(): Database.Database {
       last_error TEXT,
       provider TEXT,
       model TEXT,
-      thinking_level TEXT
+      thinking_level TEXT,
+      pinned INTEGER NOT NULL DEFAULT 0
     );
 
     -- Every event pi emits is appended here. This is what makes the portal
@@ -90,6 +93,9 @@ function migrate(d: Database.Database): void {
   for (const col of ["provider", "model", "thinking_level"]) {
     if (!names.includes(col)) d.exec(`ALTER TABLE sessions ADD COLUMN ${col} TEXT`);
   }
+  if (!names.includes("pinned")) {
+    d.exec("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 export function createSession(row: {
@@ -106,8 +112,9 @@ export function createSession(row: {
 }
 
 export function listSessions(): SessionRow[] {
+  // Pinned first, then most recently touched — the order the sidebar shows.
   return getDb()
-    .prepare("SELECT * FROM sessions ORDER BY updated_at DESC")
+    .prepare("SELECT * FROM sessions ORDER BY pinned DESC, updated_at DESC")
     .all() as SessionRow[];
 }
 
@@ -118,7 +125,10 @@ export function getSession(id: string): SessionRow | undefined {
 export function updateSession(
   id: string,
   fields: Partial<
-    Pick<SessionRow, "title" | "status" | "last_error" | "provider" | "model" | "thinking_level">
+    Pick<
+      SessionRow,
+      "title" | "status" | "last_error" | "provider" | "model" | "thinking_level" | "pinned"
+    >
   >
 ): void {
   const sets: string[] = [];

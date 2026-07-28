@@ -127,9 +127,15 @@ app.post("/api/workspaces", (req, res) => {
 
 // --- sessions ---
 
+/** SQLite stores pinned as 0/1; the API speaks booleans. */
+const toApi = (s: ReturnType<typeof getSession> & {}) => ({
+  ...s,
+  pinned: Boolean(s.pinned),
+  live: sessions.isRunning(s.id),
+});
+
 app.get("/api/sessions", (_req, res) => {
-  const rows = listSessions().map((s) => ({ ...s, live: sessions.isRunning(s.id) }));
-  res.json({ sessions: rows, executor: EXECUTOR_KIND });
+  res.json({ sessions: listSessions().map(toApi), executor: EXECUTOR_KIND });
 });
 
 app.post("/api/sessions", (req, res) => {
@@ -152,21 +158,22 @@ app.post("/api/sessions", (req, res) => {
     workspace: resolved,
     executor: EXECUTOR_KIND,
   });
-  res.json(getSession(id));
+  res.json(toApi(getSession(id)!));
 });
 
 app.get("/api/sessions/:id", (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Not found" });
-  res.json({ ...session, live: sessions.isRunning(session.id) });
+  res.json(toApi(session));
 });
 
 app.patch("/api/sessions/:id", (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Not found" });
-  const { title } = req.body ?? {};
+  const { title, pinned } = req.body ?? {};
   if (typeof title === "string" && title.trim()) updateSession(session.id, { title: title.trim() });
-  res.json(getSession(session.id));
+  if (typeof pinned === "boolean") updateSession(session.id, { pinned: pinned ? 1 : 0 });
+  res.json(toApi(getSession(session.id)!));
 });
 
 app.delete("/api/sessions/:id", async (req, res) => {
