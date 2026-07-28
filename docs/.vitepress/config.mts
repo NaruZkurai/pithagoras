@@ -2,6 +2,9 @@ import { defineConfig } from "vitepress";
 
 export default defineConfig({
   title: "Pithagoras",
+  // Project pages serve from /<repo>/, so every asset and link needs the
+  // prefix. Overridable for a custom domain, where the site is at the root.
+  base: process.env.DOCS_BASE ?? "/pithagoras/",
   description: "A hosted web portal for the pi coding agent",
   lastUpdated: true,
   cleanUrls: true,
@@ -42,7 +45,7 @@ export default defineConfig({
       },
     ],
 
-    socialLinks: [{ icon: "github", link: "https://github.com/thecodacus/Pithagoras" }],
+    socialLinks: [{ icon: "github", link: "https://github.com/thecodacus/pithagoras" }],
 
     search: { provider: "local" },
 
