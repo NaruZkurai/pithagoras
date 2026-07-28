@@ -263,6 +263,15 @@ class ChannelSupervisor {
         }
         const question = describeUi(request);
         if (!question) return; // notify/setStatus/setWidget are one-way
+
+        // A channel with no way to send an unprompted message — a webhook has
+        // one response to fill — cannot ask. Answering it is impossible, so
+        // decline immediately instead of holding the run until it times out.
+        if (!packageReply) {
+          sessions.respondUi(session.id, request.id, { cancelled: true });
+          return;
+        }
+
         this.pendingUi.set(session.id, {
           id: request.id,
           method: request.method,
