@@ -75,8 +75,12 @@ function Shell({
   useEffect(() => {
     refreshSessions()
       .then((list) => {
-        // Landing on "/" opens the most recent session.
-        if (!sessionId && !settings && list[0]) navigate(`/s/${list[0].id}`, { replace: true });
+        // Landing on "/" opens the most recent session — but only "/". The
+        // Sessions and Agents pages have no sessionId either, and without the
+        // view check they were redirected away the moment they loaded.
+        if (!sessionId && !settings && view === "chat" && list[0]) {
+          navigate(`/s/${list[0].id}`, { replace: true });
+        }
       })
       .catch((e) => setError(String(e)));
     api
@@ -85,7 +89,7 @@ function Shell({
       .catch(() => {});
     const t = setInterval(() => refreshSessions().catch(() => {}), 5000);
     return () => clearInterval(t);
-  }, [refreshSessions, sessionId, settings, navigate]);
+  }, [refreshSessions, sessionId, settings, view, navigate]);
 
   // Replay-then-tail for whichever session is in the URL.
   useEffect(() => {
