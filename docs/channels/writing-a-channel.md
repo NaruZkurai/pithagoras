@@ -105,6 +105,10 @@ await sendBack(reply);
 Honour `ctx.signal`. A polling loop should check `signal.aborted` and pass the
 signal to `fetch`, or disabling the channel will leave it running.
 
+You do not handle the channel's [instructions](/channels/#per-channel-instructions).
+They are configured in the portal and attached on its side of `ask()`, so your
+package gets the feature without doing anything.
+
 ## Three shapes
 
 **Polling**, from the Telegram package. Outbound only, which is what makes it

@@ -59,6 +59,27 @@ Settings → Channels.
    enforced server-side.
 3. **Enable it** with the toggle.
 
+Clicking a configured channel opens its own page, where the credentials live
+alongside its **instructions**.
+
+## Per-channel instructions
+
+Each channel can carry standing instructions, appended to the agent's system
+prompt for every message that arrives through that door and no other. The agent
+is one conversation with one memory, but who is on the other end differs by
+channel, and so should the way it answers.
+
+> You are answering over Telegram. Keep replies short — they are read on a
+> phone. Never paste secrets or full file contents.
+
+A Slack channel shared with a team might instead say to explain reasoning before
+acting; a webhook driven by cron might say to reply with a single line and
+nothing else. Leave it empty for none.
+
+This is portal-side, not package-side: a channel package never sees the
+instructions and does not need to. The portal attaches them when it hands the
+message to the agent, so every channel type gets the feature for free.
+
 Secret fields are write-only from the browser's side. The stored value is never
 sent back — the UI is told only that one exists — and saving a blank secret
 keeps what is stored, so editing an unrelated field cannot wipe a token you

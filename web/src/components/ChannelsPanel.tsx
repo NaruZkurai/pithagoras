@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   LuCheck,
+  LuChevronLeft,
+  LuChevronRight,
   LuCircleAlert,
   LuDownload,
   LuFolder,
@@ -34,7 +36,7 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
   const [installing, setInstalling] = useState(false);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -78,6 +80,19 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
     }
   };
 
+  const open = channels.find((c) => c.id === openId);
+  if (openId && open) {
+    return (
+      <ChannelDetail
+        channel={open}
+        kind={kindOf(open.kind)}
+        onBack={() => setOpenId(null)}
+        onError={onError}
+        onChanged={load}
+      />
+    );
+  }
+
   return (
     <>
       <section className="mb-6 rounded-xl border border-white/10 bg-black/20 p-3">
@@ -114,14 +129,11 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
         ) : (
           <ul className="mt-2 space-y-1.5">
             {channels.map((ch) => (
-              <ChannelCard
+              <ChannelRow
                 key={ch.id}
                 channel={ch}
                 kind={kindOf(ch.kind)}
-                busy={busy === ch.id}
-                onError={onError}
-                onChanged={load}
-                setBusy={setBusy}
+                onOpen={() => setOpenId(ch.id)}
               />
             ))}
           </ul>
@@ -152,9 +164,10 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
             kind={kindOf(adding)!}
             onCancel={() => setAdding(null)}
             onError={onError}
-            onCreated={async () => {
+            onCreated={async (created) => {
               setAdding(null);
               await load();
+              setOpenId(created.id);
             }}
           />
         )}
@@ -263,64 +276,127 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
   );
 }
 
-function ChannelCard({
+/** A row in the list. Clicking it opens the channel's own page. */
+function ChannelRow({
   channel: ch,
   kind,
-  busy,
-  onError,
-  onChanged,
-  setBusy,
+  onOpen,
 }: {
   channel: Channel;
   kind?: ChannelKind;
-  busy: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <li>
+      <button
+        onClick={onOpen}
+        className="flex w-full items-center gap-2.5 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-left transition hover:bg-white/5"
+      >
+        <LuRadio className={`h-4 w-4 shrink-0 ${ch.enabled ? "text-cyan-400" : "text-zinc-600"}`} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm text-zinc-200">{ch.name}</p>
+          <p className="truncate text-[11px] text-zinc-600">
+            {kind?.label ?? ch.kind} · {ch.status}
+            {ch.instructions ? " · has instructions" : ""}
+          </p>
+        </div>
+        {!ch.enabled && (
+          <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-500">
+            disabled
+          </span>
+        )}
+        <LuChevronRight className="h-4 w-4 shrink-0 text-zinc-600" />
+      </button>
+    </li>
+  );
+}
+
+/**
+ * One channel's own page inside the modal. The list only has room for a name
+ * and a toggle; everything that needs explaining — credentials, and the
+ * instructions appended for messages arriving here — lives here instead.
+ */
+function ChannelDetail({
+  channel: ch,
+  kind,
+  onBack,
+  onError,
+  onChanged,
+}: {
+  channel: Channel;
+  kind?: ChannelKind;
+  onBack: () => void;
   onError: (e: string) => void;
   onChanged: () => Promise<void>;
-  setBusy: (id: string | null) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [name, setName] = useState(ch.name);
+  const [values, setValues] = useState<Record<string, string>>({ ...ch.config });
+  const [instructions, setInstructions] = useState(ch.instructions ?? "");
+  const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    setName(ch.name);
     setValues({ ...ch.config });
+    setInstructions(ch.instructions ?? "");
   }, [ch.id, ch.updated_at]);
 
+  const dirty =
+    name !== ch.name ||
+    instructions !== (ch.instructions ?? "") ||
+    kind?.fields.some((f) => (values[f.key] ?? "") !== (ch.config[f.key] ?? ""));
+
   const act = async (fn: () => Promise<unknown>) => {
-    setBusy(ch.id);
+    setBusy(true);
     try {
       await fn();
       await onChanged();
     } catch (e) {
       onError((e as Error).message);
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
   const save = () =>
     act(async () => {
-      await api.updateChannel(ch.id, { config: values });
+      await api.updateChannel(ch.id, { name, config: values, instructions });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     });
 
   return (
-    <li className="rounded-xl border border-white/10 bg-black/20 px-3 py-2.5">
-      <div className="flex items-center gap-2">
-        <LuRadio className={`h-4 w-4 shrink-0 ${ch.enabled ? "text-cyan-400" : "text-zinc-600"}`} />
-        <button onClick={() => setOpen(!open)} className="min-w-0 flex-1 text-left">
-          <p className="truncate text-sm text-zinc-200">{ch.name}</p>
-          <p className="truncate text-[11px] text-zinc-600">
+    <>
+      <button
+        onClick={onBack}
+        className="mb-4 inline-flex items-center gap-1.5 text-xs text-zinc-500 transition hover:text-zinc-300"
+      >
+        <LuChevronLeft className="h-3.5 w-3.5" /> Channels
+      </button>
+
+      <div className="mb-5 flex items-start gap-3">
+        <div
+          className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${
+            ch.enabled ? "bg-cyan-500/10 text-cyan-300" : "bg-white/5 text-zinc-500"
+          }`}
+        >
+          <LuRadio className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full bg-transparent text-sm font-medium text-zinc-100 outline-none"
+          />
+          <p className="truncate text-xs text-zinc-500">
             {kind?.label ?? ch.kind} · {ch.status}
           </p>
-        </button>
-
+        </div>
         <button
           onClick={() => act(() => api.updateChannel(ch.id, { enabled: !ch.enabled }))}
           disabled={busy}
           title={ch.enabled ? "Disable" : "Enable"}
-          className={`relative h-5 w-9 shrink-0 rounded-full transition disabled:opacity-40 ${
+          className={`relative mt-1 h-5 w-9 shrink-0 rounded-full transition disabled:opacity-40 ${
             ch.enabled ? "bg-cyan-500/70" : "bg-zinc-700"
           }`}
         >
@@ -330,61 +406,102 @@ function ChannelCard({
             }`}
           />
         </button>
-        <button
-          onClick={() => {
-            if (confirm(`Remove "${ch.name}"?`)) act(() => api.deleteChannel(ch.id));
-          }}
-          disabled={busy}
-          className="shrink-0 rounded-lg p-1.5 text-zinc-500 transition hover:bg-red-950/50 hover:text-red-300 disabled:opacity-40"
-          title="Remove"
-        >
-          {busy ? (
-            <LuRefreshCw className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <LuTrash2 className="h-3.5 w-3.5" />
-          )}
-        </button>
       </div>
 
-      {open && kind && (
-        <div className="mt-3 space-y-3 border-t border-white/10 pt-3">
-          {kind.fields.map((f) => (
-            <div key={f.key}>
-              <div className="flex items-baseline gap-2">
-                <label className="font-mono text-xs text-zinc-300">{f.label}</label>
-                {f.secret &&
-                  (ch.secretsSet.includes(f.key) ? (
-                    <span className="text-[10px] text-emerald-500/80">stored</span>
-                  ) : (
-                    <span className="text-[10px] text-zinc-600">not set</span>
-                  ))}
+      <section className="mb-6">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          Instructions
+        </h3>
+        <p className="mt-0.5 text-xs text-zinc-500">
+          Appended to the agent's system prompt for every message that arrives through this
+          channel. Use it for standing guidance that only applies here — the shape of the reply,
+          who is on the other end, what to leave out.
+        </p>
+        <textarea
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          rows={6}
+          placeholder={"You are answering over " + (kind?.label ?? "this channel") + ". Keep replies short — they are read on a phone. Never paste secrets or full file contents."}
+          className={`${inputCls} mt-2 resize-y text-xs leading-relaxed`}
+        />
+        <p className="mt-1 text-[11px] text-zinc-600">
+          Leave empty for none. The agent's own memory is shared across channels; this is not.
+        </p>
+      </section>
+
+      {kind && kind.fields.length > 0 && (
+        <section className="mb-6">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+            Connection
+          </h3>
+          <div className="mt-2 space-y-3">
+            {kind.fields.map((f) => (
+              <div key={f.key}>
+                <div className="flex items-baseline gap-2">
+                  <label className="font-mono text-xs text-zinc-300">{f.label}</label>
+                  {f.secret &&
+                    (ch.secretsSet.includes(f.key) ? (
+                      <span className="text-[10px] text-emerald-500/80">stored</span>
+                    ) : (
+                      <span className="text-[10px] text-zinc-600">not set</span>
+                    ))}
+                </div>
+                <input
+                  type={f.secret ? "password" : "text"}
+                  value={values[f.key] ?? ""}
+                  onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                  placeholder={
+                    f.secret && ch.secretsSet.includes(f.key)
+                      ? "leave blank to keep the stored value"
+                      : f.placeholder
+                  }
+                  className={`${inputCls} mt-1 font-mono text-xs`}
+                />
+                {f.hint && <p className="mt-1 text-[11px] text-zinc-600">{f.hint}</p>}
               </div>
-              <input
-                type={f.secret ? "password" : "text"}
-                value={values[f.key] ?? ""}
-                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-                placeholder={
-                  f.secret && ch.secretsSet.includes(f.key)
-                    ? "leave blank to keep the stored value"
-                    : f.placeholder
-                }
-                className={`${inputCls} mt-1 font-mono text-xs`}
-              />
-              {f.hint && <p className="mt-1 text-[11px] text-zinc-600">{f.hint}</p>}
-            </div>
-          ))}
-          <button onClick={save} disabled={busy} className={saved ? primaryCls : btnCls}>
-            {saved ? (
-              <>
-                <LuCheck className="h-4 w-4" /> Saved
-              </>
-            ) : (
-              "Save"
-            )}
-          </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!kind && (
+        <div className="mb-6 flex items-start gap-2 rounded-xl border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+          <LuCircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <p>
+            No installed package provides “{ch.kind}”. Reinstall it to edit this channel, or delete
+            the channel below.
+          </p>
         </div>
       )}
-    </li>
+
+      <div className="flex items-center gap-2">
+        <button onClick={save} disabled={busy || !dirty} className={primaryCls}>
+          {busy ? (
+            <LuRefreshCw className="h-4 w-4 animate-spin" />
+          ) : saved ? (
+            <>
+              <LuCheck className="h-4 w-4" /> Saved
+            </>
+          ) : (
+            "Save"
+          )}
+        </button>
+        <button
+          onClick={() => {
+            if (confirm(`Remove "${ch.name}"?`)) {
+              act(async () => {
+                await api.deleteChannel(ch.id);
+                onBack();
+              });
+            }
+          }}
+          disabled={busy}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-zinc-500 transition hover:bg-red-950/50 hover:text-red-300 disabled:opacity-40"
+        >
+          <LuTrash2 className="h-3.5 w-3.5" /> Remove channel
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -396,7 +513,7 @@ function NewChannelForm({
 }: {
   kind: ChannelKind;
   onCancel: () => void;
-  onCreated: () => Promise<void>;
+  onCreated: (created: Channel) => Promise<void>;
   onError: (e: string) => void;
 }) {
   const [name, setName] = useState(kind.label);
@@ -411,8 +528,8 @@ function NewChannelForm({
   const create = async () => {
     setBusy(true);
     try {
-      await api.createChannel(kind.id, name, values);
-      await onCreated();
+      const created = await api.createChannel(kind.id, name, values);
+      await onCreated(created);
     } catch (e) {
       onError((e as Error).message);
     } finally {

@@ -42,6 +42,7 @@ interface ChannelRow {
   name: string;
   enabled: number;
   config: string;
+  instructions: string;
   created_at: string;
   updated_at: string;
 }
@@ -80,6 +81,7 @@ function toApi(row: ChannelRow, kind?: LoadedChannel) {
     enabled: Boolean(row.enabled),
     config: visible,
     secretsSet,
+    instructions: row.instructions ?? "",
     /** No transport is running yet — say so rather than implying it is live. */
     status: "not connected" as const,
     created_at: row.created_at,
@@ -142,13 +144,19 @@ export function channelsRouter(): Router {
       });
     }
 
-    const { name, enabled, config } = req.body ?? {};
+    const { name, enabled, config, instructions } = req.body ?? {};
     const sets: string[] = [];
     const values: unknown[] = [];
 
     if (typeof name === "string" && name.trim()) {
       sets.push("name = ?");
       values.push(name.trim());
+    }
+    // Not trimmed to empty-means-unchanged: clearing the box should clear the
+    // instructions, which is only expressible if "" is a real value.
+    if (typeof instructions === "string") {
+      sets.push("instructions = ?");
+      values.push(instructions.trim());
     }
     if (typeof enabled === "boolean") {
       sets.push("enabled = ?");

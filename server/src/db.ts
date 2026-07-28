@@ -78,6 +78,9 @@ export function getDb(): Database.Database {
       name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       config TEXT NOT NULL DEFAULT '{}',
+      -- Appended to the agent's system prompt for messages arriving here, so
+      -- one door can carry standing guidance the others do not.
+      instructions TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -114,6 +117,13 @@ function migrate(d: Database.Database): void {
   }
   if (!names.includes("pi_session_file")) {
     d.exec("ALTER TABLE sessions ADD COLUMN pi_session_file TEXT");
+  }
+
+  const channelCols = (d.prepare("PRAGMA table_info(channels)").all() as { name: string }[]).map(
+    (c) => c.name
+  );
+  if (channelCols.length && !channelCols.includes("instructions")) {
+    d.exec("ALTER TABLE channels ADD COLUMN instructions TEXT NOT NULL DEFAULT ''");
   }
 }
 

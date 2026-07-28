@@ -128,7 +128,12 @@ export const api = {
     }),
   updateChannel: (
     id: string,
-    patch: { name?: string; enabled?: boolean; config?: Record<string, string> }
+    patch: {
+      name?: string;
+      enabled?: boolean;
+      config?: Record<string, string>;
+      instructions?: string;
+    }
   ) =>
     json<Channel>(`/api/channels/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteChannel: (id: string) =>
@@ -234,6 +239,8 @@ export interface Channel {
   config: Record<string, string>;
   /** Which secret fields have a value stored. */
   secretsSet: string[];
+  /** Appended to the agent's system prompt for messages arriving here. */
+  instructions: string;
   status: string;
   created_at: string;
   updated_at: string;
