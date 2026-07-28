@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { LuPin, LuPinOff, LuSearch, LuTrash2 } from "react-icons/lu";
+import { LuMessagesSquare, LuPin, LuPinOff, LuSearch, LuTrash2 } from "react-icons/lu";
 import type { Session, SessionStatus } from "../api";
 
 const STATUS_STYLE: Record<SessionStatus, string> = {
@@ -19,6 +19,15 @@ const when = (iso: string) => {
   return `${Math.round(mins / 1440)}d ago`;
 };
 
+function Stat({ label, value, tone }: { label: string; value: number; tone?: string }) {
+  return (
+    <div className="flex items-baseline gap-1.5 rounded-lg bg-black/30 px-2.5 py-1">
+      <dd className={`text-sm tabular-nums ${tone ?? "text-zinc-200"}`}>{value}</dd>
+      <dt className="text-[11px] text-zinc-500">{label}</dt>
+    </div>
+  );
+}
+
 /**
  * Every session, not just the dozen the sidebar has room for — with search,
  * since the sidebar list is capped and old sessions otherwise become
@@ -37,6 +46,9 @@ export function SessionsPage({
 }) {
   const [query, setQuery] = useState("");
 
+  const running = sessions.filter((s) => s.status === "running").length;
+  const pinnedCount = sessions.filter((s) => s.pinned).length;
+
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return sessions;
@@ -45,18 +57,30 @@ export function SessionsPage({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="border-b border-zinc-800 px-4 py-3">
+      <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto w-full max-w-3xl">
-          <h2 className="text-sm font-semibold text-zinc-200">Sessions</h2>
-          <p className="text-xs text-zinc-500">
-            {sessions.length} total · {sessions.filter((s) => s.pinned).length} pinned
-          </p>
-        </div>
-      </header>
+          <header className="rounded-2xl border border-white/10 bg-gradient-to-br from-cyan-500/10 via-transparent to-transparent px-5 py-5">
+            <div className="flex items-start gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-500/15 text-cyan-300">
+                <LuMessagesSquare className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-zinc-100">Sessions</h2>
+                <p className="mt-0.5 max-w-xl text-sm text-zinc-400">
+                  Every task you have handed to pi. Each one runs on the server, so you can close
+                  the tab and pick it back up here once it is done.
+                </p>
+              </div>
+            </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4">
-        <div className="mx-auto w-full max-w-3xl">
-          <div className="relative">
+            <dl className="mt-4 flex flex-wrap gap-2">
+              <Stat label="total" value={sessions.length} />
+              <Stat label="running" value={running} tone="text-cyan-300" />
+              <Stat label="pinned" value={pinnedCount} />
+            </dl>
+          </header>
+
+          <div className="relative mt-4">
             <LuSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-600" />
             <input
               value={query}
@@ -64,6 +88,11 @@ export function SessionsPage({
               placeholder="Search by name or workspace…"
               className="w-full rounded-lg border border-white/10 bg-black/30 py-2 pl-9 pr-3 text-sm outline-none placeholder:text-zinc-600 focus:border-cyan-500/60"
             />
+            {query && (
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-zinc-600">
+                {matches.length} of {sessions.length}
+              </span>
+            )}
           </div>
 
           {matches.length === 0 ? (
