@@ -5,16 +5,28 @@ is the opposite — a single long-lived pi session rooted at a fixed directory,
 `agentHome`, that you talk to continuously.
 
 A **channel** is a two-way link into that agent. Messages arrive through it and
-the agent's replies go back out the same way. Every channel points at the same
-session, so they are different doors into one conversation rather than separate
-agents with separate memories. Message it from Telegram on the way to work,
-follow up over a webhook from a cron job, and it is the same thread.
+the agent's replies go back out the same way.
+
+## One session per conversation
+
+A channel is not one conversation. A bot in a group chat and the same bot in
+your DMs are two different discussions with two different sets of people, and
+they should not share a memory.
+
+So the channel package supplies a **session key** for every message — whatever
+identifies a conversation on that platform — and the portal turns each key into
+its own isolated session, all rooted at `agentHome`.
 
 ```
-Telegram ─┐
-Webhook  ─┼──▶  agent session (agentHome)  ──▶  replies back out the same door
-your own ─┘
+Telegram ─┬─ chat:-100987  ──▶  session  "Engineering"
+          └─ chat:12345    ──▶  session  "DM"
+Discord  ──── channel:987  ──▶  session  "#ops"
 ```
+
+Keys are prefixed with the channel's id before storage, so two channels both
+picking `general` stay separate. They are ordinary sessions — same transcript,
+same replay, same model handling — and they are listed on the **Agent** tab,
+where clicking one opens it in the normal chat view.
 
 ## Channel types are packages
 

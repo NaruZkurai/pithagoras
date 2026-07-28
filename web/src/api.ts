@@ -11,6 +11,15 @@ export interface Session {
   last_error: string | null;
   pinned: boolean;
   live?: boolean;
+  /** "task" for ones you create; "agent" for ones reached through a channel. */
+  kind?: "task" | "agent";
+}
+
+/** A conversation that reached the agent through a channel. */
+export interface AgentSession extends Session {
+  /** The package-supplied conversation key, prefixed with the channel id. */
+  channel_key: string;
+  channel: { id: string; name: string; kind: string | null } | null;
 }
 
 export interface Workspace {
@@ -60,6 +69,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ id, ...payload }),
     }),
+
+  agentSessions: () =>
+    json<{ sessions: AgentSession[]; agentHome: string }>("/api/agent/sessions"),
 
   pinSession: (id: string, pinned: boolean) =>
     json<Session>(`/api/sessions/${id}`, {

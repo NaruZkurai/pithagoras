@@ -100,8 +100,16 @@ with the message so a reply can be routed back — for Telegram that is the chat
 id, for a webhook it is the request. The promise resolves with the agent's
 reply text.
 
+`meta.session` is required: each distinct key gets its own session, so decide
+what counts as one conversation on your platform. The key is prefixed with the
+channel id before storage, so two channels using the same key stay separate.
+
 ```js
-const reply = await ctx.ask("Deploy the staging branch", { from: "telegram:12345" });
+const reply = await ctx.ask("Deploy the staging branch", {
+  session: `chat:${chatId}`,
+  title: "Engineering",
+  chatId,
+});
 await sendBack(reply);
 ```
 

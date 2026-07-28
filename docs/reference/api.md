@@ -32,7 +32,8 @@ curl -s -b jar localhost:4100/api/sessions
 
 | | |
 | --- | --- |
-| `GET /api/sessions` | `{ sessions, executor }` — pinned first, then most recent |
+| `GET /api/sessions` | `{ sessions, executor }` — pinned first, then most recent. Task sessions only. |
+| `GET /api/agent/sessions` | `{ sessions, agentHome }` — conversations reached through a channel, each with the channel that owns it |
 | `POST /api/sessions` | `{ workspace, title? }` |
 | `GET /api/sessions/:id` | One session |
 | `PATCH /api/sessions/:id` | `{ title?, pinned? }` |

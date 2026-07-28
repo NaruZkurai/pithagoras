@@ -9,15 +9,18 @@ import {
   deleteSession,
   eventsSince,
   getSession,
+  listAgentSessions,
   listSessions,
   updateSession,
 } from "./db.js";
+import { agentHome, resolveChannelSession } from "./agent.js";
 import { sessions, EXECUTOR_KIND } from "./session-manager.js";
 import { authEnabled, checkPassword, isAuthed, issueCookie, requireAuth } from "./auth.js";
 import { packagesRouter } from "./api/packages.js";
 import { extensionsRouter } from "./api/extensions.js";
 import { channelsRouter } from "./api/channels.js";
 import { piSettingsPath } from "./pi-settings.js";
+import { getDb } from "./db.js";
 import { getBuiltinCommands } from "./pi/builtins.js";
 import { isValidSlug, slugify } from "./slug.js";
 import { getSettingDefaults, getSettings, getStoredSettings, setSettings } from "./db.js";
@@ -137,6 +140,32 @@ const toApi = (s: ReturnType<typeof getSession> & {}) => ({
 
 app.get("/api/sessions", (_req, res) => {
   res.json({ sessions: listSessions().map(toApi), executor: EXECUTOR_KIND });
+});
+
+/**
+ * Conversations reached through a channel. Each is a real session — same
+ * transcript, same replay, same model handling — so the Agent tab opens them
+ * with the ordinary chat view rather than a parallel implementation.
+ */
+app.get("/api/agent/sessions", (_req, res) => {
+  const channels = getDb()
+    .prepare("SELECT id, name, kind FROM channels")
+    .all() as { id: string; name: string; kind: string }[];
+  const byId = new Map(channels.map((c) => [c.id, c]));
+
+  res.json({
+    agentHome: agentHome(),
+    sessions: listAgentSessions().map((s) => ({
+      ...toApi(s),
+      channel: s.channel_id
+        ? {
+            id: s.channel_id,
+            name: byId.get(s.channel_id)?.name ?? "(removed channel)",
+            kind: byId.get(s.channel_id)?.kind ?? null,
+          }
+        : null,
+    })),
+  });
 });
 
 app.post("/api/sessions", (req, res) => {

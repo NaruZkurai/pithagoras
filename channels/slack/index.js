@@ -118,8 +118,12 @@ export async function start(ctx) {
       // Reply in the thread it came from, or start one on the message itself.
       const thread = event.thread_ts || event.ts;
       try {
+        // Per channel, not per thread: a thread is a digression inside one
+        // conversation, and splitting them would give the agent amnesia
+        // halfway through a discussion.
         const reply = await ctx.ask(text, {
-          from: `slack:${event.channel}`,
+          session: `channel:${event.channel}`,
+          title: channelTitle(event),
           channel: event.channel,
           thread,
           user: event.user,
@@ -165,6 +169,10 @@ export async function start(ctx) {
     },
   };
 }
+
+/** Slack does not put a name on the event, so the id is what there is. */
+const channelTitle = (event) =>
+  event.channel_type === "im" ? `DM ${event.channel}` : `Slack ${event.channel}`;
 
 /** "<@U123> deploy staging" is addressed to us; the mention is not the ask. */
 const stripMention = (text, selfId) =>

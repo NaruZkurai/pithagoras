@@ -90,17 +90,44 @@ Called once when the channel is enabled. Return an object with `stop()`.
 | `ctx` | |
 | --- | --- |
 | `config` | The configured values, secrets included. |
-| `ask(text, meta)` | Send to the agent; resolves with its reply. |
+| `ask(text, meta)` | Send to the agent; resolves with its reply. `meta.session` is required. |
 | `log(message)` | Surfaced in the channel's status. |
 | `signal` | `AbortSignal`, aborted when the channel is disabled or the portal shuts down. |
 
-`ask` is the entire interface to the agent. `meta` is free-form and travels with
-the message so you can route the reply back where it came from.
+`ask` is the entire interface to the agent.
+
+### The session key
+
+**`meta.session` is required, and picking it well is your main design decision.**
+
+Each distinct key gets its own session — its own conversation, its own memory.
+Your job is to decide what counts as one conversation on your platform; the
+portal turns each key into an isolated session and keeps them apart.
 
 ```js
-const reply = await ctx.ask("Deploy the staging branch", { from: "telegram:12345" });
-await sendBack(reply);
+const reply = await ctx.ask(text, {
+  session: `chat:${chatId}`,   // one conversation
+  title: "Engineering",        // human label, used the first time only
+  chatId,                      // anything else you need to route the reply
+});
 ```
+
+Get it wrong in one direction and a group chat and your DM share a memory; get
+it wrong in the other and the agent forgets everything between messages. What
+the builtins settled on:
+
+| Package | Key | Why |
+| --- | --- | --- |
+| Telegram | `chat:<chat id>` | A DM and a group have different chat ids, so they separate for free. |
+| Slack | `channel:<channel>` | Per channel, not per thread — a thread is a digression inside one conversation. |
+| Discord | `channel:<channel id>` | A DM is a channel too, so servers and DMs separate for free. |
+| Webhook | whatever the caller sends, else `default` | Only the caller knows what a conversation is. |
+
+Your key is prefixed with the channel's id before it is stored, so two channels
+both choosing `general` stay separate without either knowing about the other.
+
+Anything else in `meta` is yours — it travels with the message so you can route
+the reply back where it came from.
 
 Honour `ctx.signal`. A polling loop should check `signal.aborted` and pass the
 signal to `fetch`, or disabling the channel will leave it running.
@@ -185,5 +212,7 @@ see a change.
 - **Uninstalling keeps configured channels.** Removing a package does not
   discard credentials; those channels report the missing package until it is
   reinstalled or deleted.
+- **A key is mandatory.** `ask` without `meta.session` throws rather than
+  quietly lumping everything into one conversation.
 - **`start()` is not called yet.** See [the note](/channels/#what-does-not-work-yet).
   Write against this contract; it is what the runtime will use.

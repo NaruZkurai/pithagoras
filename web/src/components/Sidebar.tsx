@@ -62,7 +62,7 @@ export function Sidebar({
   executor: string;
   activeId: string | null;
   /** Which top-level destination is showing, so the nav can mark it. */
-  view: "chat" | "sessions" | "agents";
+  view: "chat" | "sessions" | "agent";
   onSelect: (id: string) => void;
   onCreate: (workspacePath: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
@@ -70,7 +70,7 @@ export function Sidebar({
   onPin: (id: string, pinned: boolean) => Promise<void>;
   onCreateWorkspace: (name: string) => Promise<Workspace>;
   onOpenSettings: () => void;
-  onNavigate: (to: "sessions" | "agents") => void;
+  onNavigate: (to: "sessions" | "agent") => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [choice, setChoice] = useState<string>(NEW);
@@ -140,9 +140,9 @@ export function Sidebar({
         />
         <NavItem
           icon={<LuBot />}
-          label="Agents"
-          onClick={() => onNavigate("agents")}
-          active={view === "agents"}
+          label="Agent"
+          onClick={() => onNavigate("agent")}
+          active={view === "agent"}
         />
 
         {creating && (

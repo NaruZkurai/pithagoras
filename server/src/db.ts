@@ -22,6 +22,16 @@ export interface SessionRow {
   pinned: number;
   /** pi's own session file, so the exact conversation is reopened on restart. */
   pi_session_file: string | null;
+  /** "task" for the ones you create here; "agent" for one reached via a channel. */
+  kind: "task" | "agent";
+  /** Agent sessions only: which channel it arrived through. */
+  channel_id: string | null;
+  /**
+   * Agent sessions only: the conversation key the channel package supplied —
+   * a Telegram chat id, a Slack channel, a Discord channel. Unique per channel,
+   * which is what keeps a group chat and a DM from sharing a memory.
+   */
+  channel_key: string | null;
 }
 
 export interface EventRow {
@@ -54,8 +64,16 @@ export function getDb(): Database.Database {
       model TEXT,
       thinking_level TEXT,
       pinned INTEGER NOT NULL DEFAULT 0,
-      pi_session_file TEXT
+      pi_session_file TEXT,
+      kind TEXT NOT NULL DEFAULT 'task',
+      channel_id TEXT,
+      channel_key TEXT
     );
+    -- One session per conversation per channel. The uniqueness is the whole
+    -- point: two messages from the same chat must land in the same session,
+    -- and two different chats must never share one.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_channel
+      ON sessions(channel_id, channel_key) WHERE channel_id IS NOT NULL;
 
     -- Every event pi emits is appended here. This is what makes the portal
     -- fire-and-forget: a browser that reconnects days later replays from its
@@ -119,6 +137,14 @@ function migrate(d: Database.Database): void {
     d.exec("ALTER TABLE sessions ADD COLUMN pi_session_file TEXT");
   }
 
+  if (!names.includes("kind")) {
+    d.exec("ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'");
+  }
+  if (!names.includes("channel_id")) d.exec("ALTER TABLE sessions ADD COLUMN channel_id TEXT");
+  if (!names.includes("channel_key")) d.exec("ALTER TABLE sessions ADD COLUMN channel_key TEXT");
+  d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_channel
+            ON sessions(channel_id, channel_key) WHERE channel_id IS NOT NULL`);
+
   const channelCols = (d.prepare("PRAGMA table_info(channels)").all() as { name: string }[]).map(
     (c) => c.name
   );
@@ -132,19 +158,42 @@ export function createSession(row: {
   title: string;
   workspace: string;
   executor: string;
+  kind?: "task" | "agent";
+  channel_id?: string | null;
+  channel_key?: string | null;
 }): void {
   getDb()
     .prepare(
-      "INSERT INTO sessions (id, title, workspace, executor) VALUES (@id, @title, @workspace, @executor)"
+      `INSERT INTO sessions (id, title, workspace, executor, kind, channel_id, channel_key)
+       VALUES (@id, @title, @workspace, @executor, @kind, @channel_id, @channel_key)`
     )
-    .run(row);
+    .run({
+      kind: "task",
+      channel_id: null,
+      channel_key: null,
+      ...row,
+    });
 }
 
+/** The sessions you create yourself. Agent sessions have their own tab. */
 export function listSessions(): SessionRow[] {
   // Pinned first, then most recently touched — the order the sidebar shows.
   return getDb()
-    .prepare("SELECT * FROM sessions ORDER BY pinned DESC, updated_at DESC")
+    .prepare("SELECT * FROM sessions WHERE kind = 'task' ORDER BY pinned DESC, updated_at DESC")
     .all() as SessionRow[];
+}
+
+/** Conversations reached through a channel, newest first. */
+export function listAgentSessions(): SessionRow[] {
+  return getDb()
+    .prepare("SELECT * FROM sessions WHERE kind = 'agent' ORDER BY updated_at DESC")
+    .all() as SessionRow[];
+}
+
+export function findChannelSession(channelId: string, key: string): SessionRow | undefined {
+  return getDb()
+    .prepare("SELECT * FROM sessions WHERE channel_id = ? AND channel_key = ?")
+    .get(channelId, key) as SessionRow | undefined;
 }
 
 export function getSession(id: string): SessionRow | undefined {

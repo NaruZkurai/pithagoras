@@ -7,7 +7,7 @@ import { Login } from "./components/Login";
 import { ConfigModal } from "./components/ConfigModal";
 import { ExtensionDialog, type UiRequest } from "./components/ExtensionDialog";
 import { SessionsPage } from "./components/SessionsPage";
-import { AgentsPage } from "./components/AgentsPage";
+import { AgentPage } from "./components/AgentPage";
 
 // Legacy routes ("session", "global") still resolve — old links stay valid.
 type Tab = "general" | "extensions" | "advanced";
@@ -36,7 +36,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Shell />} />
       <Route path="/sessions" element={<Shell view="sessions" />} />
-      <Route path="/agents" element={<Shell view="agents" />} />
+      <Route path="/agent" element={<Shell view="agent" />} />
       <Route path="/s/:sessionId" element={<Shell />} />
       <Route path="/s/:sessionId/settings" element={<Shell settings />} />
       <Route path="/s/:sessionId/settings/:tab" element={<Shell settings />} />
@@ -52,7 +52,7 @@ function Shell({
   view = "chat",
 }: {
   settings?: boolean;
-  view?: "chat" | "sessions" | "agents";
+  view?: "chat" | "sessions" | "agent";
 }) {
   const { sessionId, tab } = useParams<{ sessionId?: string; tab?: string }>();
   const navigate = useNavigate();
@@ -192,8 +192,8 @@ function Shell({
               refreshSessions();
             }}
           />
-        ) : view === "agents" ? (
-          <AgentsPage />
+        ) : view === "agent" ? (
+          <AgentPage onSelect={(id) => navigate(`/s/${id}`)} />
         ) : active ? (
           <Chat
             session={active}

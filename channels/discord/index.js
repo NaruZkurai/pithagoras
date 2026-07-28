@@ -170,8 +170,13 @@ export async function start(ctx) {
       if (!text) return;
 
       try {
+        // A DM is a channel as far as Discord is concerned, so keying on the
+        // channel separates DMs from servers with no extra work.
         const reply = await ctx.ask(text, {
-          from: `discord:${message.channel_id}`,
+          session: `channel:${message.channel_id}`,
+          title: message.guild_id
+            ? `Discord ${message.channel_id}`
+            : `DM ${message.author?.username ?? message.channel_id}`,
           channel: message.channel_id,
           user: message.author?.id,
           guild: message.guild_id,

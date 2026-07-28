@@ -90,7 +90,13 @@ export async function start(ctx) {
 
         try {
           await call(token, "sendChatAction", { chat_id: chatId, action: "typing" }, ctx.signal);
-          const reply = await ctx.ask(text, { from: `telegram:${chatId}`, chatId });
+          // The chat id is the conversation: a DM and a group have different
+          // ones, so each gets its own session without any special casing.
+          const reply = await ctx.ask(text, {
+            session: `chat:${chatId}`,
+            title: chatTitle(message.chat),
+            chatId,
+          });
           // Telegram rejects anything over 4096 characters outright.
           for (const chunk of split(reply || "(no reply)", 4000)) {
             await call(token, "sendMessage", { chat_id: chatId, text: chunk }, ctx.signal);
@@ -112,6 +118,13 @@ export async function start(ctx) {
       await loop.catch(() => {});
     },
   };
+}
+
+/** Something recognisable in the session list rather than a bare number. */
+function chatTitle(chat) {
+  if (chat.title) return chat.title;
+  const name = [chat.first_name, chat.last_name].filter(Boolean).join(" ");
+  return name || (chat.username ? `@${chat.username}` : `Chat ${chat.id}`);
 }
 
 function split(text, size) {
