@@ -322,14 +322,29 @@ class SessionManager extends EventEmitter {
           relay(detail ? `⚙ ${name} · ${detail}` : `⚙ ${name}`);
           break;
         }
+        // Output from a builtin like /session or /compact. It is the answer as
+        // far as whoever asked is concerned, so it goes back like any other.
+        case "portal_notice":
+          flush();
+          if (typeof payload.text === "string" && payload.text.trim()) {
+            all.push(payload.text.trim());
+            if (streamText) relay(payload.text.trim());
+          }
+          break;
+
         case "agent_end":
           // Anything not closed by a message_end still belongs to the answer.
           flush();
           settle?.();
           break;
+
         case "portal_status":
           if (payload.status === "error") fail?.(new Error(String(payload.error ?? "run failed")));
-          if (payload.status === "idle" && payload.aborted) {
+          // Settled on idle, not only on agent_end. A slash command completes
+          // without ever starting an agent turn, so waiting for agent_end hung
+          // until the timeout — and because asks are serialised per session,
+          // every later message in that chat queued behind it.
+          if (payload.status === "idle") {
             flush();
             settle?.();
           }
