@@ -69,11 +69,10 @@ export function getDb(): Database.Database {
       channel_id TEXT,
       channel_key TEXT
     );
-    -- One session per conversation per channel. The uniqueness is the whole
-    -- point: two messages from the same chat must land in the same session,
-    -- and two different chats must never share one.
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_channel
-      ON sessions(channel_id, channel_key) WHERE channel_id IS NOT NULL;
+    -- The index on (channel_id, channel_key) is created in migrate(), not here.
+    -- CREATE TABLE IF NOT EXISTS is a no-op against an existing table, so on an
+    -- upgrade these columns do not exist yet at this point and indexing them
+    -- fails — which took the server down until the migration had run.
 
     -- Every event pi emits is appended here. This is what makes the portal
     -- fire-and-forget: a browser that reconnects days later replays from its
