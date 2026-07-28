@@ -88,31 +88,14 @@ export async function start(ctx) {
           continue;
         }
 
-        try {
-          await call(token, "sendChatAction", { chat_id: chatId, action: "typing" }, ctx.signal);
-          // The chat id is the conversation: a DM and a group have different
-          // ones, so each gets its own session without any special casing.
-          const say = async (body) => {
-            // Telegram rejects anything over 4096 characters outright.
-            for (const chunk of split(body, 4000)) {
-              await call(token, "sendMessage", { chat_id: chatId, text: chunk }, ctx.signal);
-            }
-          };
-          // onReply relays what the agent says between tool calls, so a long
-          // task shows progress instead of going silent for minutes.
-          await ctx.ask(text, {
-            session: `chat:${chatId}`,
-            title: chatTitle(message.chat),
-            chatId,
-            onReply: say,
-          });
-        } catch (e) {
-          ctx.log(`failed to answer ${chatId}: ${e.message}`);
-          await call(token, "sendMessage", {
-            chat_id: chatId,
-            text: `Something went wrong: ${e.message}`,
-          }).catch(() => {});
-        }
+        // Deliberately not awaited. A command that opens a menu blocks until
+        // somebody answers it — and the answer is the next message, which this
+        // loop has to keep polling to receive. Awaiting here meant the reply
+        // could never arrive and the chat hung until the dialog timed out.
+        //
+        // Ordering is safe: the portal serialises messages per conversation,
+        // and an answer to an open question jumps that queue.
+        void handle(message, text, chatId);
       }
     }
   })();
@@ -123,6 +106,34 @@ export async function start(ctx) {
       await loop.catch(() => {});
     },
   };
+
+  async function handle(message, text, chatId) {
+    const say = async (body) => {
+      // Telegram rejects anything over 4096 characters outright.
+      for (const chunk of split(body, 4000)) {
+        await call(token, "sendMessage", { chat_id: chatId, text: chunk }, ctx.signal);
+      }
+    };
+
+    try {
+      await call(token, "sendChatAction", { chat_id: chatId, action: "typing" }, ctx.signal);
+      // The chat id is the conversation: a DM and a group have different ones,
+      // so each gets its own session without any special casing. onReply
+      // relays what the agent says between tool calls, and any question an
+      // extension asks along the way.
+      const reply = await ctx.ask(text, {
+        session: `chat:${chatId}`,
+        title: chatTitle(message.chat),
+        chatId,
+        onReply: say,
+      });
+      // Non-empty only when the portal was not relaying as it went.
+      if (reply) await say(reply);
+    } catch (e) {
+      ctx.log(`failed to answer ${chatId}: ${e.message}`);
+      await say(`Something went wrong: ${e.message}`).catch(() => {});
+    }
+  }
 }
 
 /** Something recognisable in the session list rather than a bare number. */

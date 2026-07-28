@@ -175,6 +175,17 @@ the reply back where it came from.
 Honour `ctx.signal`. A polling loop should check `signal.aborted` and pass the
 signal to `fetch`, or disabling the channel will leave it running.
 
+::: danger Do not await ask() in your receive loop
+An extension command can block until somebody answers a question — and the
+answer is the *next message*, which your loop has to still be receiving. Await
+`ask` inside the loop that fetches messages and it can never arrive: the chat
+hangs until the dialog times out.
+
+Hand each message to an async function and do not await it. Ordering is safe
+without you: the portal serialises messages per conversation, and an answer to
+an open question jumps that queue.
+:::
+
 You do not handle the channel's [instructions](/channels/#per-channel-instructions).
 They are configured in the portal and attached on its side of `ask()`, so your
 package gets the feature without doing anything.

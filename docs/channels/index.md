@@ -163,10 +163,15 @@ Llama.cpp models:
 Reply with a number, or "cancel".
 ```
 
-Numbers work, so does typing the option. `confirm` takes yes or no, `input` and
-`editor` take whatever you send, and `cancel` dismisses any of them. The answer
-jumps the queue — the run is stopped waiting for it, so it cannot be made to
-wait its turn behind itself.
+Numbers work, so does typing the option. `confirm` takes yes or no; `input` and
+`editor` take whatever you send.
+
+**Anything that is not a valid answer cancels the question.** Asking again would
+trap the conversation: the run stays blocked, and every attempt to talk about
+something else gets the same prompt back.
+
+The answer jumps the queue — the run is stopped waiting for it, so it cannot be
+made to wait its turn behind itself.
 
 Questions are relayed whatever the progress toggles say. They are not chatter:
 the command hangs until somebody answers, and staying quiet would just leave it

@@ -229,13 +229,16 @@ class ChannelSupervisor {
     // Answering an extension's question, not starting a new turn. The reply
     // travels back through the ask that is still running.
     if (open) {
-      const answer = interpretAnswer(open, text);
-      if (answer.error) return answer.error;
+      // Anything that is not a valid answer cancels. Re-asking would trap the
+      // conversation in a question nobody meant to be in — the run stays
+      // blocked, and every attempt to talk about something else gets the same
+      // prompt back.
       this.pendingUi.delete(session.id);
-      if (!sessions.respondUi(session.id, open.id, answer.response!)) {
-        return "That question has already expired.";
+      const answer = interpretAnswer(open, text);
+      if (!sessions.respondUi(session.id, open.id, answer ?? { cancelled: true })) {
+        return "That question had already expired.";
       }
-      return "";
+      return answer ? "" : "Cancelled.";
     }
 
     const packageReply =
@@ -315,10 +318,10 @@ function describeUi(request: any): string | undefined {
       const options: string[] = Array.isArray(request.options) ? request.options : [];
       if (!options.length) return `${head || "Choose"}\n(no options offered)`;
       const list = options.map((o, i) => `${i + 1}. ${o}`).join("\n");
-      return `${head || "Choose one"}\n${list}\n\nReply with a number, or "cancel".`;
+      return `${head || "Choose one"}\n${list}\n\nReply with a number. Anything else cancels.`;
     }
     case "confirm":
-      return `${head || "Confirm"}\n\nReply "yes" or "no".`;
+      return `${head || "Confirm"}\n\nReply "yes" or "no". Anything else cancels.`;
     case "input":
     case "editor": {
       const hint = String(request.placeholder ?? request.defaultValue ?? "").trim();
@@ -329,32 +332,34 @@ function describeUi(request: any): string | undefined {
   }
 }
 
-/** Turn a chat reply into the answer the extension is waiting for. */
+/**
+ * Turn a chat reply into the answer the extension is waiting for, or undefined
+ * if it is not one — in which case the question is cancelled rather than asked
+ * again.
+ */
 function interpretAnswer(
   open: PendingUi,
   text: string
-): { response?: { value?: unknown; cancelled?: boolean }; error?: string } {
+): { value?: unknown; cancelled?: boolean } | undefined {
   const answer = text.trim();
 
   if (open.method === "select") {
     const options = open.options ?? [];
     const n = Number(answer);
-    if (Number.isInteger(n) && n >= 1 && n <= options.length) {
-      return { response: { value: options[n - 1] } };
-    }
+    if (Number.isInteger(n) && n >= 1 && n <= options.length) return { value: options[n - 1] };
     // Typing the option itself is the obvious thing to try, so accept it.
     const exact = options.find((o) => o.toLowerCase() === answer.toLowerCase());
-    if (exact) return { response: { value: exact } };
-    return { error: `Reply with a number from 1 to ${options.length}, or "cancel".` };
+    return exact ? { value: exact } : undefined;
   }
 
   if (open.method === "confirm") {
-    if (/^(y|yes|ok|okay|sure|do it)$/i.test(answer)) return { response: { value: true } };
-    if (/^(n|no|nope|don't|dont)$/i.test(answer)) return { response: { value: false } };
-    return { error: 'Reply "yes" or "no".' };
+    if (/^(y|yes|ok|okay|sure|do it)$/i.test(answer)) return { value: true };
+    if (/^(n|no|nope|don't|dont)$/i.test(answer)) return { value: false };
+    return undefined;
   }
 
-  return { response: { value: answer } };
+  // input and editor take whatever was typed; an empty message is not an answer.
+  return answer ? { value: answer } : undefined;
 }
 
 /**
