@@ -16,9 +16,10 @@ import { sessions, EXECUTOR_KIND } from "./session-manager.js";
 import { authEnabled, checkPassword, isAuthed, issueCookie, requireAuth } from "./auth.js";
 import { packagesRouter } from "./api/packages.js";
 import { extensionsRouter } from "./api/extensions.js";
+import { piSettingsPath } from "./pi-settings.js";
 import { getBuiltinCommands } from "./pi/builtins.js";
 import { isValidSlug, slugify } from "./slug.js";
-import { getSettings, setSettings } from "./db.js";
+import { getSettingDefaults, getSettings, getStoredSettings, setSettings } from "./db.js";
 
 // WORKSPACE_ROOT is the new name; WORKSPACE_ROOT still works for existing deploys.
 const WORKSPACE_ROOT = path.resolve(
@@ -50,7 +51,17 @@ app.use("/api", requireAuth);
 // --- global settings (defaults for every new session) ---
 
 app.get("/api/settings", (_req, res) => {
-  res.json({ settings: getSettings(), executor: EXECUTOR_KIND, workspaceRoot: WORKSPACE_ROOT });
+  // `stored` and `defaults` are separated so the UI can show an empty field
+  // with the inherited value as a placeholder, instead of pre-filling it and
+  // turning the next Save into a permanent pin.
+  res.json({
+    settings: getSettings(),
+    stored: getStoredSettings(),
+    defaults: getSettingDefaults(),
+    piSettingsPath: piSettingsPath(),
+    executor: EXECUTOR_KIND,
+    workspaceRoot: WORKSPACE_ROOT,
+  });
 });
 
 app.put("/api/settings", (req, res) => {

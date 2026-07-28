@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { piSetting } from "./pi-settings.js";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -183,18 +184,35 @@ export interface GlobalSettings {
   thinkingLevel: string;
 }
 
+/**
+ * Read fresh each time rather than cached: pi's settings.json is editable from
+ * the Advanced tab, and a stale copy would keep launching the old model.
+ *
+ * `defaultProvider` / `defaultModel` come from pi itself, so an install
+ * configured through the CLI behaves the same here without being set twice.
+ * "openrouter" is only the last resort, once pi has no opinion either.
+ */
 const SETTING_DEFAULTS = (): GlobalSettings => ({
-  provider: process.env.PI_PROVIDER || "openrouter",
-  model: process.env.PI_MODEL || "",
-  thinkingLevel: process.env.PI_THINKING_LEVEL || "medium",
+  provider: process.env.PI_PROVIDER || piSetting("defaultProvider") || "openrouter",
+  model: process.env.PI_MODEL || piSetting("defaultModel") || "",
+  thinkingLevel:
+    process.env.PI_THINKING_LEVEL || piSetting("defaultThinkingLevel") || "medium",
 });
 
-export function getSettings(): GlobalSettings {
+/** Only what the portal was explicitly told; absent keys fall through. */
+export function getStoredSettings(): Partial<GlobalSettings> {
   const rows = getDb().prepare("SELECT key, value FROM settings").all() as {
     key: string;
     value: string;
   }[];
-  const stored = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  return Object.fromEntries(
+    rows.filter((r) => r.value).map((r) => [r.key, r.value])
+  ) as Partial<GlobalSettings>;
+}
+
+/** What pi is actually launched with: stored, else env, else pi's file. */
+export function getSettings(): GlobalSettings {
+  const stored = getStoredSettings();
   const defaults = SETTING_DEFAULTS();
   return {
     provider: stored.provider || defaults.provider,
@@ -203,12 +221,21 @@ export function getSettings(): GlobalSettings {
   };
 }
 
+export { SETTING_DEFAULTS as getSettingDefaults };
+
+/**
+ * An empty value clears the override rather than storing "", so a field can be
+ * handed back to pi's own defaults instead of being pinned forever.
+ */
 export function setSettings(patch: Partial<GlobalSettings>): GlobalSettings {
-  const stmt = getDb().prepare(
+  const upsert = getDb().prepare(
     "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
   );
+  const clear = getDb().prepare("DELETE FROM settings WHERE key = ?");
   for (const [k, v] of Object.entries(patch)) {
-    if (typeof v === "string") stmt.run(k, v);
+    if (typeof v !== "string") continue;
+    if (v.trim()) upsert.run(k, v.trim());
+    else clear.run(k);
   }
   return getSettings();
 }

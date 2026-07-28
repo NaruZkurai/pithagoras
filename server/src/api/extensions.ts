@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import express, { type Router } from "express";
+import { piSettingsPath } from "../pi-settings.js";
 
 const run = promisify(execFile);
 
@@ -23,8 +24,7 @@ export interface ExtensionInfo {
   settings: DetectedSetting[];
 }
 
-const agentDir = () => path.join(process.env.HOME || "/data/home", ".pi", "agent");
-const settingsFile = () => path.join(agentDir(), "settings.json");
+const settingsFile = piSettingsPath;
 
 function readSettings(): Record<string, unknown> {
   try {

@@ -80,7 +80,17 @@ export const api = {
     }),
 
   settings: () =>
-    json<{ settings: GlobalSettings; executor: string; workspaceRoot: string }>("/api/settings"),
+    json<{
+      /** What pi is launched with once every fallback is applied. */
+      settings: GlobalSettings;
+      /** Only the values the portal was explicitly given. */
+      stored: Partial<GlobalSettings>;
+      /** What an unset field falls back to: env, else pi's settings.json. */
+      defaults: GlobalSettings;
+      piSettingsPath: string;
+      executor: string;
+      workspaceRoot: string;
+    }>("/api/settings"),
   saveSettings: (patch: Partial<GlobalSettings>) =>
     json<{ settings: GlobalSettings; note: string }>("/api/settings", {
       method: "PUT",

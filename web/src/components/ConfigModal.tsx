@@ -195,6 +195,29 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
   );
 }
 
+/** Labels a field and says what it falls back to when left blank. */
+function Inherited({
+  label,
+  value,
+  children,
+}: {
+  label: string;
+  value: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block">
+      <div className="flex items-baseline gap-2">
+        <span className="text-xs text-zinc-400">{label}</span>
+        {value && (
+          <span className="truncate font-mono text-[10px] text-zinc-600">inherits {value}</span>
+        )}
+      </div>
+      {children}
+    </label>
+  );
+}
+
 function Empty({ children }: { children: ReactNode }) {
   return (
     <div className="rounded-xl border border-dashed border-zinc-800 px-3 py-8 text-center text-sm text-zinc-500">
@@ -215,28 +238,47 @@ const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 // --- general ---
 
 function GeneralPanel({ onError }: { onError: (e: string) => void }) {
-  const [settings, setSettings] = useState<GlobalSettings | null>(null);
-  const [meta, setMeta] = useState<{ executor: string; workspaceRoot: string } | null>(null);
+  /** Only the explicit overrides — an empty field means "inherit". */
+  const [stored, setStored] = useState<Partial<GlobalSettings> | null>(null);
+  const [defaults, setDefaults] = useState<GlobalSettings | null>(null);
+  const [meta, setMeta] = useState<{
+    executor: string;
+    workspaceRoot: string;
+    piSettingsPath: string;
+  } | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
+  const load = () =>
     api
       .settings()
       .then((r) => {
-        setSettings(r.settings);
-        setMeta({ executor: r.executor, workspaceRoot: r.workspaceRoot });
+        setStored(r.stored);
+        setDefaults(r.defaults);
+        setMeta({
+          executor: r.executor,
+          workspaceRoot: r.workspaceRoot,
+          piSettingsPath: r.piSettingsPath,
+        });
       })
       .catch((e) => onError((e as Error).message));
+
+  useEffect(() => {
+    load();
   }, []);
 
-  if (!settings) return <p className="text-sm text-zinc-500">Loading…</p>;
+  if (!stored || !defaults) return <p className="text-sm text-zinc-500">Loading…</p>;
 
   const save = async () => {
     setBusy(true);
     try {
-      const r = await api.saveSettings(settings);
-      setSettings(r.settings);
+      // Sent even when blank: an empty value clears the override server-side.
+      await api.saveSettings({
+        provider: stored.provider ?? "",
+        model: stored.model ?? "",
+        thinkingLevel: stored.thinkingLevel ?? "",
+      });
+      await load();
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
@@ -250,35 +292,47 @@ function GeneralPanel({ onError }: { onError: (e: string) => void }) {
     <>
       <Section
         title="Defaults for new sessions"
-        hint="A session keeps whatever you pick for it under the chat box; this is only the starting point."
+        hint="Leave a field empty to inherit it from pi's own settings.json. A session keeps whatever you pick for it under the chat box."
       >
         <div className="space-y-3">
-          <label className="block">
-            <span className="text-xs text-zinc-400">Provider</span>
+          <Inherited label="Provider" value={defaults.provider}>
             <input
-              value={settings.provider}
-              onChange={(e) => setSettings({ ...settings, provider: e.target.value })}
+              value={stored.provider ?? ""}
+              onChange={(e) => setStored({ ...stored, provider: e.target.value })}
+              placeholder={defaults.provider || "inherit"}
               className={`${inputCls} mt-1 font-mono`}
             />
-          </label>
-          <label className="block">
-            <span className="text-xs text-zinc-400">Model</span>
+          </Inherited>
+          <Inherited label="Model" value={defaults.model}>
             <input
-              value={settings.model}
-              onChange={(e) => setSettings({ ...settings, model: e.target.value })}
-              placeholder="anthropic/claude-sonnet-5"
+              value={stored.model ?? ""}
+              onChange={(e) => setStored({ ...stored, model: e.target.value })}
+              placeholder={defaults.model || "pi decides"}
               className={`${inputCls} mt-1 font-mono`}
             />
-          </label>
+          </Inherited>
           <div>
-            <span className="text-xs text-zinc-400">Effort</span>
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs text-zinc-400">Effort</span>
+              {!stored.thinkingLevel && defaults.thinkingLevel && (
+                <span className="text-[10px] text-zinc-600">
+                  inheriting {defaults.thinkingLevel}
+                </span>
+              )}
+            </div>
             <div className="mt-1 flex flex-wrap gap-1">
               {LEVELS.map((lvl) => (
                 <button
                   key={lvl}
-                  onClick={() => setSettings({ ...settings, thinkingLevel: lvl })}
+                  onClick={() =>
+                    setStored({
+                      ...stored,
+                      // Clicking the active level again hands it back to pi.
+                      thinkingLevel: stored.thinkingLevel === lvl ? "" : lvl,
+                    })
+                  }
                   className={`rounded-lg px-2.5 py-1 text-xs capitalize transition ${
-                    settings.thinkingLevel === lvl
+                    stored.thinkingLevel === lvl
                       ? "bg-amber-500/15 text-amber-200 ring-1 ring-inset ring-amber-400/30"
                       : "bg-white/5 text-zinc-400 hover:bg-white/10"
                   }`}
@@ -316,7 +370,16 @@ function GeneralPanel({ onError }: { onError: (e: string) => void }) {
             <dt className="shrink-0 text-zinc-500">workspaces</dt>
             <dd className="ml-auto truncate pl-4 font-mono text-zinc-300">{meta?.workspaceRoot}</dd>
           </div>
-          <p className="mt-1.5 text-xs text-zinc-600">Both are set at deploy time via environment.</p>
+          <div className="flex items-center gap-2 py-0.5">
+            <LuFileJson className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
+            <dt className="shrink-0 text-zinc-500">pi settings</dt>
+            <dd className="ml-auto truncate pl-4 font-mono text-zinc-300">
+              {meta?.piSettingsPath}
+            </dd>
+          </div>
+          <p className="mt-1.5 text-xs text-zinc-600">
+            Executor and workspace root are set at deploy time via environment.
+          </p>
         </dl>
       </Section>
     </>

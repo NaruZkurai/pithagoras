@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { piSettingsPath } from "../pi-settings.js";
 import express, { type Router } from "express";
 
 const run = promisify(execFile);
@@ -83,11 +84,8 @@ export function packagesRouter(): Router {
    * schema for that over RPC, so the honest option is to let you edit the file
    * directly rather than pretend to generate a form for it.
    */
-  const settingsPath = () =>
-    path.join(process.env.HOME || "/data/home", ".pi", "agent", "settings.json");
-
   router.get("/pi-settings", (_req, res) => {
-    const file = settingsPath();
+    const file = piSettingsPath();
     try {
       const content = existsSync(file) ? readFileSync(file, "utf8") : "{}\n";
       res.json({ path: file, content });
@@ -106,7 +104,7 @@ export function packagesRouter(): Router {
     } catch (e) {
       return res.status(400).json({ error: `Not valid JSON: ${(e as Error).message}` });
     }
-    const file = settingsPath();
+    const file = piSettingsPath();
     try {
       mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(file, content, "utf8");
