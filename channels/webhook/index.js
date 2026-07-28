@@ -1,0 +1,104 @@
+/**
+ * The simplest possible channel: an HTTP endpoint.
+ *
+ * POST { "message": "..." } with the shared secret in X-Portal-Secret, and the
+ * agent's reply comes back in the response body. Useful for wiring the agent
+ * into anything that can make a request — cron, a CI job, another service.
+ */
+
+import { createServer } from "node:http";
+
+export const manifest = {
+  id: "webhook",
+  label: "Webhook",
+  blurb: "POST a message in, get the agent's reply in the response body.",
+  fields: [
+    {
+      key: "secret",
+      label: "Shared secret",
+      secret: true,
+      required: true,
+      hint: "Sent as the X-Portal-Secret header. Requests without it are refused.",
+    },
+    {
+      key: "port",
+      label: "Port",
+      hint: "Defaults to 4180. Must not clash with the portal or another channel.",
+      placeholder: "4180",
+    },
+  ],
+};
+
+const readBody = (req, limit = 1_000_000) =>
+  new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (chunk) => {
+      data += chunk;
+      if (data.length > limit) {
+        reject(new Error("body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+
+export async function start(ctx) {
+  const secret = ctx.config.secret;
+  const port = Number(ctx.config.port) || 4180;
+
+  const server = createServer(async (req, res) => {
+    const send = (status, payload) => {
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify(payload));
+    };
+
+    if (req.method !== "POST") return send(405, { error: "POST only" });
+
+    // Compared in full rather than short-circuiting on the first wrong byte.
+    const given = req.headers["x-portal-secret"];
+    if (typeof given !== "string" || !timingSafeEqual(given, secret)) {
+      return send(401, { error: "Bad or missing X-Portal-Secret" });
+    }
+
+    let message;
+    try {
+      const body = JSON.parse((await readBody(req)) || "{}");
+      message = typeof body.message === "string" ? body.message.trim() : "";
+    } catch {
+      return send(400, { error: "Body must be JSON" });
+    }
+    if (!message) return send(400, { error: "message required" });
+
+    try {
+      const reply = await ctx.ask(message, { from: "webhook" });
+      send(200, { reply });
+    } catch (e) {
+      ctx.log(`request failed: ${e.message}`);
+      send(500, { error: e.message });
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, () => {
+      server.removeListener("error", reject);
+      resolve();
+    });
+  });
+  ctx.log(`listening on :${port}`);
+
+  return {
+    async stop() {
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+/** Constant time for equal-length input; length itself is not secret here. */
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}

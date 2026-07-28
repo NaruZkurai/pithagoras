@@ -26,6 +26,11 @@ RUN npm install --omit=dev -w server
 COPY --from=build /app/server/dist server/dist
 COPY --from=build /app/web/dist web/dist
 
+# The builtin channel packages. Loaded from here at runtime; third-party ones
+# are installed into CHANNELS_DIR on the data volume instead, so they survive
+# an image rebuild.
+COPY channels channels
+
 # HOME lives on the data volume so pi packages and settings (~/.pi/agent)
 # survive image rebuilds instead of being silently wiped.
 ENV NODE_ENV=production \
@@ -33,6 +38,8 @@ ENV NODE_ENV=production \
     DATA_DIR=/data \
     SESSION_DIR=/data/sessions \
     WORKSPACE_ROOT=/workspaces \
+    CHANNELS_DIR=/data/channels \
+    AGENT_HOME=/data/agent-home \
     HOME=/data/home
 RUN mkdir -p /data/home
 EXPOSE 4100

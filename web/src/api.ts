@@ -105,7 +105,22 @@ export const api = {
     }),
 
   channels: () =>
-    json<{ channels: Channel[]; kinds: ChannelKind[]; agentHome: string }>("/api/channels"),
+    json<{
+      channels: Channel[];
+      kinds: ChannelKind[];
+      broken: BrokenChannelPackage[];
+      agentHome: string;
+      channelsDir: string;
+    }>("/api/channels"),
+  installChannelPackage: (spec: string) =>
+    json<{ ok: true; output: string }>("/api/channel-packages", {
+      method: "POST",
+      body: JSON.stringify({ spec }),
+    }),
+  removeChannelPackage: (name: string) =>
+    json<{ ok: true }>(`/api/channel-packages/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
   createChannel: (kind: string, name: string, config: Record<string, string>) =>
     json<Channel>("/api/channels", {
       method: "POST",
@@ -194,6 +209,20 @@ export interface ChannelKind {
   label: string;
   blurb: string;
   fields: ChannelField[];
+  /** The package providing it — builtins ship with the portal. */
+  packageName: string;
+  version?: string;
+  builtin: boolean;
+  /** False if the package has no usable start(), so it can never run. */
+  runnable: boolean;
+}
+
+/** A package that failed to load, reported rather than silently skipped. */
+export interface BrokenChannelPackage {
+  packageName: string;
+  dir: string;
+  builtin: boolean;
+  error: string;
 }
 
 export interface Channel {

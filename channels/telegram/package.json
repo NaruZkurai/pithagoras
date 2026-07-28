@@ -1,0 +1,8 @@
+{
+  "name": "pithagoras-channel-telegram",
+  "version": "0.1.0",
+  "description": "Reach the agent from a Telegram bot",
+  "type": "module",
+  "main": "index.js",
+  "pithagoras": { "channel": true }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "pithagoras-channel-webhook",
+  "version": "0.1.0",
+  "description": "POST a message in, get the agent's reply in the response",
+  "type": "module",
+  "main": "index.js",
+  "pithagoras": { "channel": true }
+}

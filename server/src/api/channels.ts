@@ -2,86 +2,39 @@ import express, { type Router } from "express";
 import { nanoid } from "nanoid";
 import { getDb } from "../db.js";
 import { agentHome } from "../agent.js";
+import {
+  channelsDir,
+  installChannelPackage,
+  loadChannels,
+  removeChannelPackage,
+  type ChannelField,
+  type LoadedChannel,
+} from "../channels/loader.js";
 
 /**
  * A channel is a two-way link into the agent: messages arrive through it and
  * the agent's replies go back out the same way. Every channel points at the
- * same agent session, so they are different doors into one conversation rather
- * than separate agents.
+ * same agent session, so they are different doors into one conversation.
+ *
+ * The kinds on offer are whatever channel packages are loaded — the builtins in
+ * the repo and anything installed from GitHub or npm. Nothing is hardcoded
+ * here, so a third-party package is a first-class citizen.
  */
-export interface ChannelField {
-  key: string;
-  label: string;
-  hint?: string;
-  /** Never sent back to the browser once stored. */
-  secret?: boolean;
-  required?: boolean;
-  placeholder?: string;
-}
 
-export interface ChannelKind {
-  id: string;
-  label: string;
-  blurb: string;
-  fields: ChannelField[];
-}
+const kindById = async (id: string) =>
+  (await loadChannels()).channels.find((k) => k.id === id);
 
-export const CHANNEL_KINDS: ChannelKind[] = [
-  {
-    id: "telegram",
-    label: "Telegram",
-    blurb: "Message a bot; its replies come back in the same chat.",
-    fields: [
-      {
-        key: "botToken",
-        label: "Bot token",
-        secret: true,
-        required: true,
-        hint: "From @BotFather",
-        placeholder: "123456:ABC-DEF…",
-      },
-      {
-        key: "allowedChatIds",
-        label: "Allowed chat IDs",
-        hint: "Comma separated. Leave empty and anyone who finds the bot can drive your agent.",
-        placeholder: "12345678, -100987654321",
-      },
-    ],
-  },
-  {
-    id: "slack",
-    label: "Slack",
-    blurb: "Mention the app in a channel or DM it.",
-    fields: [
-      { key: "botToken", label: "Bot token", secret: true, required: true, placeholder: "xoxb-…" },
-      {
-        key: "appToken",
-        label: "App token",
-        secret: true,
-        required: true,
-        hint: "Socket Mode token",
-        placeholder: "xapp-…",
-      },
-      { key: "channelId", label: "Channel ID", hint: "Empty means any channel it is invited to" },
-    ],
-  },
-  {
-    id: "webhook",
-    label: "Webhook",
-    blurb: "POST a message in, get the reply in the response body.",
-    fields: [
-      {
-        key: "secret",
-        label: "Shared secret",
-        secret: true,
-        required: true,
-        hint: "Sent as the X-Portal-Secret header",
-      },
-    ],
-  },
-];
-
-const kindById = (id: string) => CHANNEL_KINDS.find((k) => k.id === id);
+/** Only what the browser needs: the package's own code stays server-side. */
+const kindToApi = (k: LoadedChannel) => ({
+  id: k.id,
+  label: k.label,
+  blurb: k.blurb ?? "",
+  fields: k.fields,
+  packageName: k.packageName,
+  version: k.version,
+  builtin: k.builtin,
+  runnable: Boolean(k.start),
+});
 
 interface ChannelRow {
   id: string;
@@ -107,9 +60,8 @@ const parseConfig = (raw: string): Record<string, unknown> => {
  * secrets are set — enough to render "configured" without handing back a token
  * that anyone with the page open could read.
  */
-function toApi(row: ChannelRow) {
+function toApi(row: ChannelRow, kind?: LoadedChannel) {
   const config = parseConfig(row.config);
-  const kind = kindById(row.kind);
   const visible: Record<string, unknown> = {};
   const secretsSet: string[] = [];
 
@@ -135,49 +87,60 @@ function toApi(row: ChannelRow) {
   };
 }
 
-const missingRequired = (kind: ChannelKind, config: Record<string, unknown>) =>
+const missingRequired = (kind: LoadedChannel, config: Record<string, unknown>) =>
   kind.fields.filter((f) => f.required && !config[f.key]).map((f) => f.label);
 
 export function channelsRouter(): Router {
   const router = express.Router();
 
-  router.get("/channels", (_req, res) => {
-    const rows = getDb()
-      .prepare("SELECT * FROM channels ORDER BY created_at ASC")
-      .all() as ChannelRow[];
-    res.json({ channels: rows.map(toApi), kinds: CHANNEL_KINDS, agentHome: agentHome() });
+  const rowById = (id: string) =>
+    getDb().prepare("SELECT * FROM channels WHERE id = ?").get(id) as ChannelRow | undefined;
+
+  router.get("/channels", async (_req, res) => {
+    try {
+      const { channels: kinds, broken } = await loadChannels();
+      const byId = new Map(kinds.map((k) => [k.id, k]));
+      const rows = getDb()
+        .prepare("SELECT * FROM channels ORDER BY created_at ASC")
+        .all() as ChannelRow[];
+
+      res.json({
+        channels: rows.map((r) => toApi(r, byId.get(r.kind))),
+        kinds: kinds.map(kindToApi),
+        broken,
+        agentHome: agentHome(),
+        channelsDir: channelsDir(),
+      });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
   });
 
-  router.post("/channels", (req, res) => {
+  router.post("/channels", async (req, res) => {
     const { kind: kindId, name, config } = req.body ?? {};
-    const kind = typeof kindId === "string" ? kindById(kindId) : undefined;
+    const kind = typeof kindId === "string" ? await kindById(kindId) : undefined;
     if (!kind) return res.status(400).json({ error: "Unknown channel type" });
 
     const clean = sanitise(kind, config, {});
     const missing = missingRequired(kind, clean);
-    if (missing.length) {
-      return res.status(400).json({ error: `Missing: ${missing.join(", ")}` });
-    }
+    if (missing.length) return res.status(400).json({ error: `Missing: ${missing.join(", ")}` });
 
     const id = nanoid(10);
     getDb()
       .prepare("INSERT INTO channels (id, kind, name, config) VALUES (?, ?, ?, ?)")
-      .run(
-        id,
-        kind.id,
-        (typeof name === "string" && name.trim()) || kind.label,
-        JSON.stringify(clean)
-      );
-    res.json(toApi(getDb().prepare("SELECT * FROM channels WHERE id = ?").get(id) as ChannelRow));
+      .run(id, kind.id, (typeof name === "string" && name.trim()) || kind.label, JSON.stringify(clean));
+    res.json(toApi(rowById(id)!, kind));
   });
 
-  router.patch("/channels/:id", (req, res) => {
-    const row = getDb().prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id) as
-      | ChannelRow
-      | undefined;
+  router.patch("/channels/:id", async (req, res) => {
+    const row = rowById(req.params.id);
     if (!row) return res.status(404).json({ error: "Not found" });
-    const kind = kindById(row.kind);
-    if (!kind) return res.status(400).json({ error: `Unknown channel type "${row.kind}"` });
+    const kind = await kindById(row.kind);
+    if (!kind) {
+      return res.status(400).json({
+        error: `No package provides "${row.kind}" — it may have been uninstalled`,
+      });
+    }
 
     const { name, enabled, config } = req.body ?? {};
     const sets: string[] = [];
@@ -200,18 +163,48 @@ export function channelsRouter(): Router {
     }
     if (sets.length) {
       sets.push("updated_at = datetime('now')");
-      getDb()
-        .prepare(`UPDATE channels SET ${sets.join(", ")} WHERE id = ?`)
-        .run(...values, row.id);
+      getDb().prepare(`UPDATE channels SET ${sets.join(", ")} WHERE id = ?`).run(...values, row.id);
     }
-    res.json(
-      toApi(getDb().prepare("SELECT * FROM channels WHERE id = ?").get(row.id) as ChannelRow)
-    );
+    res.json(toApi(rowById(row.id)!, kind));
   });
 
   router.delete("/channels/:id", (req, res) => {
     getDb().prepare("DELETE FROM channels WHERE id = ?").run(req.params.id);
     res.json({ ok: true });
+  });
+
+  // --- packages ---
+
+  router.post("/channel-packages", async (req, res) => {
+    const spec = req.body?.spec;
+    if (typeof spec !== "string" || !spec.trim()) {
+      return res.status(400).json({ error: "spec required" });
+    }
+    try {
+      const output = await installChannelPackage(spec.trim());
+      const { channels, broken } = await loadChannels(true);
+      res.json({ ok: true, output, kinds: channels.map(kindToApi), broken });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  router.delete("/channel-packages/:name", async (req, res) => {
+    const name = decodeURIComponent(req.params.name);
+    const kind = (await loadChannels()).channels.find((k) => k.packageName === name);
+    if (kind?.builtin) {
+      return res.status(400).json({ error: "Builtin channels ship with the portal" });
+    }
+    // Configured channels of this kind are left in place deliberately: removing
+    // the package should not silently discard credentials. They report the
+    // missing package until it is reinstalled or the channel is deleted.
+    try {
+      await removeChannelPackage(name);
+      const { channels, broken } = await loadChannels(true);
+      res.json({ ok: true, kinds: channels.map(kindToApi), broken });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
   });
 
   return router;
@@ -223,7 +216,7 @@ export function channelsRouter(): Router {
  * saving an unrelated field would otherwise wipe it.
  */
 function sanitise(
-  kind: ChannelKind,
+  kind: LoadedChannel,
   incoming: unknown,
   existing: Record<string, unknown>
 ): Record<string, unknown> {

@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import {
   LuCheck,
+  LuCircleAlert,
+  LuDownload,
   LuFolder,
+  LuPackage,
   LuPlus,
   LuRadio,
   LuRefreshCw,
   LuTrash2,
   LuTriangleAlert,
 } from "react-icons/lu";
-import { api, type Channel, type ChannelKind } from "../api";
+import { api, type BrokenChannelPackage, type Channel, type ChannelKind } from "../api";
 
 const inputCls =
   "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60";
@@ -25,7 +28,10 @@ const primaryCls =
 export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [kinds, setKinds] = useState<ChannelKind[]>([]);
+  const [broken, setBroken] = useState<BrokenChannelPackage[]>([]);
   const [home, setHome] = useState("");
+  const [spec, setSpec] = useState("");
+  const [installing, setInstalling] = useState(false);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -35,6 +41,7 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
       const r = await api.channels();
       setChannels(r.channels);
       setKinds(r.kinds);
+      setBroken(r.broken ?? []);
       setHome(r.agentHome);
     } catch (e) {
       onError((e as Error).message);
@@ -48,6 +55,28 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
   }, []);
 
   const kindOf = (id: string) => kinds.find((k) => k.id === id);
+
+  const act = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  };
+
+  const install = async () => {
+    setInstalling(true);
+    try {
+      await api.installChannelPackage(spec.trim());
+      setSpec("");
+      await load();
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setInstalling(false);
+    }
+  };
 
   return (
     <>
@@ -131,12 +160,103 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
         )}
       </section>
 
+      <section className="mb-6">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Packages</h3>
+        <p className="mt-0.5 text-xs text-zinc-500">
+          Channel types come from packages. Point at a GitHub repo following the convention and it
+          becomes available above.
+        </p>
+
+        <div className="mt-2 flex gap-2">
+          <input
+            value={spec}
+            onChange={(e) => setSpec(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && spec.trim() && install()}
+            placeholder="user/repo"
+            className={`${inputCls} font-mono text-xs`}
+          />
+          <button
+            disabled={!spec.trim() || installing}
+            onClick={install}
+            className={primaryCls}
+          >
+            {installing ? (
+              <LuRefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <LuDownload className="h-4 w-4" />
+            )}
+            {installing ? "Installing…" : "Install"}
+          </button>
+        </div>
+        <p className="mt-1 text-[11px] text-zinc-600">
+          Anything npm understands: <code>user/repo</code>, <code>github:user/repo#v2</code>, a git
+          URL, or an npm package name.
+        </p>
+
+        <ul className="mt-3 space-y-1">
+          {kinds.map((k) => (
+            <li
+              key={k.packageName}
+              className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2"
+            >
+              <LuPackage className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs text-zinc-300">
+                  {k.label}{" "}
+                  <span className="font-mono text-[10px] text-zinc-600">{k.packageName}</span>
+                </p>
+                {!k.runnable && (
+                  <p className="text-[10px] text-amber-400/80">no start() — cannot run</p>
+                )}
+              </div>
+              {k.version && (
+                <span className="shrink-0 font-mono text-[10px] text-zinc-600">v{k.version}</span>
+              )}
+              {k.builtin ? (
+                <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-500">
+                  builtin
+                </span>
+              ) : (
+                <button
+                  onClick={() => {
+                    if (confirm(`Uninstall ${k.packageName}? Configured channels are kept.`)) {
+                      act(() => api.removeChannelPackage(k.packageName));
+                    }
+                  }}
+                  className="shrink-0 rounded p-1 text-zinc-500 hover:text-red-400"
+                  title="Uninstall"
+                >
+                  <LuTrash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        {broken.length > 0 && (
+          <ul className="mt-2 space-y-1">
+            {broken.map((b) => (
+              <li
+                key={b.packageName}
+                className="flex items-start gap-2 rounded-lg border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-300"
+              >
+                <LuCircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="truncate font-mono text-[11px]">{b.packageName}</p>
+                  <p className="text-[11px] text-red-300/80">{b.error}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <div className="flex items-start gap-2 rounded-xl border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-200/80">
         <LuTriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <p>
           Credentials are stored and validated here, but no transport is running yet — channels
-          will show as “not connected” until the agent side is built. Nothing will arrive or be
-          sent in the meantime.
+          will show as “not connected” until the agent session exists. Packages define start(), and
+          nothing calls it in the meantime.
         </p>
       </div>
     </>
