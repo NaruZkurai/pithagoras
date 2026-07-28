@@ -31,6 +31,43 @@ function extraContextFiles(cwd: string): { path: string; content: string }[] {
   return out;
 }
 
+/**
+ * Tells the model what those files are, which their content does not.
+ *
+ * Only when they exist, so an ordinary task workspace gets no extra system
+ * prompt and behaves exactly as it did before.
+ */
+function framing(cwd: string): string[] {
+  const present = new Set(
+    CONTEXT_FILES.filter((name) => {
+      try {
+        return existsSync(path.join(cwd, name));
+      } catch {
+        return false;
+      }
+    })
+  );
+  if (!present.size) return [];
+
+  const lines: string[] = [];
+  if (present.has("SOUL.md")) {
+    lines.push(
+      "SOUL.md is not documentation about someone else — it is you. Your name, your character and how you work are defined there, and you answer as that, not as a general assistant."
+    );
+  }
+  if (present.has("PrimaryUser.md")) {
+    lines.push(
+      "PrimaryUser.md describes the person you work for. Assume what it says rather than asking them again."
+    );
+  }
+  if (present.has("MEMORY.md")) {
+    lines.push(
+      "MEMORY.md is your long-term memory and it is yours to keep. When you learn something worth having next week — a decision and why, a preference, how something is set up — append it. Write what would not be obvious from the conversation; do not record what you could look up."
+    );
+  }
+  return [lines.join("\n\n")];
+}
+
 /** Read a member that may be a getter or a method, without assuming which. */
 function callable(obj: any, key: string): any {
   const v = obj?.[key];
@@ -96,6 +133,12 @@ export class SdkPiClient extends EventEmitter implements PiClient {
         agentsFilesOverride: (base: { agentsFiles: any[] }) => ({
           agentsFiles: [...base.agentsFiles, ...extraContextFiles(opts.cwd)],
         }),
+        // Content alone is not enough. Handed over as plain context files, pi
+        // presents them as reference material and the model answers "who are
+        // you" from its own base identity — verified: it read a fact out of
+        // MEMORY.md correctly while insisting it was Pi, made by Baidu. This
+        // says what the files are for.
+        appendSystemPrompt: framing(opts.cwd),
       });
       await resourceLoader.reload();
     } catch (e) {
