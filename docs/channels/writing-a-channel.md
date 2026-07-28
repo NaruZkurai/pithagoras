@@ -123,8 +123,10 @@ the builtins settled on:
 | Discord | `channel:<channel id>` | A DM is a channel too, so servers and DMs separate for free. |
 | Webhook | whatever the caller sends, else `default` | Only the caller knows what a conversation is. |
 
-Your key is prefixed with the channel's id before it is stored, so two channels
-both choosing `general` stay separate without either knowing about the other.
+Your key is prefixed with the channel's slug before it is stored, so two
+channels both choosing `general` stay separate without either knowing about the
+other. Slugs are stable across a channel being deleted and recreated, which ids
+are not — see [the note](/channels/#one-session-per-conversation).
 
 Anything else in `meta` is yours — it travels with the message so you can route
 the reply back where it came from.

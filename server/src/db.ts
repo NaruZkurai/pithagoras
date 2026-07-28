@@ -24,12 +24,19 @@ export interface SessionRow {
   pi_session_file: string | null;
   /** "task" for the ones you create here; "agent" for one reached via a channel. */
   kind: "task" | "agent";
-  /** Agent sessions only: which channel it arrived through. */
-  channel_id: string | null;
   /**
-   * Agent sessions only: the conversation key the channel package supplied —
-   * a Telegram chat id, a Slack channel, a Discord channel. Unique per channel,
-   * which is what keeps a group chat and a DM from sharing a memory.
+   * Agent sessions only: the slug of the channel it arrived through.
+   *
+   * The slug rather than the channel's id, because ids are regenerated when a
+   * channel is deleted and recreated — which orphaned every conversation it
+   * had. A slug is stable and yours to choose, so re-adding a channel under the
+   * same one picks its conversations back up.
+   */
+  channel_slug: string | null;
+  /**
+   * Agent sessions only: the conversation key, as `<channel slug>:<package key>`.
+   * The package decides what a conversation is — a Telegram chat id, a Slack
+   * channel — and the prefix keeps two channels using the same key apart.
    */
   channel_key: string | null;
 }
@@ -66,7 +73,7 @@ export function getDb(): Database.Database {
       pinned INTEGER NOT NULL DEFAULT 0,
       pi_session_file TEXT,
       kind TEXT NOT NULL DEFAULT 'task',
-      channel_id TEXT,
+      channel_slug TEXT,
       channel_key TEXT
     );
     -- The index on (channel_id, channel_key) is created in migrate(), not here.
@@ -91,6 +98,10 @@ export function getDb(): Database.Database {
     -- any of them go to the same agent, and its replies go back the same way.
     CREATE TABLE IF NOT EXISTS channels (
       id TEXT PRIMARY KEY,
+      -- Stable, yours to choose, and what agent sessions are keyed on. Delete a
+      -- channel and recreate it under the same slug and its conversations come
+      -- back; the primary key is regenerated and would not.
+      slug TEXT NOT NULL DEFAULT '',
       kind TEXT NOT NULL,
       name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -139,10 +150,20 @@ function migrate(d: Database.Database): void {
   if (!names.includes("kind")) {
     d.exec("ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'");
   }
-  if (!names.includes("channel_id")) d.exec("ALTER TABLE sessions ADD COLUMN channel_id TEXT");
+  // channel_id was the original link and was a mistake — see channel_slug.
+  // There is no data worth migrating, so the old column and its sessions go.
+  if (names.includes("channel_id")) {
+    d.exec("DROP INDEX IF EXISTS idx_sessions_channel");
+    d.exec("DELETE FROM sessions WHERE kind = 'agent'");
+    d.exec("ALTER TABLE sessions DROP COLUMN channel_id");
+  }
+  if (!names.includes("channel_slug")) {
+    d.exec("ALTER TABLE sessions ADD COLUMN channel_slug TEXT");
+  }
   if (!names.includes("channel_key")) d.exec("ALTER TABLE sessions ADD COLUMN channel_key TEXT");
-  d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_channel
-            ON sessions(channel_id, channel_key) WHERE channel_id IS NOT NULL`);
+  // The key already carries its channel's slug, so it is unique on its own.
+  d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_channel_key
+            ON sessions(channel_key) WHERE channel_key IS NOT NULL`);
 
   const channelCols = (d.prepare("PRAGMA table_info(channels)").all() as { name: string }[]).map(
     (c) => c.name
@@ -150,6 +171,12 @@ function migrate(d: Database.Database): void {
   if (channelCols.length && !channelCols.includes("instructions")) {
     d.exec("ALTER TABLE channels ADD COLUMN instructions TEXT NOT NULL DEFAULT ''");
   }
+  if (channelCols.length && !channelCols.includes("slug")) {
+    d.exec("ALTER TABLE channels ADD COLUMN slug TEXT NOT NULL DEFAULT ''");
+    // Nothing sensible to backfill from, and no data to lose.
+    d.exec("DELETE FROM channels WHERE slug = ''");
+  }
+  d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_slug ON channels(slug)");
 }
 
 export function createSession(row: {
@@ -158,17 +185,17 @@ export function createSession(row: {
   workspace: string;
   executor: string;
   kind?: "task" | "agent";
-  channel_id?: string | null;
+  channel_slug?: string | null;
   channel_key?: string | null;
 }): void {
   getDb()
     .prepare(
-      `INSERT INTO sessions (id, title, workspace, executor, kind, channel_id, channel_key)
-       VALUES (@id, @title, @workspace, @executor, @kind, @channel_id, @channel_key)`
+      `INSERT INTO sessions (id, title, workspace, executor, kind, channel_slug, channel_key)
+       VALUES (@id, @title, @workspace, @executor, @kind, @channel_slug, @channel_key)`
     )
     .run({
       kind: "task",
-      channel_id: null,
+      channel_slug: null,
       channel_key: null,
       ...row,
     });
@@ -189,10 +216,18 @@ export function listAgentSessions(): SessionRow[] {
     .all() as SessionRow[];
 }
 
-export function findChannelSession(channelId: string, key: string): SessionRow | undefined {
-  return getDb()
-    .prepare("SELECT * FROM sessions WHERE channel_id = ? AND channel_key = ?")
-    .get(channelId, key) as SessionRow | undefined;
+export function findChannelSession(key: string): SessionRow | undefined {
+  return getDb().prepare("SELECT * FROM sessions WHERE channel_key = ?").get(key) as
+    | SessionRow
+    | undefined;
+}
+
+/** How many conversations a channel would strand if it were removed. */
+export function countChannelSessions(slug: string): number {
+  const row = getDb()
+    .prepare("SELECT count(*) AS n FROM sessions WHERE channel_slug = ?")
+    .get(slug) as { n: number };
+  return row.n;
 }
 
 export function getSession(id: string): SessionRow | undefined {

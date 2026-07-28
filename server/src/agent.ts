@@ -19,18 +19,21 @@ export function agentHome(): string {
 const MAX_KEY = 200;
 
 /**
- * The key a package supplies is namespaced by its channel before storage.
+ * The key a package supplies is namespaced by its channel's slug.
  *
- * The unique index already scopes it, so this is belt and braces — but two
- * channels both picking the obvious key ("general", "default") is likely
- * enough that the stored key is worth making self-describing rather than
- * relying on a constraint nobody reading the table would see.
+ * The slug and not the channel's id: ids are regenerated when a channel is
+ * deleted and recreated, which silently orphaned every conversation it had —
+ * same bot, same chat, same token, and an agent with amnesia. A slug is stable
+ * and yours to choose, so re-adding under the same one picks the conversations
+ * back up, and picking a different one is a deliberate fresh start.
+ *
+ * It also reads: `my-bot:chat:999` rather than `jAUF15d6Gg:chat:999`.
  */
-export const scopeKey = (channelId: string, key: string) => `${channelId}:${key}`;
+export const scopeKey = (channelSlug: string, key: string) => `${channelSlug}:${key}`;
 
 /** The channel's own key, with the prefix taken back off. */
-export const unscopeKey = (channelId: string, stored: string) =>
-  stored.startsWith(`${channelId}:`) ? stored.slice(channelId.length + 1) : stored;
+export const unscopeKey = (channelSlug: string, stored: string) =>
+  stored.startsWith(`${channelSlug}:`) ? stored.slice(channelSlug.length + 1) : stored;
 
 /**
  * Find or create the session for one conversation on one channel.
@@ -40,11 +43,12 @@ export const unscopeKey = (channelId: string, stored: string) =>
  * an isolated session. A group chat and a DM produce different keys, so they
  * get different sessions and never share a memory.
  *
- * The key is scoped to the channel by the unique index, so two channels using
- * the same obvious key ("general") stay separate without either knowing.
+ * The key is prefixed with the channel's slug, so two channels using the same
+ * obvious key ("general") stay separate without either knowing.
  */
 export function resolveChannelSession(opts: {
-  channelId: string;
+  /** The channel's stable slug, not its primary key. */
+  channelSlug: string;
   key: string;
   /** Human label for the first time this conversation is seen. */
   title?: string;
@@ -53,9 +57,9 @@ export function resolveChannelSession(opts: {
   const key = String(opts.key ?? "").trim().slice(0, MAX_KEY);
   if (!key) throw new Error("A channel must supply a session key for each conversation");
 
-  const scoped = scopeKey(opts.channelId, key);
+  const scoped = scopeKey(opts.channelSlug, key);
 
-  const existing = findChannelSession(opts.channelId, scoped);
+  const existing = findChannelSession(scoped);
   if (existing) return { session: existing, created: false };
 
   const id = nanoid(12);
@@ -65,12 +69,12 @@ export function resolveChannelSession(opts: {
     workspace: agentHome(),
     executor: opts.executor,
     kind: "agent",
-    channel_id: opts.channelId,
+    channel_slug: opts.channelSlug,
     channel_key: scoped,
   });
 
   // Re-read rather than construct: the row carries defaults this does not set.
-  const session = findChannelSession(opts.channelId, scoped);
+  const session = findChannelSession(scoped);
   if (!session) throw new Error("Failed to create the session for this conversation");
   return { session, created: true };
 }

@@ -149,19 +149,22 @@ app.get("/api/sessions", (_req, res) => {
  */
 app.get("/api/agent/sessions", (_req, res) => {
   const channels = getDb()
-    .prepare("SELECT id, name, kind FROM channels")
-    .all() as { id: string; name: string; kind: string }[];
-  const byId = new Map(channels.map((c) => [c.id, c]));
+    .prepare("SELECT id, slug, name, kind FROM channels")
+    .all() as { id: string; slug: string; name: string; kind: string }[];
+  const bySlug = new Map(channels.map((c) => [c.slug, c]));
 
   res.json({
     agentHome: agentHome(),
     sessions: listAgentSessions().map((s) => ({
       ...toApi(s),
-      channel: s.channel_id
+      // Matched on the slug, so a channel deleted and recreated under the same
+      // one still owns its conversations.
+      channel: s.channel_slug
         ? {
-            id: s.channel_id,
-            name: byId.get(s.channel_id)?.name ?? "(removed channel)",
-            kind: byId.get(s.channel_id)?.kind ?? null,
+            slug: s.channel_slug,
+            name: bySlug.get(s.channel_slug)?.name ?? s.channel_slug,
+            kind: bySlug.get(s.channel_slug)?.kind ?? null,
+            present: bySlug.has(s.channel_slug),
           }
         : null,
     })),

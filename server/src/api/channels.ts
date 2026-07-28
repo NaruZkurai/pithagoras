@@ -1,7 +1,8 @@
 import express, { type Router } from "express";
 import { nanoid } from "nanoid";
-import { getDb } from "../db.js";
+import { countChannelSessions, getDb } from "../db.js";
 import { agentHome } from "../agent.js";
+import { isValidSlug, slugify } from "../slug.js";
 import {
   channelsDir,
   installChannelPackage,
@@ -38,6 +39,7 @@ const kindToApi = (k: LoadedChannel) => ({
 
 interface ChannelRow {
   id: string;
+  slug: string;
   kind: string;
   name: string;
   enabled: number;
@@ -76,17 +78,38 @@ function toApi(row: ChannelRow, kind?: LoadedChannel) {
 
   return {
     id: row.id,
+    slug: row.slug,
     kind: row.kind,
     name: row.name,
     enabled: Boolean(row.enabled),
     config: visible,
     secretsSet,
     instructions: row.instructions ?? "",
+    /** Conversations keyed to this slug — what a delete would strand. */
+    sessionCount: countChannelSessions(row.slug),
     /** No transport is running yet — say so rather than implying it is live. */
     status: "not connected" as const,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+}
+
+/**
+ * A slug that is free. Agent sessions are keyed on it, so it must be unique —
+ * two channels sharing one would merge their conversations.
+ */
+function freeSlug(desired: string, exceptId?: string): string {
+  const base = slugify(desired) || "channel";
+  const taken = new Set(
+    (getDb().prepare("SELECT id, slug FROM channels").all() as { id: string; slug: string }[])
+      .filter((c) => c.id !== exceptId)
+      .map((c) => c.slug)
+  );
+  if (!taken.has(base)) return base;
+  for (let n = 2; n < 500; n++) {
+    if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
+  }
+  throw new Error(`Could not find a free slug for "${desired}"`);
 }
 
 const missingRequired = (kind: LoadedChannel, config: Record<string, unknown>) =>
@@ -127,10 +150,16 @@ export function channelsRouter(): Router {
     const missing = missingRequired(kind, clean);
     if (missing.length) return res.status(400).json({ error: `Missing: ${missing.join(", ")}` });
 
+    const label = (typeof name === "string" && name.trim()) || kind.label;
+    // An explicit slug reconnects a channel to the conversations it had before
+    // it was deleted; without one it is derived from the name.
+    const wanted = typeof req.body?.slug === "string" && req.body.slug.trim() ? req.body.slug : label;
+    const slug = freeSlug(wanted);
+
     const id = nanoid(10);
     getDb()
-      .prepare("INSERT INTO channels (id, kind, name, config) VALUES (?, ?, ?, ?)")
-      .run(id, kind.id, (typeof name === "string" && name.trim()) || kind.label, JSON.stringify(clean));
+      .prepare("INSERT INTO channels (id, slug, kind, name, config) VALUES (?, ?, ?, ?, ?)")
+      .run(id, slug, kind.id, label, JSON.stringify(clean));
     res.json(toApi(rowById(id)!, kind));
   });
 
@@ -144,10 +173,22 @@ export function channelsRouter(): Router {
       });
     }
 
-    const { name, enabled, config, instructions } = req.body ?? {};
+    const { name, enabled, config, instructions, slug } = req.body ?? {};
     const sets: string[] = [];
     const values: unknown[] = [];
 
+    if (typeof slug === "string" && slug.trim() && slug.trim() !== row.slug) {
+      const next = slugify(slug);
+      if (!isValidSlug(next)) {
+        return res.status(400).json({ error: `"${slug}" is not a usable slug` });
+      }
+      const clash = getDb()
+        .prepare("SELECT id FROM channels WHERE slug = ? AND id != ?")
+        .get(next, row.id);
+      if (clash) return res.status(409).json({ error: `Another channel already uses "${next}"` });
+      sets.push("slug = ?");
+      values.push(next);
+    }
     if (typeof name === "string" && name.trim()) {
       sets.push("name = ?");
       values.push(name.trim());
@@ -176,9 +217,30 @@ export function channelsRouter(): Router {
     res.json(toApi(rowById(row.id)!, kind));
   });
 
+  /**
+   * Removing a channel leaves its conversations behind rather than deleting
+   * them — they are reconnected if it is recreated under the same slug. Pass
+   * `?sessions=delete` to discard them instead.
+   */
   router.delete("/channels/:id", (req, res) => {
-    getDb().prepare("DELETE FROM channels WHERE id = ?").run(req.params.id);
-    res.json({ ok: true });
+    const row = rowById(req.params.id);
+    if (!row) return res.json({ ok: true, stranded: 0, deleted: 0 });
+
+    const count = countChannelSessions(row.slug);
+    let deleted = 0;
+    if (req.query.sessions === "delete") {
+      const ids = getDb()
+        .prepare("SELECT id FROM sessions WHERE channel_slug = ?")
+        .all(row.slug) as { id: string }[];
+      for (const s of ids) {
+        getDb().prepare("DELETE FROM events WHERE session_id = ?").run(s.id);
+        getDb().prepare("DELETE FROM sessions WHERE id = ?").run(s.id);
+      }
+      deleted = ids.length;
+    }
+
+    getDb().prepare("DELETE FROM channels WHERE id = ?").run(row.id);
+    res.json({ ok: true, slug: row.slug, stranded: deleted ? 0 : count, deleted });
   });
 
   // --- packages ---

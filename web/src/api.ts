@@ -19,7 +19,7 @@ export interface Session {
 export interface AgentSession extends Session {
   /** The package-supplied conversation key, prefixed with the channel id. */
   channel_key: string;
-  channel: { id: string; name: string; kind: string | null } | null;
+  channel: { slug: string; name: string; kind: string | null; present: boolean } | null;
 }
 
 export interface Workspace {
@@ -145,11 +145,15 @@ export const api = {
       enabled?: boolean;
       config?: Record<string, string>;
       instructions?: string;
+      slug?: string;
     }
   ) =>
     json<Channel>(`/api/channels/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
-  deleteChannel: (id: string) =>
-    json<{ ok: true }>(`/api/channels/${id}`, { method: "DELETE" }),
+  deleteChannel: (id: string, alsoSessions = false) =>
+    json<{ ok: true; stranded: number; deleted: number }>(
+      `/api/channels/${id}${alsoSessions ? "?sessions=delete" : ""}`,
+      { method: "DELETE" }
+    ),
 
   extensions: () =>
     json<{ extensions: ExtensionInfo[]; settingsPath: string }>("/api/extensions"),
@@ -244,6 +248,8 @@ export interface BrokenChannelPackage {
 
 export interface Channel {
   id: string;
+  /** Stable key the agent's conversations hang off. Survives delete + recreate. */
+  slug: string;
   kind: string;
   name: string;
   enabled: boolean;
@@ -253,6 +259,8 @@ export interface Channel {
   secretsSet: string[];
   /** Appended to the agent's system prompt for messages arriving here. */
   instructions: string;
+  /** Conversations keyed to this channel's slug. */
+  sessionCount: number;
   status: string;
   created_at: string;
   updated_at: string;

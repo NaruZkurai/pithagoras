@@ -147,10 +147,14 @@ overrides; `defaults` is what an unset field falls back to. An empty string in
 | --- | --- |
 | `GET /api/channels` | `{ channels, kinds, broken, agentHome, channelsDir }` |
 | `POST /api/channels` | `{ kind, name, config }` |
-| `PATCH /api/channels/:id` | `{ name?, enabled?, config? }` |
-| `DELETE /api/channels/:id` | |
+| `PATCH /api/channels/:id` | `{ name?, slug?, enabled?, config?, instructions? }` |
+| `DELETE /api/channels/:id` | Keeps its conversations; `?sessions=delete` discards them too |
 | `POST /api/channel-packages` | `{ spec }` — install a channel package |
 | `DELETE /api/channel-packages/:name` | Uninstall; refuses builtins |
+
+A channel's `slug` is what agent sessions are keyed on, and it survives the
+channel being deleted and recreated. Creating a channel with an explicit `slug`
+reconnects it to the conversations that slug already had.
 
 Secrets are never returned. A channel carries `secretsSet` listing which secret
 fields have a value, and sending a blank secret keeps the stored one.

@@ -296,8 +296,9 @@ function ChannelRow({
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm text-zinc-200">{ch.name}</p>
           <p className="truncate text-[11px] text-zinc-600">
-            {kind?.label ?? ch.kind} · {ch.status}
-            {ch.instructions ? " · has instructions" : ""}
+            {kind?.label ?? ch.kind} · {ch.slug}
+            {ch.sessionCount ? ` · ${ch.sessionCount} chats` : ""}
+            {ch.instructions ? " · instructions" : ""}
           </p>
         </div>
         {!ch.enabled && (
@@ -332,6 +333,7 @@ function ChannelDetail({
   const [name, setName] = useState(ch.name);
   const [values, setValues] = useState<Record<string, string>>({ ...ch.config });
   const [instructions, setInstructions] = useState(ch.instructions ?? "");
+  const [slug, setSlug] = useState(ch.slug);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -339,10 +341,12 @@ function ChannelDetail({
     setName(ch.name);
     setValues({ ...ch.config });
     setInstructions(ch.instructions ?? "");
+    setSlug(ch.slug);
   }, [ch.id, ch.updated_at]);
 
   const dirty =
     name !== ch.name ||
+    slug !== ch.slug ||
     instructions !== (ch.instructions ?? "") ||
     kind?.fields.some((f) => (values[f.key] ?? "") !== (ch.config[f.key] ?? ""));
 
@@ -360,7 +364,7 @@ function ChannelDetail({
 
   const save = () =>
     act(async () => {
-      await api.updateChannel(ch.id, { name, config: values, instructions });
+      await api.updateChannel(ch.id, { name, slug, config: values, instructions });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     });
@@ -407,6 +411,25 @@ function ChannelDetail({
           />
         </button>
       </div>
+
+      <section className="mb-6">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Identity</h3>
+        <p className="mt-0.5 text-xs text-zinc-500">
+          The agent's conversations hang off this slug, not off the channel itself. Delete this
+          channel and recreate it under the same slug and its conversations come back; change the
+          slug and it starts fresh.
+        </p>
+        <input
+          value={slug}
+          onChange={(e) => setSlug(e.target.value)}
+          className={`${inputCls} mt-2 font-mono text-xs`}
+        />
+        <p className="mt-1 text-[11px] text-zinc-600">
+          {ch.sessionCount > 0
+            ? `${ch.sessionCount} conversation${ch.sessionCount === 1 ? "" : "s"} keyed to "${ch.slug}".`
+            : "No conversations yet."}
+        </p>
+      </section>
 
       <section className="mb-6">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
@@ -488,7 +511,15 @@ function ChannelDetail({
         </button>
         <button
           onClick={() => {
-            if (confirm(`Remove "${ch.name}"?`)) {
+            // Say what happens to the conversations rather than leaving someone
+            // to discover later that the agent forgot them.
+            const fate =
+              ch.sessionCount > 0
+                ? `\n\nIts ${ch.sessionCount} conversation${
+                    ch.sessionCount === 1 ? "" : "s"
+                  } are kept, and come back if you recreate a channel with the slug "${ch.slug}".`
+                : "";
+            if (confirm(`Remove "${ch.name}"?${fate}`)) {
               act(async () => {
                 await api.deleteChannel(ch.id);
                 onBack();

@@ -23,8 +23,18 @@ Telegram ─┬─ chat:-100987  ──▶  session  "Engineering"
 Discord  ──── channel:987  ──▶  session  "#ops"
 ```
 
-Keys are prefixed with the channel's id before storage, so two channels both
-picking `general` stay separate. They are ordinary sessions — same transcript,
+Keys are prefixed with the channel's **slug**, so two channels both picking
+`general` stay separate.
+
+The slug and not the channel's internal id, because ids are regenerated: delete
+a channel and add it back — after a token rotation, say — and every conversation
+it had would be orphaned. Same bot, same chat, same token, and an agent with
+amnesia. A slug is stable and yours to choose, so recreating a channel under the
+same one picks its conversations back up, and choosing a different one is a
+deliberate fresh start. It also reads better: `my-bot:chat:999`.
+
+Removing a channel keeps its conversations rather than deleting them. They show
+on the Agent tab marked "no channel" until something claims that slug again. They are ordinary sessions — same transcript,
 same replay, same model handling — and they are listed on the **Agent** tab,
 where clicking one opens it in the normal chat view.
 

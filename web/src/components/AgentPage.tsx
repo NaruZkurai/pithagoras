@@ -50,17 +50,21 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
 
   // Grouped by the door each conversation came through.
   const groups = useMemo(() => {
-    const out = new Map<string, { name: string; kind: string | null; items: AgentSession[] }>();
+    const out = new Map<
+      string,
+      { name: string; kind: string | null; present: boolean; items: AgentSession[] }
+    >();
     for (const s of sessions) {
-      const id = s.channel?.id ?? "none";
-      if (!out.has(id)) {
-        out.set(id, {
+      const key = s.channel?.slug ?? "none";
+      if (!out.has(key)) {
+        out.set(key, {
           name: s.channel?.name ?? "No channel",
           kind: s.channel?.kind ?? null,
+          present: s.channel?.present ?? false,
           items: [],
         });
       }
-      out.get(id)!.items.push(s);
+      out.get(key)!.items.push(s);
     }
     return [...out.entries()];
   }, [sessions]);
@@ -122,6 +126,14 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
                     {group.kind && (
                       <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-500">
                         {group.kind}
+                      </span>
+                    )}
+                    {!group.present && (
+                      <span
+                        className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300/80"
+                        title={`Recreate a channel with the slug "${id}" to reconnect these`}
+                      >
+                        no channel
                       </span>
                     )}
                     <span className="ml-auto shrink-0 text-[11px] text-zinc-600">
