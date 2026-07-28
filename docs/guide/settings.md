@@ -1,0 +1,68 @@
+# Settings
+
+Settings open from the bottom of the sidebar, or `/settings`. Navigation runs
+down the left edge: **General**, **Channels**, **Extensions**, **Advanced**, plus
+a page for every extension that exposes configuration.
+
+There is no Session tab. Model, effort and context all live on the pills under
+the composer, and a second copy here would be two places to keep in sync.
+
+## General
+
+Defaults for newly created sessions, and read-only deployment facts — the
+executor, the workspace root, and where pi's `settings.json` lives.
+
+The fields show **only your explicit overrides**. Leave one empty and it
+inherits, with the inherited value shown as the placeholder. Clearing a field
+hands the setting back to pi; clicking the active effort level again unsets it.
+
+This matters more than it sounds. An earlier version prefilled each field with
+the *resolved* value, so one click of Save pinned an inherited setting forever —
+which is how a portal could end up permanently stuck on a model nobody chose.
+
+### Where a model comes from
+
+Resolved in order, first match wins:
+
+1. The session's own choice, from the pill under the composer
+2. A portal override, saved here in General
+3. `PI_PROVIDER` / `PI_MODEL` / `PI_THINKING_LEVEL` in the environment
+4. `defaultProvider` / `defaultModel` / `defaultThinkingLevel` in pi's `settings.json`
+5. A last-resort constant
+
+Steps 4 and 5 are the point: an install configured through the pi CLI behaves
+the same in the portal without being configured twice.
+
+::: tip Models from extensions
+A model provided by an extension — anything under a `llama-server=…` provider —
+does not exist until extensions are bound, which happens after the session is
+created. The portal resolves the model a second time after binding. Without
+that, a session asking for a local model silently started on pi's fallback.
+:::
+
+## Channels
+
+Two-way links into the agent, and the packages that provide them. See
+[Agent and channels](/channels/).
+
+## Extensions
+
+Install, update and remove pi packages, from npm, a git repository, a URL or a
+local path. The list comes from the server's parsed view of `pi list` — the
+browser used to re-parse it and listed some packages twice.
+
+Any extension whose settings the server can recover gets its own page in the
+navigation, with a field per key.
+
+::: warning Recovered, not declared
+pi publishes no schema for extension settings — extensions simply read keys off
+the settings object. The portal recovers them by reading the package source,
+which is a heuristic: a key built dynamically at runtime will not appear. Use
+Advanced to edit `settings.json` directly when that happens.
+:::
+
+## Advanced
+
+pi's raw `settings.json`, edited in place. It is validated as JSON before
+writing — a broken file stops every future session from starting, so an invalid
+save is refused rather than accepted.

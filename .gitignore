@@ -5,3 +5,7 @@ data/
 .env.local
 *.tsbuildinfo
 .DS_Store
+
+# VitePress build output and cache
+docs/.vitepress/dist
+docs/.vitepress/cache

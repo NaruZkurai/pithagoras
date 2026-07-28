@@ -88,3 +88,12 @@ left spinning forever; sending another message resumes the conversation.
   run stops.
 - Two sessions pointed at the same workspace in `host` mode will edit the same working tree.
   Use `container` mode or separate workspaces if you want to run those in parallel.
+
+## Documentation
+
+Full docs live in `docs/` and are a VitePress site.
+
+```bash
+npm run docs         # dev server
+npm run docs:build   # static build into docs/.vitepress/dist
+```

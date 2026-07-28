@@ -1,0 +1,61 @@
+# What is Pithagoras
+
+Pithagoras is a web front end for the [pi coding agent](https://pi.dev). You
+point it at a directory, describe a task, and close the tab. The work carries on
+without you, and the transcript is waiting when you come back.
+
+That last part is the whole design. A prompt is accepted, not awaited — the HTTP
+request returns as soon as pi has taken the message, and the run continues under
+the server's ownership. Everything pi emits is appended to a SQLite event log,
+so a browser that reconnects an hour or a week later replays from its last seen
+position rather than discovering it missed the interesting part.
+
+## What it is not
+
+It is not a sandbox by default. The host executor runs pi as a child of the
+portal with the portal's own permissions, working directly on mounted
+directories. That is fast and simple, and it assumes you trust the tasks you
+submit. A container executor exists for stricter isolation — see
+[Architecture](/reference/architecture#executors).
+
+It is also not multi-tenant. There is one password, and anyone who knows it gets
+the same view. Run it somewhere private; Tailscale is the setup it was built
+against.
+
+## The pieces
+
+**Sessions** are the normal unit of work: one workspace directory, one
+conversation, its own model and effort level. You create them, they persist, you
+pin the ones you keep coming back to. See [Sessions](/guide/sessions).
+
+**The agent** is a single long-lived session rooted at a fixed directory
+(`agentHome`), reachable from outside the portal through channels. Where sessions
+are per-task, the agent is continuous. See [Agent and channels](/channels/).
+
+**Channels** are two-way links into that agent — Telegram, a webhook, whatever
+you write. Messages arrive through a channel and replies go back the same way,
+and every channel points at the same conversation. Channel types are packages,
+so adding one is installing a repo rather than patching the portal. See
+[Writing a channel](/channels/writing-a-channel).
+
+**Extensions** are pi's own package system. Anything you install shows up in the
+portal's slash command palette, interactive menus included. See
+[Extensions](/guide/extensions).
+
+## Status
+
+Honest state of things, so you know what you are getting:
+
+| Area | State |
+| --- | --- |
+| Sessions, workspaces, transcript replay | Working |
+| Model and effort per session, surviving restarts | Working |
+| Slash commands — builtin, extension, prompt, skill | Working |
+| Settings, extension config, package management | Working |
+| Channel packages: loading, installing, configuring | Working |
+| The channel **runtime** — actually starting a channel | Not built |
+| The agent session itself | Not built |
+
+Channels store their credentials and validate them, and the packages define a
+`start()`. Nothing calls it yet, because it needs the agent session to talk to.
+The UI reports channels as "not connected" rather than implying otherwise.
