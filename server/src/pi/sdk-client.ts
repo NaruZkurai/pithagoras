@@ -76,9 +76,16 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       opts.provider && opts.modelId ? { provider: opts.provider, modelId: opts.modelId } : undefined;
     const model = wanted ? modelRuntime.getModel(wanted.provider, wanted.modelId) : undefined;
 
+    // continueRecent, not create: `create` starts a fresh session file every
+    // time, so a restart lost the conversation and reset context usage to 0%.
+    //
+    // Both arguments matter. The signature is (cwd, sessionDir) and only one
+    // was being passed, so the session directory was taken as the working
+    // directory — pi filed everything under an encoded path derived from it
+    // rather than under the workspace.
     const { session } = await pi.createAgentSession({
       cwd: opts.cwd,
-      sessionManager: pi.SessionManager.create(opts.sessionDir),
+      sessionManager: pi.SessionManager.continueRecent(opts.cwd, opts.sessionDir),
       modelRuntime,
       ...(resourceLoader ? { resourceLoader } : {}),
       ...(model ? { model } : {}),

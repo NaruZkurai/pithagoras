@@ -269,13 +269,18 @@ app.post("/api/sessions/:id/config", async (req, res) => {
     // Taken from the resolved state rather than the request: pi coerces the
     // thinking level on a non-reasoning model, and storing what was asked for
     // would reapply the rejected value on every relaunch.
-    if (applied.includes("model") || applied.includes("thinkingLevel")) {
-      updateSession(session.id, {
-        provider: state.model.provider,
-        model: state.model.id,
-        thinking_level: state.thinkingLevel,
-      });
+    //
+    // Only the fields actually changed are written. Persisting all of them on
+    // any change meant that adjusting the effort while pi was sitting on a
+    // fallback model wrote that fallback in as the session's chosen model.
+    const patch: Parameters<typeof updateSession>[1] = {};
+    if (applied.includes("model")) {
+      patch.provider = state.model.provider;
+      patch.model = state.model.id;
     }
+    if (applied.includes("thinkingLevel")) patch.thinking_level = state.thinkingLevel;
+    if (Object.keys(patch).length) updateSession(session.id, patch);
+
     res.json({ ok: true, applied, state });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message, applied });
