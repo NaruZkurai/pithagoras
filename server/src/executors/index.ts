@@ -13,6 +13,8 @@ export interface LaunchOptions {
   provider?: string;
   model?: string;
   thinkingLevel?: string;
+  /** A previous run's pi session file, reopened so the conversation continues. */
+  sessionFile?: string;
 }
 
 export interface Executor {
@@ -54,6 +56,7 @@ export class HostExecutor implements Executor {
     return SdkPiClient.create({
       cwd: opts.workspacePath,
       sessionDir: path.join(this.sessionRoot, opts.sessionId),
+      sessionFile: opts.sessionFile,
       provider: opts.provider,
       modelId: opts.model,
       thinkingLevel: opts.thinkingLevel,

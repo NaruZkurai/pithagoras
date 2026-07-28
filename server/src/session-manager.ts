@@ -93,9 +93,24 @@ class SessionManager extends EventEmitter {
       provider: session.provider || settings.provider,
       model: session.model || settings.model || undefined,
       thinkingLevel: session.thinking_level || settings.thinkingLevel || undefined,
+      sessionFile: session.pi_session_file || undefined,
     });
 
+    // pi writes the file lazily, so it usually does not exist yet at launch.
+    // Recorded the first time it appears; from then on this exact conversation
+    // is what gets reopened.
+    let recordedFile = session.pi_session_file;
+    const rememberSessionFile = () => {
+      if (recordedFile) return;
+      const file = client.sessionFile;
+      if (!file) return;
+      recordedFile = file;
+      updateSession(sessionId, { pi_session_file: file });
+    };
+    rememberSessionFile();
+
     client.on("event", (msg) => {
+      rememberSessionFile();
       this.record(sessionId, msg.type, msg);
       // agent_end marks the end of a run — the task is done whether or not
       // anyone was watching.

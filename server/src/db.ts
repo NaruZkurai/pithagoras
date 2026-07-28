@@ -20,6 +20,8 @@ export interface SessionRow {
   thinking_level: string | null;
   /** SQLite has no boolean; 0 or 1. */
   pinned: number;
+  /** pi's own session file, so the exact conversation is reopened on restart. */
+  pi_session_file: string | null;
 }
 
 export interface EventRow {
@@ -51,7 +53,8 @@ export function getDb(): Database.Database {
       provider TEXT,
       model TEXT,
       thinking_level TEXT,
-      pinned INTEGER NOT NULL DEFAULT 0
+      pinned INTEGER NOT NULL DEFAULT 0,
+      pi_session_file TEXT
     );
 
     -- Every event pi emits is appended here. This is what makes the portal
@@ -96,6 +99,9 @@ function migrate(d: Database.Database): void {
   if (!names.includes("pinned")) {
     d.exec("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
   }
+  if (!names.includes("pi_session_file")) {
+    d.exec("ALTER TABLE sessions ADD COLUMN pi_session_file TEXT");
+  }
 }
 
 export function createSession(row: {
@@ -127,7 +133,14 @@ export function updateSession(
   fields: Partial<
     Pick<
       SessionRow,
-      "title" | "status" | "last_error" | "provider" | "model" | "thinking_level" | "pinned"
+      | "title"
+      | "status"
+      | "last_error"
+      | "provider"
+      | "model"
+      | "thinking_level"
+      | "pinned"
+      | "pi_session_file"
     >
   >
 ): void {

@@ -31,6 +31,12 @@ export interface PiCommand {
  */
 export interface PiClient extends EventEmitter {
   readonly running: boolean;
+  /**
+   * pi's session file for this conversation, once it exists. Recorded by the
+   * portal so the same conversation is reopened after a restart instead of a
+   * new one being started. Undefined for executors that cannot report it.
+   */
+  readonly sessionFile?: string;
 
   prompt(message: string): Promise<void>;
   abort(): Promise<void>;

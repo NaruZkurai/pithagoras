@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
 
@@ -42,6 +43,8 @@ export class SdkPiClient extends EventEmitter implements PiClient {
   static async create(opts: {
     cwd: string;
     sessionDir: string;
+    /** A previous run's session file. Reopened exactly, when it still exists. */
+    sessionFile?: string;
     provider?: string;
     modelId?: string;
     thinkingLevel?: string;
@@ -76,16 +79,25 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       opts.provider && opts.modelId ? { provider: opts.provider, modelId: opts.modelId } : undefined;
     const model = wanted ? modelRuntime.getModel(wanted.provider, wanted.modelId) : undefined;
 
-    // continueRecent, not create: `create` starts a fresh session file every
-    // time, so a restart lost the conversation and reset context usage to 0%.
+    // Reopen the exact file this portal session owns, rather than creating a
+    // new one — `create` started a fresh conversation on every restart, which
+    // is why history vanished and context usage read 0%.
     //
-    // Both arguments matter. The signature is (cwd, sessionDir) and only one
-    // was being passed, so the session directory was taken as the working
-    // directory — pi filed everything under an encoded path derived from it
-    // rather than under the workspace.
+    // Not continueRecent: "most recent in the directory" is a guess, and one
+    // stray file would silently attach the wrong conversation. The path is
+    // recorded in the database, so the mapping is exact.
+    //
+    // Note the argument order — (cwd, sessionDir). Only one was being passed,
+    // so the session directory was taken as the working directory and pi filed
+    // everything under an encoded path derived from it.
+    const sessionManager =
+      opts.sessionFile && existsSync(opts.sessionFile)
+        ? pi.SessionManager.open(opts.sessionFile, opts.sessionDir, opts.cwd)
+        : pi.SessionManager.create(opts.cwd, opts.sessionDir);
+
     const { session } = await pi.createAgentSession({
       cwd: opts.cwd,
-      sessionManager: pi.SessionManager.continueRecent(opts.cwd, opts.sessionDir),
+      sessionManager,
       modelRuntime,
       ...(resourceLoader ? { resourceLoader } : {}),
       ...(model ? { model } : {}),
@@ -147,6 +159,11 @@ export class SdkPiClient extends EventEmitter implements PiClient {
 
   get running(): boolean {
     return !this.disposed;
+  }
+
+  /** Undefined until pi has actually written the file. */
+  get sessionFile(): string | undefined {
+    return this.session.sessionFile ?? undefined;
   }
 
   /**
