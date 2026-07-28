@@ -232,7 +232,7 @@ function AgentFiles({ setup, onSaved }: { setup: Setup; onSaved: (s: Setup) => v
           </button>
         ))}
         <span className="ml-auto text-[11px] text-zinc-600">
-          {setup.generated} is generated from these
+          loaded as context when a conversation starts
         </span>
       </div>
 

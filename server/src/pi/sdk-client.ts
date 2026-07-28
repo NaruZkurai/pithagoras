@@ -1,11 +1,34 @@
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
 
 function asArray(v: any): any[] {
   const resolved = typeof v === "function" ? v() : v;
   return Array.isArray(resolved) ? resolved : [];
+}
+
+/**
+ * Files pi should treat as context on top of the ones it finds itself.
+ *
+ * Only picked up where they exist, so a task workspace is unaffected and the
+ * agent's home directory gets its character, its user and its memory without
+ * anything being generated.
+ */
+const CONTEXT_FILES = ["SOUL.md", "PrimaryUser.md", "MEMORY.md"];
+
+function extraContextFiles(cwd: string): { path: string; content: string }[] {
+  const out: { path: string; content: string }[] = [];
+  for (const name of CONTEXT_FILES) {
+    const file = path.join(cwd, name);
+    try {
+      if (existsSync(file)) out.push({ path: file, content: readFileSync(file, "utf8") });
+    } catch {
+      // Unreadable is the same as absent here; the session should still start.
+    }
+  }
+  return out;
 }
 
 /** Read a member that may be a getter or a method, without assuming which. */
@@ -65,6 +88,14 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       resourceLoader = new pi.DefaultResourceLoader({
         cwd: opts.cwd,
         agentDir: pi.getAgentDir(),
+        // pi discovers one context file per directory — AGENTS.md or CLAUDE.md
+        // — so the agent's own files would be invisible to it. Rather than
+        // generating an AGENTS.md from them and keeping it in sync, they are
+        // handed to pi as context files directly. Nothing to regenerate, and an
+        // edit is live for the next session that starts.
+        agentsFilesOverride: (base: { agentsFiles: any[] }) => ({
+          agentsFiles: [...base.agentsFiles, ...extraContextFiles(opts.cwd)],
+        }),
       });
       await resourceLoader.reload();
     } catch (e) {

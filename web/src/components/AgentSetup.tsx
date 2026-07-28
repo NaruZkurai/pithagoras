@@ -167,9 +167,9 @@ export function AgentSetup({ home, onDone }: { home: string; onDone: (s: Setup) 
       )}
 
       <p className="mt-8 text-[11px] leading-relaxed text-zinc-600">
-        Writes SOUL.md, PrimaryUser.md and MEMORY.md, then generates the AGENTS.md that pi reads —
-        it is the only file pi picks up on its own, so the others would do nothing without it. An
-        existing MEMORY.md is never overwritten.
+        Writes SOUL.md, PrimaryUser.md and MEMORY.md into the agent's home directory. All three are
+        handed to pi as context whenever a conversation starts, and stay editable here. An existing
+        MEMORY.md is never overwritten.
       </p>
     </div>
   );

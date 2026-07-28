@@ -19,8 +19,6 @@ export interface Session {
 export interface AgentSetup {
   home: string;
   initialised: boolean;
-  /** The file pi actually reads, generated from the others. */
-  generated: string;
   files: { name: string; exists: boolean; content: string }[];
 }
 
