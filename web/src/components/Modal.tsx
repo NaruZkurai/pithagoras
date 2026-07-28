@@ -36,10 +36,13 @@ export function Modal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
+      {/* The rail layout gets a floor as well as a ceiling: its panels fetch
+          before they render anything, so without one the dialog opened as a
+          bare title bar and snapped to full height a moment later. */}
       <div
         className={`flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl border border-white/10 bg-zinc-900 shadow-2xl ${
           wide ? "max-w-3xl" : "max-w-2xl"
-        }`}
+        } ${rail ? "min-h-[min(34rem,88vh)]" : ""}`}
       >
         <header className="flex items-center gap-3 border-b border-white/10 px-5 py-3.5">
           <div className="min-w-0 flex-1">
