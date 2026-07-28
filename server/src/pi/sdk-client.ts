@@ -32,40 +32,25 @@ function extraContextFiles(cwd: string): { path: string; content: string }[] {
 }
 
 /**
- * Tells the model what those files are, which their content does not.
+ * A short anchor saying the files are the agent's own.
  *
- * Only when they exist, so an ordinary task workspace gets no extra system
- * prompt and behaves exactly as it did before.
+ * Each file opens with its own instruction block, so this does not repeat them
+ * — it exists because a context file is otherwise presented as reference
+ * material, and the model read its own identity as notes about a third party.
+ * One line at system level is enough to change what they are.
  */
 function framing(cwd: string): string[] {
-  const present = new Set(
-    CONTEXT_FILES.filter((name) => {
-      try {
-        return existsSync(path.join(cwd, name));
-      } catch {
-        return false;
-      }
-    })
-  );
-  if (!present.size) return [];
-
-  const lines: string[] = [];
-  if (present.has("SOUL.md")) {
-    lines.push(
-      "SOUL.md is not documentation about someone else — it is you. Your name, your character and how you work are defined there, and you answer as that, not as a general assistant."
-    );
-  }
-  if (present.has("PrimaryUser.md")) {
-    lines.push(
-      "PrimaryUser.md describes the person you work for. Assume what it says rather than asking them again."
-    );
-  }
-  if (present.has("MEMORY.md")) {
-    lines.push(
-      "MEMORY.md is your long-term memory and it is yours to keep. When you learn something worth having next week — a decision and why, a preference, how something is set up — append it. Write what would not be obvious from the conversation; do not record what you could look up."
-    );
-  }
-  return [lines.join("\n\n")];
+  const present = CONTEXT_FILES.filter((name) => {
+    try {
+      return existsSync(path.join(cwd, name));
+    } catch {
+      return false;
+    }
+  });
+  if (!present.length) return [];
+  return [
+    `${present.join(", ")} in your working directory are yours, not reference material about someone else. Each opens with a block saying what it is for; follow it.`,
+  ];
 }
 
 /** Read a member that may be a getter or a method, without assuming which. */
