@@ -128,6 +128,34 @@ channels both choosing `general` stay separate without either knowing about the
 other. Slugs are stable across a channel being deleted and recreated, which ids
 are not — see [the note](/channels/#one-session-per-conversation).
 
+### Relaying progress
+
+A real task takes minutes and pi talks in stretches broken up by tool calls.
+Pass `meta.onReply` and each stretch is handed to you as it completes, so the
+chat shows the agent working instead of going silent:
+
+```js
+await ctx.ask(text, {
+  session: `chat:${chatId}`,
+  onReply: (body) => send(chatId, body),
+});
+```
+
+When you pass `onReply`, `ask` resolves with `""` — everything has already been
+given to you, and returning it again would post it twice. Without it, `ask`
+resolves with the whole reply at the end, which suits a webhook that has one
+response to fill.
+
+### Interrupting
+
+A message that is *only* `stop`, `wait`, `cancel`, `abort`, `halt`, `hold on`
+or `nevermind` aborts whatever the agent is doing and answers `Stopped.` It is
+checked before the queue, so it takes effect immediately rather than waiting
+behind the run it is trying to stop.
+
+Matched on the whole message, so `stop using the staging bucket` is an
+instruction and reaches the agent intact.
+
 Anything else in `meta` is yours — it travels with the message so you can route
 the reply back where it came from.
 

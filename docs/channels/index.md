@@ -136,9 +136,17 @@ looking healthy.
 4. The session is prompted, and `ask` **waits** — unlike the portal's own
    prompting, which returns immediately, because somebody is sitting in a chat
    expecting an answer.
-5. The assistant's text is returned and the package sends it back.
+5. The assistant's text goes back to the package — piece by piece via
+   `onReply` as each stretch between tool calls completes, so a long task shows
+   progress rather than going silent.
 
-Messages in one conversation are answered in turn. Two arriving while the agent
+A message that is only `stop`, `wait`, `cancel`, `abort`, `halt`, `hold on` or
+`nevermind` aborts the current run instead. It is checked before the queue, so
+it lands immediately rather than waiting behind what it is stopping — and it
+matches the whole message, so `stop using the staging bucket` still reaches the
+agent as an instruction.
+
+Other messages in one conversation are answered in turn. Two arriving while the agent
 is still working queue rather than interleaving, and each caller gets its own
 reply rather than whichever finished first.
 

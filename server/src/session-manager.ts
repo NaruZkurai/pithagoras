@@ -215,11 +215,24 @@ class SessionManager extends EventEmitter {
    * agent is still working would otherwise interleave, and both callers would
    * see whichever agent_end came first.
    */
-  ask(sessionId: string, message: string, opts: { timeoutMs?: number } = {}): Promise<string> {
+  ask(
+    sessionId: string,
+    message: string,
+    opts: {
+      timeoutMs?: number;
+      /**
+       * Called with each assistant message as it completes, so a channel can
+       * send what the agent says between tool calls instead of going quiet for
+       * minutes. When supplied, ask() resolves with "" — everything has already
+       * been handed over, and returning it again would post it twice.
+       */
+      onReply?: (text: string) => void | Promise<void>;
+    } = {}
+  ): Promise<string> {
     const previous = this.asking.get(sessionId) ?? Promise.resolve("");
     const next = previous
       .catch(() => "")
-      .then(() => this.askNow(sessionId, message, opts.timeoutMs ?? 15 * 60_000));
+      .then(() => this.askNow(sessionId, message, opts.timeoutMs ?? 15 * 60_000, opts.onReply));
     // Kept only while it is the newest, so a finished chain is not held forever.
     this.asking.set(sessionId, next);
     void next.catch(() => {}).finally(() => {
@@ -228,12 +241,31 @@ class SessionManager extends EventEmitter {
     return next;
   }
 
-  private async askNow(sessionId: string, message: string, timeoutMs: number): Promise<string> {
+  private async askNow(
+    sessionId: string,
+    message: string,
+    timeoutMs: number,
+    onReply?: (text: string) => void | Promise<void>
+  ): Promise<string> {
     await this.ensureClient(sessionId);
 
-    let text = "";
+    // pi emits one assistant message per stretch of talking, broken up by tool
+    // calls. Each is flushed as it closes so a channel can relay progress
+    // rather than sitting silent while a long task runs.
+    let current = "";
+    const all: string[] = [];
     let settle: (() => void) | undefined;
     let fail: ((e: Error) => void) | undefined;
+
+    const flush = () => {
+      const done = current.trim();
+      current = "";
+      if (!done) return;
+      all.push(done);
+      // Delivery is the channel's problem; a failure there must not take down
+      // the run that produced it.
+      void Promise.resolve(onReply?.(done)).catch(() => {});
+    };
 
     const onEvent = (row: { type: string; payload: string }) => {
       let payload: any = {};
@@ -247,15 +279,24 @@ class SessionManager extends EventEmitter {
           const inner = payload.assistantMessageEvent ?? {};
           // Thinking deltas are not the answer, and nobody in a chat wants them.
           if (inner.type === "text_delta" && typeof inner.delta === "string") {
-            text += inner.delta;
+            current += inner.delta;
           }
           break;
         }
+        case "message_end":
+          flush();
+          break;
         case "agent_end":
+          // Anything not closed by a message_end still belongs to the answer.
+          flush();
           settle?.();
           break;
         case "portal_status":
           if (payload.status === "error") fail?.(new Error(String(payload.error ?? "run failed")));
+          if (payload.status === "idle" && payload.aborted) {
+            flush();
+            settle?.();
+          }
           break;
       }
     };
@@ -275,11 +316,21 @@ class SessionManager extends EventEmitter {
       });
       await this.prompt(sessionId, message);
       await finished;
-      return text.trim();
+      // Already relayed piece by piece; handing it back would post it twice.
+      return onReply ? "" : all.join("\n\n").trim();
     } finally {
       clearTimeout(timer);
       this.off(`session:${sessionId}`, onEvent);
     }
+  }
+
+  /**
+   * Whether a run is in flight. Checked before queueing an interrupt, which
+   * would otherwise wait politely behind the very task it means to stop.
+   */
+  isBusy(sessionId: string): boolean {
+    if (this.asking.has(sessionId)) return true;
+    return getSession(sessionId)?.status === "running";
   }
 
   /** Access the live client for config reads and writes, starting pi if needed. */

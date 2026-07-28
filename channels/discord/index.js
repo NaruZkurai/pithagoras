@@ -172,7 +172,14 @@ export async function start(ctx) {
       try {
         // A DM is a channel as far as Discord is concerned, so keying on the
         // channel separates DMs from servers with no extra work.
-        const reply = await ctx.ask(text, {
+        const say = async (body) => {
+          // Discord rejects anything over 2000 characters.
+          for (const chunk of split(body, 1900)) {
+            await rest(token, `/channels/${message.channel_id}/messages`, { content: chunk });
+          }
+        };
+        // Relayed between tool calls, so a long task is visibly working.
+        await ctx.ask(text, {
           session: `channel:${message.channel_id}`,
           title: message.guild_id
             ? `Discord ${message.channel_id}`
@@ -180,11 +187,8 @@ export async function start(ctx) {
           channel: message.channel_id,
           user: message.author?.id,
           guild: message.guild_id,
+          onReply: say,
         });
-        // Discord rejects anything over 2000 characters.
-        for (const chunk of split(reply || "(no reply)", 1900)) {
-          await rest(token, `/channels/${message.channel_id}/messages`, { content: chunk });
-        }
       } catch (e) {
         ctx.log(`failed to answer in ${message.channel_id}: ${e.message}`);
         await rest(token, `/channels/${message.channel_id}/messages`, {

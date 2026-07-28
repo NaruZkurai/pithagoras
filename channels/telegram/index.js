@@ -92,15 +92,20 @@ export async function start(ctx) {
           await call(token, "sendChatAction", { chat_id: chatId, action: "typing" }, ctx.signal);
           // The chat id is the conversation: a DM and a group have different
           // ones, so each gets its own session without any special casing.
-          const reply = await ctx.ask(text, {
+          const say = async (body) => {
+            // Telegram rejects anything over 4096 characters outright.
+            for (const chunk of split(body, 4000)) {
+              await call(token, "sendMessage", { chat_id: chatId, text: chunk }, ctx.signal);
+            }
+          };
+          // onReply relays what the agent says between tool calls, so a long
+          // task shows progress instead of going silent for minutes.
+          await ctx.ask(text, {
             session: `chat:${chatId}`,
             title: chatTitle(message.chat),
             chatId,
+            onReply: say,
           });
-          // Telegram rejects anything over 4096 characters outright.
-          for (const chunk of split(reply || "(no reply)", 4000)) {
-            await call(token, "sendMessage", { chat_id: chatId, text: chunk }, ctx.signal);
-          }
         } catch (e) {
           ctx.log(`failed to answer ${chatId}: ${e.message}`);
           await call(token, "sendMessage", {

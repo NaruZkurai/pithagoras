@@ -39,6 +39,27 @@ interface Running {
 /** Kept per channel and shown on its page — enough to see what happened. */
 const MAX_LOG = 50;
 
+/**
+ * Said on its own, these stop whatever the agent is doing.
+ *
+ * Matched only when the message is the word and nothing else: "stop" halts the
+ * run, "stop using the staging bucket" is an instruction and must reach the
+ * agent intact.
+ */
+const INTERRUPTS = new Set([
+  "wait",
+  "stop",
+  "halt",
+  "cancel",
+  "abort",
+  "hold on",
+  "nevermind",
+  "never mind",
+]);
+
+const isInterrupt = (text: string) =>
+  INTERRUPTS.has(text.trim().toLowerCase().replace(/[.!?]+$/, ""));
+
 class ChannelSupervisor {
   private running = new Map<string, Running>();
   private syncing: Promise<void> | null = null;
@@ -177,7 +198,19 @@ class ChannelSupervisor {
       executor: EXECUTOR_KIND,
     });
 
-    return sessions.ask(session.id, withInstructions(text, row.instructions));
+    // Checked before the queue, not inside it. ask() serialises per session, so
+    // "stop" would otherwise wait behind the very run it is trying to stop.
+    if (isInterrupt(text)) {
+      if (!sessions.isBusy(session.id)) return "Nothing running.";
+      await sessions.abort(session.id);
+      return "Stopped.";
+    }
+
+    const onReply = typeof meta.onReply === "function"
+      ? (meta.onReply as (text: string) => void | Promise<void>)
+      : undefined;
+
+    return sessions.ask(session.id, withInstructions(text, row.instructions), { onReply });
   }
 
   /** One line for the boot log. */

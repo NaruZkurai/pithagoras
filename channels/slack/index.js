@@ -121,20 +121,25 @@ export async function start(ctx) {
         // Per channel, not per thread: a thread is a digression inside one
         // conversation, and splitting them would give the agent amnesia
         // halfway through a discussion.
-        const reply = await ctx.ask(text, {
+        const say = async (body) => {
+          for (const chunk of split(body, 3000)) {
+            await web(botToken, "chat.postMessage", {
+              channel: event.channel,
+              thread_ts: thread,
+              text: chunk,
+            });
+          }
+        };
+        // Relayed as the agent produces it, so the thread shows progress
+        // rather than one wall of text at the end.
+        await ctx.ask(text, {
           session: `channel:${event.channel}`,
           title: channelTitle(event),
           channel: event.channel,
           thread,
           user: event.user,
+          onReply: say,
         });
-        for (const chunk of split(reply || "(no reply)", 3000)) {
-          await web(botToken, "chat.postMessage", {
-            channel: event.channel,
-            thread_ts: thread,
-            text: chunk,
-          });
-        }
       } catch (e) {
         ctx.log(`failed to answer in ${event.channel}: ${e.message}`);
         await web(botToken, "chat.postMessage", {
