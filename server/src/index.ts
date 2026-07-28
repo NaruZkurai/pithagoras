@@ -14,6 +14,12 @@ import {
   updateSession,
 } from "./db.js";
 import { agentHome } from "./agent.js";
+import {
+  agentFileStatus,
+  runWizard,
+  writeAgentFile,
+  type WizardInput,
+} from "./agent-setup.js";
 import { sessions, EXECUTOR_KIND } from "./session-manager.js";
 import { authEnabled, checkPassword, isAuthed, issueCookie, requireAuth } from "./auth.js";
 import { packagesRouter } from "./api/packages.js";
@@ -170,6 +176,40 @@ app.get("/api/agent/sessions", (_req, res) => {
         : null,
     })),
   });
+});
+
+// --- the agent's home directory ---
+
+app.get("/api/agent/setup", (_req, res) => {
+  res.json(agentFileStatus());
+});
+
+/** Run the wizard. Refuses to overwrite an existing MEMORY.md. */
+app.post("/api/agent/setup", (req, res) => {
+  const body = (req.body ?? {}) as WizardInput;
+  if (typeof body.agentName !== "string" || !body.agentName.trim()) {
+    return res.status(400).json({ error: "The agent needs a name" });
+  }
+  if (typeof body.userName !== "string" || !body.userName.trim()) {
+    return res.status(400).json({ error: "Who is it working for?" });
+  }
+  try {
+    runWizard(body);
+    res.json(agentFileStatus());
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+app.put("/api/agent/files/:name", (req, res) => {
+  const content = req.body?.content;
+  if (typeof content !== "string") return res.status(400).json({ error: "content required" });
+  try {
+    writeAgentFile(req.params.name, content);
+    res.json(agentFileStatus());
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
 });
 
 app.post("/api/sessions", (req, res) => {

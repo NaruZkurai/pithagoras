@@ -15,6 +15,15 @@ export interface Session {
   kind?: "task" | "agent";
 }
 
+/** The agent's home directory and the files that define it. */
+export interface AgentSetup {
+  home: string;
+  initialised: boolean;
+  /** The file pi actually reads, generated from the others. */
+  generated: string;
+  files: { name: string; exists: boolean; content: string }[];
+}
+
 /** A conversation that reached the agent through a channel. */
 export interface AgentSession extends Session {
   /** The package-supplied conversation key, prefixed with the channel id. */
@@ -68,6 +77,20 @@ export const api = {
     json<{ ok: boolean }>(`/api/sessions/${sessionId}/ui-response`, {
       method: "POST",
       body: JSON.stringify({ id, ...payload }),
+    }),
+
+  agentSetup: () => json<AgentSetup>("/api/agent/setup"),
+  runAgentWizard: (input: {
+    agentName: string;
+    vibe?: string;
+    userName: string;
+    userAbout?: string;
+    userPrefers?: string;
+  }) => json<AgentSetup>("/api/agent/setup", { method: "POST", body: JSON.stringify(input) }),
+  saveAgentFile: (name: string, content: string) =>
+    json<AgentSetup>(`/api/agent/files/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify({ content }),
     }),
 
   agentSessions: () =>

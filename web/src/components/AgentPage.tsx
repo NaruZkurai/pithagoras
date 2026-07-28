@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { LuBot, LuFolder, LuMessageSquare, LuRadio } from "react-icons/lu";
-import { api, type AgentSession, type SessionStatus } from "../api";
+import { LuBot, LuCheck, LuFileText, LuFolder, LuMessageSquare, LuRadio, LuRefreshCw } from "react-icons/lu";
+import { api, type AgentSession, type AgentSetup as Setup, type SessionStatus } from "../api";
+import { AgentSetup } from "./AgentSetup";
 
 const STATUS_STYLE: Record<SessionStatus, string> = {
   running: "bg-cyan-400 animate-pulse",
@@ -30,6 +31,7 @@ const when = (iso: string) => {
 export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [home, setHome] = useState("");
+  const [setup, setSetup] = useState<Setup | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = () =>
@@ -43,6 +45,7 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
       .finally(() => setLoading(false));
 
   useEffect(() => {
+    api.agentSetup().then(setSetup).catch(() => {});
     load();
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
@@ -68,6 +71,16 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
     }
     return [...out.entries()];
   }, [sessions]);
+
+  // Nothing else on this page means much until the agent has a character and
+  // knows who it is talking to.
+  if (setup && !setup.initialised) {
+    return (
+      <div className="flex h-full flex-col overflow-y-auto">
+        <AgentSetup home={setup.home} onDone={setSetup} />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -104,6 +117,8 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
               </div>
             </div>
           </header>
+
+          {setup?.initialised && <AgentFiles setup={setup} onSaved={setSetup} />}
 
           {loading ? (
             <p className="py-12 text-center text-sm text-zinc-500">Loading…</p>
@@ -172,5 +187,78 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/** The files that define the agent, editable in place. */
+function AgentFiles({ setup, onSaved }: { setup: Setup; onSaved: (s: Setup) => void }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const file = setup.files.find((f) => f.name === open);
+
+  const save = async () => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      onSaved(await api.saveAgentFile(file.name, draft));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mt-5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {setup.files.map((f) => (
+          <button
+            key={f.name}
+            onClick={() => {
+              setOpen(open === f.name ? null : f.name);
+              setDraft(f.content);
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition ${
+              open === f.name
+                ? "bg-cyan-500/15 text-cyan-200 ring-1 ring-inset ring-cyan-400/30"
+                : "bg-white/5 text-zinc-400 hover:bg-white/10"
+            }`}
+          >
+            <LuFileText className="h-3.5 w-3.5" />
+            {f.name}
+          </button>
+        ))}
+        <span className="ml-auto text-[11px] text-zinc-600">
+          {setup.generated} is generated from these
+        </span>
+      </div>
+
+      {file && (
+        <div className="mt-2">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={14}
+            spellCheck={false}
+            className="w-full resize-y rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-cyan-500/60"
+          />
+          <button
+            onClick={save}
+            disabled={busy || draft === file.content}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-2 text-sm text-zinc-200 transition hover:bg-white/10 disabled:opacity-40"
+          >
+            {busy ? (
+              <LuRefreshCw className="h-4 w-4 animate-spin" />
+            ) : saved ? (
+              <LuCheck className="h-4 w-4" />
+            ) : null}
+            {saved ? "Saved" : "Save"}
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
