@@ -22,6 +22,13 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # pages: write here is not for deploying — it lets configure-pages turn
+    # Pages on by itself, so a fresh clone of this repo publishes without
+    # anyone visiting the settings screen first.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -29,6 +36,8 @@ jobs:
           node-version: 22
           cache: npm
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - run: npm install
       - run: npm run docs:build
       - uses: actions/upload-pages-artifact@v3

@@ -115,9 +115,11 @@ npm run docs
 `.github/workflows/docs.yml` builds and deploys them to GitHub Pages on every
 push to `main` that touches `docs/`, `channels/` or the workflow itself.
 
-It needs Pages switched on once, by hand: **Settings → Pages → Source →
-GitHub Actions**. Until that is done the deploy step fails with a permissions
-error, which is the repository refusing rather than the workflow being wrong.
+The workflow turns Pages on itself the first time it runs — `configure-pages`
+is given `enablement: true` and the permission to use it — so a fork publishes
+without anyone opening the settings screen. If your organisation restricts who
+may enable Pages, do it once by hand instead: **Settings → Pages → Source →
+GitHub Actions**.
 
 The site is served from `/pithagoras/`, so `base` is set to match. On a custom
 domain, where the site sits at the root, override it:
