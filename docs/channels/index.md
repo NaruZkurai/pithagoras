@@ -149,6 +149,29 @@ Each channel decides how much of that it wants, on its own page:
 Both off and the channel stays quiet until there is an answer. A phone over
 Telegram probably wants less than a war-room Slack channel does.
 
+### Questions from extensions
+
+An extension command can stop and ask something — `/models` from `pi-llama-cpp`
+opens a menu. In the portal that draws a modal. In a chat there is nowhere to
+draw one, so the question is sent as a message and the next reply answers it:
+
+```
+Llama.cpp models:
+1. qwen36-35b-a3b-mtp
+2. ornith-1.0-35b
+
+Reply with a number, or "cancel".
+```
+
+Numbers work, so does typing the option. `confirm` takes yes or no, `input` and
+`editor` take whatever you send, and `cancel` dismisses any of them. The answer
+jumps the queue — the run is stopped waiting for it, so it cannot be made to
+wait its turn behind itself.
+
+Questions are relayed whatever the progress toggles say. They are not chatter:
+the command hangs until somebody answers, and staying quiet would just leave it
+to time out.
+
 A message that is only `stop`, `wait`, `cancel`, `abort`, `halt`, `hold on` or
 `nevermind` aborts the current run instead. It is checked before the queue, so
 it lands immediately rather than waiting behind what it is stopping — and it

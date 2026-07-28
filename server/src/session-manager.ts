@@ -248,13 +248,26 @@ class SessionManager extends EventEmitter {
        * what a channel showing activity but not partial answers wants.
        */
       streamText?: boolean;
+      /**
+       * An extension asking the user something mid-run. The browser draws a
+       * modal for these; a channel has to ask in the chat and wait for the
+       * next message, so it needs to know one is open.
+       */
+      onUi?: (request: any) => void;
     } = {}
   ): Promise<string> {
     const previous = this.asking.get(sessionId) ?? Promise.resolve("");
     const next = previous
       .catch(() => "")
       .then(() =>
-        this.askNow(sessionId, message, opts.timeoutMs ?? 15 * 60_000, opts.onReply, opts.streamText)
+        this.askNow(
+          sessionId,
+          message,
+          opts.timeoutMs ?? 15 * 60_000,
+          opts.onReply,
+          opts.streamText,
+          opts.onUi
+        )
       );
     // Kept only while it is the newest, so a finished chain is not held forever.
     this.asking.set(sessionId, next);
@@ -269,7 +282,8 @@ class SessionManager extends EventEmitter {
     message: string,
     timeoutMs: number,
     onReply?: (text: string) => void | Promise<void>,
-    streamText = true
+    streamText = true,
+    onUi?: (request: any) => void
   ): Promise<string> {
     await this.ensureClient(sessionId);
 
@@ -330,6 +344,18 @@ class SessionManager extends EventEmitter {
             all.push(payload.text.trim());
             if (streamText) relay(payload.text.trim());
           }
+          break;
+
+        // An extension is blocking on an answer. Handed straight over: whoever
+        // is asking has to put the question somewhere a human will see it.
+        case "extension_ui_request":
+          flush();
+          onUi?.(payload);
+          break;
+
+        // The dialog gave up waiting.
+        case "extension_ui_cancel":
+          onUi?.({ ...payload, cancelled: true });
           break;
 
         case "agent_end":

@@ -62,9 +62,18 @@ const INTERRUPTS = new Set([
 const isInterrupt = (text: string) =>
   INTERRUPTS.has(text.trim().toLowerCase().replace(/[.!?]+$/, ""));
 
+/** An extension dialog waiting on a reply from the chat. */
+interface PendingUi {
+  id: string;
+  method: string;
+  options?: string[];
+}
+
 class ChannelSupervisor {
   private running = new Map<string, Running>();
   private syncing: Promise<void> | null = null;
+  /** Open dialogs, by session. The next message in that chat answers one. */
+  private pendingUi = new Map<string, PendingUi>();
 
   private rows(): ChannelRow[] {
     return getDb().prepare("SELECT * FROM channels").all() as ChannelRow[];
@@ -200,12 +209,33 @@ class ChannelSupervisor {
       executor: EXECUTOR_KIND,
     });
 
-    // Checked before the queue, not inside it. ask() serialises per session, so
-    // "stop" would otherwise wait behind the very run it is trying to stop.
+    // Everything below jumps the queue on purpose. ask() serialises per
+    // session, so anything meant to affect the run in progress has to be
+    // handled before it, or it waits behind the thing it is answering.
+
+    const open = this.pendingUi.get(session.id);
+
     if (isInterrupt(text)) {
+      if (open) {
+        this.pendingUi.delete(session.id);
+        sessions.respondUi(session.id, open.id, { cancelled: true });
+        return "Cancelled.";
+      }
       if (!sessions.isBusy(session.id)) return "Nothing running.";
       await sessions.abort(session.id);
       return "Stopped.";
+    }
+
+    // Answering an extension's question, not starting a new turn. The reply
+    // travels back through the ask that is still running.
+    if (open) {
+      const answer = interpretAnswer(open, text);
+      if (answer.error) return answer.error;
+      this.pendingUi.delete(session.id);
+      if (!sessions.respondUi(session.id, open.id, answer.response!)) {
+        return "That question has already expired.";
+      }
+      return "";
     }
 
     const packageReply =
@@ -222,6 +252,24 @@ class ChannelSupervisor {
     return sessions.ask(session.id, withInstructions(text, row.instructions), {
       onReply: relaying ? packageReply : undefined,
       streamText: wantsProgress,
+      // Dialogs are relayed whatever the toggles say. They are not progress
+      // chatter — the run is stopped until somebody answers, and silence here
+      // means the command hangs until it times out.
+      onUi: (request) => {
+        if (request?.cancelled) {
+          this.pendingUi.delete(session.id);
+          void packageReply?.("That question timed out.");
+          return;
+        }
+        const question = describeUi(request);
+        if (!question) return; // notify/setStatus/setWidget are one-way
+        this.pendingUi.set(session.id, {
+          id: request.id,
+          method: request.method,
+          options: request.options,
+        });
+        void packageReply?.(question);
+      },
     });
   }
 
@@ -239,6 +287,65 @@ class ChannelSupervisor {
   async shutdown(): Promise<void> {
     await Promise.all([...this.running.keys()].map((id) => this.stopChannel(id)));
   }
+}
+
+/**
+ * An extension's question, as something you can answer in a chat.
+ *
+ * The browser draws a modal with buttons; here the options are numbered and the
+ * next message picks one. Returns undefined for the one-way calls — notify,
+ * setStatus, setWidget — which are not questions and must not block anything.
+ */
+function describeUi(request: any): string | undefined {
+  const title = String(request?.title ?? "").trim();
+  const message = String(request?.message ?? "").trim();
+  const head = [title, message].filter(Boolean).join("\n");
+
+  switch (request?.method) {
+    case "select": {
+      const options: string[] = Array.isArray(request.options) ? request.options : [];
+      if (!options.length) return `${head || "Choose"}\n(no options offered)`;
+      const list = options.map((o, i) => `${i + 1}. ${o}`).join("\n");
+      return `${head || "Choose one"}\n${list}\n\nReply with a number, or "cancel".`;
+    }
+    case "confirm":
+      return `${head || "Confirm"}\n\nReply "yes" or "no".`;
+    case "input":
+    case "editor": {
+      const hint = String(request.placeholder ?? request.defaultValue ?? "").trim();
+      return `${head || "Enter a value"}${hint ? `\n(${hint})` : ""}\n\nReply with the value, or "cancel".`;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** Turn a chat reply into the answer the extension is waiting for. */
+function interpretAnswer(
+  open: PendingUi,
+  text: string
+): { response?: { value?: unknown; cancelled?: boolean }; error?: string } {
+  const answer = text.trim();
+
+  if (open.method === "select") {
+    const options = open.options ?? [];
+    const n = Number(answer);
+    if (Number.isInteger(n) && n >= 1 && n <= options.length) {
+      return { response: { value: options[n - 1] } };
+    }
+    // Typing the option itself is the obvious thing to try, so accept it.
+    const exact = options.find((o) => o.toLowerCase() === answer.toLowerCase());
+    if (exact) return { response: { value: exact } };
+    return { error: `Reply with a number from 1 to ${options.length}, or "cancel".` };
+  }
+
+  if (open.method === "confirm") {
+    if (/^(y|yes|ok|okay|sure|do it)$/i.test(answer)) return { response: { value: true } };
+    if (/^(n|no|nope|don't|dont)$/i.test(answer)) return { response: { value: false } };
+    return { error: 'Reply "yes" or "no".' };
+  }
+
+  return { response: { value: answer } };
 }
 
 /**
