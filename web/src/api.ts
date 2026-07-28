@@ -104,6 +104,21 @@ export const api = {
       body: JSON.stringify(patch),
     }),
 
+  channels: () =>
+    json<{ channels: Channel[]; kinds: ChannelKind[]; agentHome: string }>("/api/channels"),
+  createChannel: (kind: string, name: string, config: Record<string, string>) =>
+    json<Channel>("/api/channels", {
+      method: "POST",
+      body: JSON.stringify({ kind, name, config }),
+    }),
+  updateChannel: (
+    id: string,
+    patch: { name?: string; enabled?: boolean; config?: Record<string, string> }
+  ) =>
+    json<Channel>(`/api/channels/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteChannel: (id: string) =>
+    json<{ ok: true }>(`/api/channels/${id}`, { method: "DELETE" }),
+
   extensions: () =>
     json<{ extensions: ExtensionInfo[]; settingsPath: string }>("/api/extensions"),
   setExtensionSetting: (key: string, value: unknown) =>
@@ -164,6 +179,36 @@ export interface ConfigPatch {
   autoRetry?: boolean;
 }
 
+
+export interface ChannelField {
+  key: string;
+  label: string;
+  hint?: string;
+  secret?: boolean;
+  required?: boolean;
+  placeholder?: string;
+}
+
+export interface ChannelKind {
+  id: string;
+  label: string;
+  blurb: string;
+  fields: ChannelField[];
+}
+
+export interface Channel {
+  id: string;
+  kind: string;
+  name: string;
+  enabled: boolean;
+  /** Non-secret values only — secrets never leave the server. */
+  config: Record<string, string>;
+  /** Which secret fields have a value stored. */
+  secretsSet: string[];
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
 
 /** One setting an extension reads, recovered from its source by the server. */
 export interface DetectedSetting {

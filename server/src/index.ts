@@ -16,6 +16,7 @@ import { sessions, EXECUTOR_KIND } from "./session-manager.js";
 import { authEnabled, checkPassword, isAuthed, issueCookie, requireAuth } from "./auth.js";
 import { packagesRouter } from "./api/packages.js";
 import { extensionsRouter } from "./api/extensions.js";
+import { channelsRouter } from "./api/channels.js";
 import { piSettingsPath } from "./pi-settings.js";
 import { getBuiltinCommands } from "./pi/builtins.js";
 import { isValidSlug, slugify } from "./slug.js";
@@ -323,6 +324,7 @@ app.get("/api/sessions/:id/commands", async (req, res) => {
 // --- pi packages (extensions, skills, prompts, themes) ---
 app.use("/api", packagesRouter());
 app.use("/api", extensionsRouter());
+app.use("/api", channelsRouter());
 
 // --- event stream ---
 

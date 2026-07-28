@@ -8,6 +8,7 @@ import {
   LuExternalLink,
   LuFileJson,
   LuPuzzle,
+  LuRadio,
   LuRefreshCw,
   LuServer,
   LuSlidersHorizontal,
@@ -15,9 +16,10 @@ import {
   LuTriangleAlert,
 } from "react-icons/lu";
 import { api, type ExtensionInfo, type GlobalSettings } from "../api";
+import { ChannelsPanel } from "./ChannelsPanel";
 import { Modal } from "./Modal";
 
-export type Tab = "general" | "extensions" | "advanced";
+export type Tab = "general" | "channels" | "extensions" | "advanced";
 
 /** Either a fixed tab or one extension's own configuration page. */
 type Nav = { kind: "tab"; id: Tab } | { kind: "ext"; spec: string };
@@ -28,6 +30,12 @@ const TABS: { id: Tab; label: string; icon: ReactNode; hint: string }[] = [
     label: "General",
     icon: <LuSlidersHorizontal />,
     hint: "Defaults applied to new sessions",
+  },
+  {
+    id: "channels",
+    label: "Channels",
+    icon: <LuRadio />,
+    hint: "Two-way links into the agent",
   },
   { id: "extensions", label: "Extensions", icon: <LuBlocks />, hint: "Install and manage packages" },
   { id: "advanced", label: "Advanced", icon: <LuFileJson />, hint: "pi's raw settings file" },
@@ -120,6 +128,7 @@ export function ConfigModal({
       )}
 
       {nav.kind === "tab" && nav.id === "general" && <GeneralPanel onError={setError} />}
+      {nav.kind === "tab" && nav.id === "channels" && <ChannelsPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "extensions" && (
         <ExtensionsPanel
           extensions={extensions}

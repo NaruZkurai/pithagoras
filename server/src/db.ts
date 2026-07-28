@@ -69,6 +69,19 @@ export function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, seq);
 
+    -- Two-way links into the agent session. Each row is one connection
+    -- (a Telegram bot, a Slack app, an inbound webhook); messages arriving on
+    -- any of them go to the same agent, and its replies go back the same way.
+    CREATE TABLE IF NOT EXISTS channels (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      config TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Portal-wide defaults applied to every new session. Env vars are the
     -- fallback, so an untouched install still works out of the box.
     CREATE TABLE IF NOT EXISTS settings (
