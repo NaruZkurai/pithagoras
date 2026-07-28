@@ -69,16 +69,12 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       resourceLoader = undefined;
     }
 
-    let model;
-    if (opts.provider && opts.modelId) {
-      model = modelRuntime.getModel(opts.provider, opts.modelId);
-      if (!model) {
-        // Fall through to pi's own resolution rather than refusing to start.
-        console.error(
-          `[portal] model ${opts.provider}/${opts.modelId} not found; using pi's default`
-        );
-      }
-    }
+    // Resolved twice on purpose. Extensions register their own providers, and
+    // they are not bound yet — so a llama-server model is invisible here and
+    // only becomes findable further down, after bindExtensions.
+    const wanted =
+      opts.provider && opts.modelId ? { provider: opts.provider, modelId: opts.modelId } : undefined;
+    const model = wanted ? modelRuntime.getModel(wanted.provider, wanted.modelId) : undefined;
 
     const { session } = await pi.createAgentSession({
       cwd: opts.cwd,
@@ -120,6 +116,23 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       });
     } catch (e) {
       console.error(`[portal] binding extensions failed: ${(e as Error).message}`);
+    }
+
+    // Second attempt: the provider may only exist now that extensions are
+    // bound. Without this the session silently ran on pi's fallback model.
+    if (wanted && !model) {
+      const late = modelRuntime.getModel(wanted.provider, wanted.modelId);
+      if (late) {
+        try {
+          await session.setModel(late);
+        } catch (e) {
+          console.error(`[portal] could not apply ${wanted.modelId}: ${(e as Error).message}`);
+        }
+      } else {
+        console.error(
+          `[portal] model ${wanted.provider}/${wanted.modelId} not found; using pi's default`
+        );
+      }
     }
 
     return client;
