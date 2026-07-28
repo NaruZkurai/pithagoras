@@ -261,7 +261,11 @@ export interface Channel {
   instructions: string;
   /** Conversations keyed to this channel's slug. */
   sessionCount: number;
-  status: string;
+  /** What the supervisor is doing with it right now. */
+  state: "running" | "stopped" | "starting" | "error";
+  error?: string;
+  since?: string;
+  log: { at: string; text: string }[];
   created_at: string;
   updated_at: string;
 }

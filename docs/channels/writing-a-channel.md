@@ -216,5 +216,8 @@ see a change.
   reinstalled or deleted.
 - **A key is mandatory.** `ask` without `meta.session` throws rather than
   quietly lumping everything into one conversation.
-- **`start()` is not called yet.** See [the note](/channels/#what-does-not-work-yet).
-  Write against this contract; it is what the runtime will use.
+- **Editing configuration restarts your channel.** `stop()` is called and
+  `start()` runs again with the new values, so do not hold state that matters
+  outside them.
+- **`ask` waits for the agent.** It can take minutes on a real task; there is a
+  15 minute ceiling after which it rejects.

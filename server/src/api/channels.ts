@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { countChannelSessions, getDb } from "../db.js";
 import { agentHome } from "../agent.js";
 import { isValidSlug, slugify } from "../slug.js";
+import { channelSupervisor } from "../channels/supervisor.js";
 import {
   channelsDir,
   installChannelPackage,
@@ -87,8 +88,8 @@ function toApi(row: ChannelRow, kind?: LoadedChannel) {
     instructions: row.instructions ?? "",
     /** Conversations keyed to this slug — what a delete would strand. */
     sessionCount: countChannelSessions(row.slug),
-    /** No transport is running yet — say so rather than implying it is live. */
-    status: "not connected" as const,
+    // What the supervisor is actually doing, not a hardcoded guess.
+    ...channelSupervisor.status(row.id),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -160,6 +161,7 @@ export function channelsRouter(): Router {
     getDb()
       .prepare("INSERT INTO channels (id, slug, kind, name, config) VALUES (?, ?, ?, ?, ?)")
       .run(id, slug, kind.id, label, JSON.stringify(clean));
+    void channelSupervisor.sync();
     res.json(toApi(rowById(id)!, kind));
   });
 
@@ -214,6 +216,9 @@ export function channelsRouter(): Router {
       sets.push("updated_at = datetime('now')");
       getDb().prepare(`UPDATE channels SET ${sets.join(", ")} WHERE id = ?`).run(...values, row.id);
     }
+    // Enabling, disabling or editing a token all mean the running channel is
+    // stale; the supervisor restarts or stops it.
+    await channelSupervisor.sync();
     res.json(toApi(rowById(row.id)!, kind));
   });
 
@@ -240,6 +245,7 @@ export function channelsRouter(): Router {
     }
 
     getDb().prepare("DELETE FROM channels WHERE id = ?").run(row.id);
+    void channelSupervisor.sync();
     res.json({ ok: true, slug: row.slug, stranded: deleted ? 0 : count, deleted });
   });
 

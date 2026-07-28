@@ -19,6 +19,13 @@ const inputCls =
   "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60";
 const btnCls =
   "inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-2 text-sm text-zinc-200 transition hover:bg-white/10 disabled:opacity-40";
+const STATE_STYLE: Record<string, string> = {
+  running: "text-emerald-400",
+  starting: "text-amber-400",
+  error: "text-red-400",
+  stopped: "text-zinc-500",
+};
+
 const primaryCls =
   "inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 py-2 text-sm text-cyan-200 ring-1 ring-inset ring-cyan-400/30 transition hover:bg-cyan-500/25 disabled:opacity-40";
 
@@ -54,6 +61,9 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
 
   useEffect(() => {
     load();
+    // Channels start, fail and log on their own schedule, so the page follows.
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
   }, []);
 
   const kindOf = (id: string) => kinds.find((k) => k.id === id);
@@ -264,12 +274,11 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
         )}
       </section>
 
-      <div className="flex items-start gap-2 rounded-xl border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-200/80">
-        <LuTriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <div className="flex items-start gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-500">
+        <LuTriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-600" />
         <p>
-          Credentials are stored and validated here, but no transport is running yet — channels
-          will show as “not connected” until the agent session exists. Packages define start(), and
-          nothing calls it in the meantime.
+          An enabled channel is started as soon as you save it, and again when the portal restarts.
+          Each conversation it sees becomes its own session on the Agent tab.
         </p>
       </div>
     </>
@@ -292,10 +301,19 @@ function ChannelRow({
         onClick={onOpen}
         className="flex w-full items-center gap-2.5 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-left transition hover:bg-white/5"
       >
-        <LuRadio className={`h-4 w-4 shrink-0 ${ch.enabled ? "text-cyan-400" : "text-zinc-600"}`} />
+        <LuRadio
+          className={`h-4 w-4 shrink-0 ${
+            ch.state === "running"
+              ? "text-emerald-400"
+              : ch.state === "error"
+                ? "text-red-400"
+                : "text-zinc-600"
+          }`}
+        />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm text-zinc-200">{ch.name}</p>
           <p className="truncate text-[11px] text-zinc-600">
+            <span className={STATE_STYLE[ch.state] ?? ""}>{ch.state}</span> ·{" "}
             {kind?.label ?? ch.kind} · {ch.slug}
             {ch.sessionCount ? ` · ${ch.sessionCount} chats` : ""}
             {ch.instructions ? " · instructions" : ""}
@@ -381,7 +399,11 @@ function ChannelDetail({
       <div className="mb-5 flex items-start gap-3">
         <div
           className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${
-            ch.enabled ? "bg-cyan-500/10 text-cyan-300" : "bg-white/5 text-zinc-500"
+            ch.state === "running"
+              ? "bg-emerald-500/10 text-emerald-300"
+              : ch.state === "error"
+                ? "bg-red-500/10 text-red-300"
+                : "bg-white/5 text-zinc-500"
           }`}
         >
           <LuRadio className="h-4 w-4" />
@@ -393,7 +415,9 @@ function ChannelDetail({
             className="w-full bg-transparent text-sm font-medium text-zinc-100 outline-none"
           />
           <p className="truncate text-xs text-zinc-500">
-            {kind?.label ?? ch.kind} · {ch.status}
+            {kind?.label ?? ch.kind} ·{" "}
+            <span className={STATE_STYLE[ch.state] ?? ""}>{ch.state}</span>
+            {ch.since && ch.state === "running" ? ` since ${new Date(ch.since).toLocaleTimeString()}` : ""}
           </p>
         </div>
         <button
@@ -411,6 +435,13 @@ function ChannelDetail({
           />
         </button>
       </div>
+
+      {ch.error && (
+        <div className="mb-5 flex items-start gap-2 rounded-xl border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+          <LuCircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <p className="min-w-0">{ch.error}</p>
+        </div>
+      )}
 
       <section className="mb-6">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Identity</h3>
@@ -495,6 +526,22 @@ function ChannelDetail({
             the channel below.
           </p>
         </div>
+      )}
+
+      {ch.log.length > 0 && (
+        <section className="mb-6">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Activity</h3>
+          <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto rounded-xl border border-white/10 bg-black/30 p-2">
+            {[...ch.log].reverse().map((entry, i) => (
+              <li key={i} className="flex gap-2 font-mono text-[11px]">
+                <span className="shrink-0 text-zinc-600">
+                  {new Date(entry.at).toLocaleTimeString()}
+                </span>
+                <span className="min-w-0 text-zinc-400">{entry.text}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <div className="flex items-center gap-2">

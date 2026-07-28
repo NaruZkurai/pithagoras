@@ -53,9 +53,10 @@ Honest state of things, so you know what you are getting:
 | Slash commands — builtin, extension, prompt, skill | Working |
 | Settings, extension config, package management | Working |
 | Channel packages: loading, installing, configuring | Working |
-| The channel **runtime** — actually starting a channel | Not built |
-| The agent session itself | Not built |
+| The channel supervisor — starting them, routing replies | Working |
+| The builtin packages against real Telegram/Slack/Discord | Untested |
 
-Channels store their credentials and validate them, and the packages define a
-`start()`. Nothing calls it yet, because it needs the agent session to talk to.
-The UI reports channels as "not connected" rather than implying otherwise.
+Channels start, resolve each conversation to its own session, and carry the
+reply back. What has not happened is a connection to a real Telegram, Slack or
+Discord account — that needs credentials I could not test with, so treat the
+first one you configure as the real trial.

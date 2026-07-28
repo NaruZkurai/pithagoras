@@ -111,19 +111,40 @@ A package that fails to load is listed with its error rather than disappearing,
 and two packages claiming the same channel id are rejected at load time instead
 of one silently shadowing the other.
 
-## What does not work yet
+## The supervisor
 
-::: warning No runtime
-The loader, the installer, validation, storage and the settings UI are all real.
-The thing that calls `start()` is not — it needs the agent session, which does
-not exist yet.
+An enabled channel is started when you save it and again when the portal
+restarts. The supervisor owns that: it calls the package's `start()`, hands it
+the context, and keeps the `stop()` it gets back.
 
-Channels report **not connected**. Nothing arrives, nothing is sent. The
-`start()` implementations in the builtin packages are written against the
-contract below and have never been executed.
+Editing a token, changing the slug or disabling a channel all restart or stop
+it — the running channel is compared against its stored configuration, and a
+mismatch means it is stale.
+
+Each channel shows its real state on its page: `running`, `starting`,
+`stopped` or `error`, with the reason and the last fifty things it logged.
+A channel enabled with a package that has no `start()` reports that rather than
+looking healthy.
+
+### What happens to a message
+
+1. The package receives it and calls `ctx.ask(text, { session, title })`.
+2. The key is prefixed with the channel's slug and resolved to a session,
+   created on first sight.
+3. The channel's [instructions](#per-channel-instructions) are appended to the
+   message in a `<channel-instructions>` block.
+4. The session is prompted, and `ask` **waits** — unlike the portal's own
+   prompting, which returns immediately, because somebody is sitting in a chat
+   expecting an answer.
+5. The assistant's text is returned and the package sends it back.
+
+Messages in one conversation are answered in turn. Two arriving while the agent
+is still working queue rather than interleaving, and each caller gets its own
+reply rather than whichever finished first.
+
+::: warning Untested against a real service
+The supervisor, the session resolution and the reply path are exercised
+end to end. The four builtin packages have not been run against real Telegram,
+Slack or Discord credentials — that needs tokens I do not have. Treat the first
+connection to each as the real test.
 :::
-
-When the runtime lands it will own the agent session and pass each channel an
-`ask()` that prompts it and resolves with the reply. The contract in
-[Writing a channel](/channels/writing-a-channel) is what it will call, so a
-package written now will work then.

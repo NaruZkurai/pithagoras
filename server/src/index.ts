@@ -13,12 +13,13 @@ import {
   listSessions,
   updateSession,
 } from "./db.js";
-import { agentHome, resolveChannelSession } from "./agent.js";
+import { agentHome } from "./agent.js";
 import { sessions, EXECUTOR_KIND } from "./session-manager.js";
 import { authEnabled, checkPassword, isAuthed, issueCookie, requireAuth } from "./auth.js";
 import { packagesRouter } from "./api/packages.js";
 import { extensionsRouter } from "./api/extensions.js";
 import { channelsRouter } from "./api/channels.js";
+import { channelSupervisor } from "./channels/supervisor.js";
 import { piSettingsPath } from "./pi-settings.js";
 import { getDb } from "./db.js";
 import { getBuiltinCommands } from "./pi/builtins.js";
@@ -427,10 +428,18 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`  executor: ${EXECUTOR_KIND}`);
   console.log(`  workspaces: ${WORKSPACE_ROOT}`);
   console.log(`  auth:     ${authEnabled ? "password" : "DISABLED"}`);
+
+  // Enabled channels come up with the server, so a restart does not silently
+  // leave the agent unreachable.
+  channelSupervisor
+    .sync()
+    .then(() => console.log(`  channels: ${channelSupervisor.summary()}`))
+    .catch((e) => console.error(`[portal] channel startup failed: ${e.message}`));
 });
 
 async function shutdown(signal: string) {
   console.log(`${signal} received — stopping running sessions`);
+  await channelSupervisor.shutdown();
   await sessions.shutdown();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 10_000).unref();

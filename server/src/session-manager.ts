@@ -42,6 +42,8 @@ interface LiveSession {
  */
 class SessionManager extends EventEmitter {
   private live = new Map<string, LiveSession>();
+  /** In-flight ask() per session, so messages in one chat are answered in turn. */
+  private asking = new Map<string, Promise<string>>();
 
   constructor() {
     super();
@@ -202,9 +204,84 @@ class SessionManager extends EventEmitter {
   }
 
   /**
-   * Send a raw RPC command to a session's pi process, starting it if needed.
-   * Backs the config panel — the equivalent of the TUI's slash commands.
+   * Prompt and wait for the answer.
+   *
+   * The inverse of prompt(), which returns the moment pi accepts a message —
+   * the property the whole portal is built on. A channel needs the opposite:
+   * somebody is sitting in a chat waiting for a reply, so this blocks until the
+   * turn finishes and hands back what the agent said.
+   *
+   * Serialised per session. Two messages arriving in the same chat while the
+   * agent is still working would otherwise interleave, and both callers would
+   * see whichever agent_end came first.
    */
+  ask(sessionId: string, message: string, opts: { timeoutMs?: number } = {}): Promise<string> {
+    const previous = this.asking.get(sessionId) ?? Promise.resolve("");
+    const next = previous
+      .catch(() => "")
+      .then(() => this.askNow(sessionId, message, opts.timeoutMs ?? 15 * 60_000));
+    // Kept only while it is the newest, so a finished chain is not held forever.
+    this.asking.set(sessionId, next);
+    void next.catch(() => {}).finally(() => {
+      if (this.asking.get(sessionId) === next) this.asking.delete(sessionId);
+    });
+    return next;
+  }
+
+  private async askNow(sessionId: string, message: string, timeoutMs: number): Promise<string> {
+    await this.ensureClient(sessionId);
+
+    let text = "";
+    let settle: (() => void) | undefined;
+    let fail: ((e: Error) => void) | undefined;
+
+    const onEvent = (row: { type: string; payload: string }) => {
+      let payload: any = {};
+      try {
+        payload = JSON.parse(row.payload);
+      } catch {
+        return;
+      }
+      switch (row.type) {
+        case "message_update": {
+          const inner = payload.assistantMessageEvent ?? {};
+          // Thinking deltas are not the answer, and nobody in a chat wants them.
+          if (inner.type === "text_delta" && typeof inner.delta === "string") {
+            text += inner.delta;
+          }
+          break;
+        }
+        case "agent_end":
+          settle?.();
+          break;
+        case "portal_status":
+          if (payload.status === "error") fail?.(new Error(String(payload.error ?? "run failed")));
+          break;
+      }
+    };
+
+    // Attached before prompting: a fast reply would otherwise finish before
+    // anyone was listening.
+    this.on(`session:${sessionId}`, onEvent);
+    const timer = setTimeout(
+      () => fail?.(new Error(`The agent did not finish within ${Math.round(timeoutMs / 1000)}s`)),
+      timeoutMs
+    );
+
+    try {
+      const finished = new Promise<void>((resolve, reject) => {
+        settle = resolve;
+        fail = reject;
+      });
+      await this.prompt(sessionId, message);
+      await finished;
+      return text.trim();
+    } finally {
+      clearTimeout(timer);
+      this.off(`session:${sessionId}`, onEvent);
+    }
+  }
+
   /** Access the live client for config reads and writes, starting pi if needed. */
   client(sessionId: string): Promise<PiClient> {
     return this.ensureClient(sessionId);
