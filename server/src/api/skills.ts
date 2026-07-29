@@ -36,9 +36,12 @@ async function loadFromPi(): Promise<{ skills: LoadedSkill[]; diagnostics: any[]
   const entry = import.meta.resolve("@earendil-works/pi-coding-agent");
   const skills: any = await import(new URL("core/skills.js", entry).href);
   const pi: any = await import("@earendil-works/pi-coding-agent");
+  // Every field is required, skillPaths included — it throws "not iterable"
+  // rather than defaulting, so an omitted empty array breaks the whole list.
   return skills.loadSkills({
     cwd: skillsRoot(),
     agentDir: pi.getAgentDir(),
+    skillPaths: [],
     includeDefaults: true,
   });
 }
