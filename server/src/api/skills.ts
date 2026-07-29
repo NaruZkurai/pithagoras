@@ -234,7 +234,12 @@ export function skillsRouter(): Router {
       return res.status(400).json({ error: "That skill was not imported, so there is nothing to update from" });
     }
     try {
-      const result = await importFromGit(source.spec, skillsRoot(), { overwrite: true });
+      // Scoped to this one. Without `only` the whole repository is re-imported,
+      // so updating one skill quietly installed every other skill beside it.
+      const result = await importFromGit(source.spec, skillsRoot(), {
+        overwrite: true,
+        only: [req.params.name],
+      });
       res.json({ ok: true, ...result });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
