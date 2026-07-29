@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { ThemeSwitcher } from "./ThemeSwitcher";
 import {
   LuBot,
   LuClock,
@@ -12,10 +13,10 @@ import {
 import type { Session, SessionStatus, Workspace } from "../api";
 
 const STATUS_STYLE: Record<SessionStatus, string> = {
-  running: "bg-cyan-400 animate-pulse",
-  idle: "bg-zinc-600",
-  error: "bg-red-500",
-  interrupted: "bg-amber-500",
+  running: "bg-accent animate-pulse",
+  idle: "bg-fg-faint",
+  error: "bg-danger",
+  interrupted: "bg-warn",
 };
 
 const STATUS_LABEL: Record<SessionStatus, string> = {
@@ -119,11 +120,14 @@ export function Sidebar({
   );
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-r border-zinc-800">
-      <div className="flex items-center gap-2 px-3 pb-2 pt-3">
-        <h1 className="text-sm font-bold tracking-wide text-cyan-300">Pithagoras</h1>
+    <aside className="flex w-64 shrink-0 flex-col border-r border-line bg-surface">
+      <div className="flex items-center gap-2 px-3 pb-3 pt-4">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-accent text-[13px] font-bold text-accent-fg">
+          π
+        </span>
+        <h1 className="text-sm font-semibold tracking-tight text-fg">Pithagoras</h1>
         <span
-          className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400"
+          className="ml-auto text-[10px] uppercase tracking-wider text-fg-faint"
           title="How sessions are executed"
         >
           {executor}
@@ -157,7 +161,7 @@ export function Sidebar({
             <select
               value={choice}
               onChange={(e) => setChoice(e.target.value)}
-              className="w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-zinc-300"
+              className="w-full rounded-lg border border-line bg-raised/60 px-2 py-1.5 text-sm text-fg-muted"
             >
               <option value={NEW}>New workspace</option>
               {workspaces.length > 0 && (
@@ -180,21 +184,21 @@ export function Sidebar({
                   onChange={(e) => setName(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && submit()}
                   placeholder="Cool Project"
-                  className="w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm outline-none focus:border-cyan-500/60"
+                  className="w-full rounded-lg border border-line bg-raised/60 px-2 py-1.5 text-sm outline-none focus:border-accent/60"
                 />
                 {name.trim() && (
-                  <p className="mt-1 truncate font-mono text-[11px] text-zinc-500">
+                  <p className="mt-1 truncate font-mono text-[11px] text-fg-subtle">
                     {slug ? `→ ${slug}` : "needs at least one letter or digit"}
                   </p>
                 )}
               </div>
             )}
 
-            {error && <p className="text-xs text-red-400">{error}</p>}
+            {error && <p className="text-xs text-danger">{error}</p>}
             <button
               onClick={submit}
               disabled={busy || !canSubmit}
-              className="w-full rounded-lg bg-cyan-500/15 px-2 py-1.5 text-sm text-cyan-200 ring-1 ring-inset ring-cyan-400/30 hover:bg-cyan-500/25 disabled:opacity-40"
+              className="w-full rounded-lg bg-accent/12 px-2 py-1.5 text-sm text-accent ring-1 ring-inset ring-accent/25 hover:bg-accent/20 disabled:opacity-40"
             >
               {busy ? "Creating…" : "Start session"}
             </button>
@@ -204,7 +208,7 @@ export function Sidebar({
 
       <div className="flex-1 overflow-y-auto px-2 pb-2">
         {sessions.length === 0 && (
-          <p className="px-2 py-4 text-xs text-zinc-500">No sessions yet.</p>
+          <p className="px-2 py-4 text-xs text-fg-subtle">No sessions yet.</p>
         )}
 
         {pinned.length > 0 && (
@@ -223,7 +227,7 @@ export function Sidebar({
             {recents.length > shownRecents.length && (
               <button
                 onClick={() => onNavigate("sessions")}
-                className="mt-1 w-full rounded-lg px-2 py-1.5 text-left text-xs text-zinc-500 hover:bg-white/5 hover:text-zinc-300"
+                className="mt-1 w-full rounded-lg px-2 py-1.5 text-left text-xs text-fg-subtle hover:bg-fg/5 hover:text-fg-muted"
               >
                 {recents.length - shownRecents.length} more…
               </button>
@@ -232,20 +236,29 @@ export function Sidebar({
         )}
       </div>
 
-      <div className="border-t border-zinc-800 p-2">
-        <NavItem icon={<LuSettings />} label="Settings" onClick={onOpenSettings} active={false} />
-        <p className="px-2 pt-1 text-[11px] text-zinc-600">
-          Sessions keep running if you close this tab.
-        </p>
+      <div className="border-t border-line p-2">
+        <div className="flex items-center gap-1">
+          <div className="min-w-0 flex-1">
+            <NavItem
+              icon={<LuSettings />}
+              label="Settings"
+              onClick={onOpenSettings}
+              active={false}
+            />
+          </div>
+          <ThemeSwitcher />
+        </div>
       </div>
     </aside>
   );
 }
 
-const Divider = () => <div className="my-2 border-t border-zinc-800/80" />;
+const Divider = () => <div className="my-2 h-px bg-line" />;
 
 const GroupLabel = ({ children }: { children: ReactNode }) => (
-  <p className="px-2 pb-1 text-[11px] font-medium text-zinc-500">{children}</p>
+  <p className="px-2.5 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-fg-faint">
+    {children}
+  </p>
 );
 
 function NavItem({
@@ -262,11 +275,18 @@ function NavItem({
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm transition ${
-        active ? "bg-white/10 text-zinc-100" : "text-zinc-300 hover:bg-white/5 hover:text-zinc-100"
+      className={`group relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition ${
+        active ? "bg-fg/[0.07] text-fg" : "text-fg-muted hover:bg-fg/5 hover:text-fg"
       }`}
     >
-      <span className="shrink-0 text-zinc-500">{icon}</span>
+      <span
+        className={`absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-r-full bg-accent transition-opacity ${
+          active ? "opacity-100" : "opacity-0"
+        }`}
+      />
+      <span className={`shrink-0 transition-colors ${active ? "text-accent" : "text-fg-faint group-hover:text-fg-subtle"}`}>
+        {icon}
+      </span>
       {label}
     </button>
   );
@@ -290,8 +310,8 @@ function SessionItem({
   return (
     <div
       onClick={onSelect}
-      className={`group mb-0.5 cursor-pointer rounded-lg px-2 py-1.5 ${
-        active ? "bg-white/10" : "hover:bg-white/5"
+      className={`group mb-0.5 cursor-pointer rounded-lg px-2.5 py-1.5 transition ${
+        active ? "bg-fg/[0.07]" : "hover:bg-fg/5"
       }`}
     >
       <div className="flex items-center gap-2">
@@ -300,7 +320,7 @@ function SessionItem({
           title={STATUS_LABEL[s.status]}
         />
         <span
-          className="truncate text-sm text-zinc-200"
+          className="truncate text-sm text-fg"
           onDoubleClick={(e) => {
             e.stopPropagation();
             const next = prompt("Rename session", s.title);
@@ -316,7 +336,7 @@ function SessionItem({
               e.stopPropagation();
               onPin(s.id, !s.pinned);
             }}
-            className="rounded p-1 text-zinc-500 hover:text-cyan-300"
+            className="rounded p-1 text-fg-subtle hover:text-accent"
             title={s.pinned ? "Unpin" : "Pin"}
           >
             {s.pinned ? <LuPinOff className="h-3 w-3" /> : <LuPin className="h-3 w-3" />}
@@ -328,14 +348,14 @@ function SessionItem({
                 onDelete(s.id);
               }
             }}
-            className="rounded p-1 text-zinc-500 hover:text-red-400"
+            className="rounded p-1 text-fg-subtle hover:text-danger"
             title="Delete session"
           >
             <LuTrash2 className="h-3 w-3" />
           </button>
         </div>
       </div>
-      <div className="truncate pl-4 text-[11px] text-zinc-500">{s.workspace.split("/").pop()}</div>
+      <div className="truncate pl-4 text-[11px] text-fg-subtle">{s.workspace.split("/").pop()}</div>
     </div>
   );
 }

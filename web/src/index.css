@@ -2,11 +2,106 @@
 @tailwind components;
 @tailwind utilities;
 
-body { @apply bg-zinc-950 text-zinc-100 antialiased; }
+/*
+ * One palette, two themes.
+ *
+ * Components name what a colour is for — canvas, surface, line, muted — and
+ * never which colour it is. Switching theme swaps these values and nothing
+ * else has to know.
+ */
+@layer base {
+  :root,
+  [data-theme="dark"] {
+    --canvas: 10 10 12;
+    --surface: 20 20 23;
+    --raised: 32 32 36;
+    --line: 44 44 50;
+
+    --fg: 245 245 247;
+    --fg-muted: 163 163 173;
+    --fg-subtle: 118 118 128;
+    --fg-faint: 88 88 98;
+
+    --accent: 34 211 238;
+    --accent-fg: 10 10 12;
+    --ok: 52 211 153;
+    --warn: 251 191 36;
+    --danger: 248 113 113;
+
+    color-scheme: dark;
+  }
+
+  [data-theme="light"] {
+    --canvas: 250 250 251;
+    --surface: 255 255 255;
+    --raised: 244 244 246;
+    --line: 226 226 231;
+
+    --fg: 24 24 27;
+    --fg-muted: 90 90 100;
+    --fg-subtle: 122 122 134;
+    --fg-faint: 155 155 168;
+
+    /* Darker than the dark theme's accent: cyan-400 on white is unreadable. */
+    --accent: 8 145 178;
+    --accent-fg: 255 255 255;
+    --ok: 5 150 105;
+    --warn: 180 120 10;
+    --danger: 220 38 38;
+
+    color-scheme: light;
+  }
+
+  html {
+    background-color: rgb(var(--canvas));
+  }
+
+  body {
+    @apply bg-canvas text-fg antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Only where a theme is actually being chosen — never mid-interaction. */
+  html.theme-switching * {
+    transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease;
+  }
+
+  ::selection {
+    background-color: rgb(var(--accent) / 0.25);
+  }
+
+  /* Thin, and invisible until the surface is hovered. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--fg-faint) / 0.35) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--fg-faint) / 0.28);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--fg-faint) / 0.5);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent) / 0.55);
+    outline-offset: 2px;
+  }
+}
+
+/* Markdown in the transcript. */
 .md p { @apply my-1.5 leading-relaxed; }
 .md ul, .md ol { @apply my-1.5 ml-5 list-disc space-y-1; }
-.md code { @apply bg-zinc-800 px-1 py-0.5 rounded text-[0.85em] text-amber-300; }
-.md pre { @apply bg-zinc-900 border border-zinc-800 rounded-lg p-3 my-2 overflow-x-auto; }
-.md pre code { @apply bg-transparent p-0 text-zinc-200; }
-.md h1,.md h2,.md h3 { @apply font-semibold mt-3 mb-1; }
-.md a { @apply text-cyan-400 hover:underline; }
+.md code { @apply rounded bg-raised px-1 py-0.5 text-[0.85em] text-fg-muted; }
+.md pre { @apply my-2 overflow-x-auto rounded-lg bg-raised p-3; }
+.md pre code { @apply bg-transparent p-0 text-fg; }
+.md h1, .md h2, .md h3 { @apply mb-1 mt-3 font-semibold; }
+.md a { @apply text-accent hover:underline; }
+.md blockquote { @apply my-2 border-l-2 border-line pl-3 text-fg-muted; }

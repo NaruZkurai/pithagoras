@@ -149,8 +149,8 @@ export function ComposerBar({
           type="button"
           disabled={!cfg || busy}
           onClick={() => setOpen(open === "model" ? null : "model")}
-          className={`max-w-[220px] truncate rounded px-2 py-1 disabled:opacity-50 ${
-            open === "model" ? "bg-zinc-800 text-zinc-100" : "text-zinc-300 hover:bg-zinc-800"
+          className={`max-w-[220px] truncate rounded-lg px-2 py-1 transition disabled:opacity-50 ${
+            open === "model" ? "bg-fg/10 text-fg" : "text-fg-subtle hover:bg-fg/5 hover:text-fg-muted"
           }`}
           title={cfg?.state.model.id}
         >
@@ -160,8 +160,8 @@ export function ComposerBar({
           type="button"
           disabled={!cfg || busy}
           onClick={() => setOpen(open === "effort" ? null : "effort")}
-          className={`rounded px-2 py-1 capitalize disabled:opacity-50 ${
-            open === "effort" ? "bg-zinc-800 text-zinc-100" : "text-zinc-300 hover:bg-zinc-800"
+          className={`rounded-lg px-2 py-1 capitalize transition disabled:opacity-50 ${
+            open === "effort" ? "bg-fg/10 text-fg" : "text-fg-subtle hover:bg-fg/5 hover:text-fg-muted"
           }`}
           title="Effort / thinking level"
         >
@@ -169,15 +169,15 @@ export function ComposerBar({
         </button>
         {cfg && <ContextPill sessionId={sessionId} cfg={cfg} onChanged={load} />}
         <span
-          className={`ml-1 h-2 w-2 rounded-full ${running ? "animate-pulse bg-amber-400" : "bg-zinc-700"}`}
+          className={`ml-1 h-2 w-2 rounded-full ${running ? "animate-pulse bg-warn" : "bg-raised"}`}
           title={running ? "working" : "idle"}
         />
       </div>
 
       {/* Models */}
       {open === "model" && cfg && (
-        <div className="absolute bottom-full right-0 mb-2 w-72 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 py-1 shadow-2xl">
-          <p className="px-3 py-1 text-[11px] text-zinc-500">Models</p>
+        <div className="absolute bottom-full right-0 mb-2 w-72 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-pop">
+          <p className="px-3 py-1 text-[11px] text-fg-subtle">Models</p>
           {!showAll ? (
             <>
               {quick.map((m) => (
@@ -185,23 +185,23 @@ export function ComposerBar({
                   key={m.id}
                   type="button"
                   onClick={() => applyModel(m.id)}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-zinc-200 hover:bg-zinc-800"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg hover:bg-raised"
                   title={m.id}
                 >
                   <span className="truncate">{shortName(m)}</span>
                   {m.id === cfg.state.model.id && (
-                    <span className="ml-auto text-zinc-400">✓</span>
+                    <span className="ml-auto text-fg-muted">✓</span>
                   )}
                 </button>
               ))}
-              <div className="my-1 border-t border-zinc-800" />
+              <div className="my-1 border-t border-line" />
               <button
                 type="button"
                 onClick={() => setShowAll(true)}
-                className="flex w-full items-center px-3 py-1.5 text-left text-sm text-zinc-300 hover:bg-zinc-800"
+                className="flex w-full items-center px-3 py-1.5 text-left text-sm text-fg-muted hover:bg-raised"
               >
                 More models
-                <span className="ml-auto text-zinc-500">›</span>
+                <span className="ml-auto text-fg-subtle">›</span>
               </button>
             </>
           ) : (
@@ -211,7 +211,7 @@ export function ComposerBar({
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 placeholder="Filter models…"
-                className="mx-2 mb-1 w-[calc(100%-1rem)] rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs outline-none focus:border-cyan-600"
+                className="mx-2 mb-1 w-[calc(100%-1rem)] rounded border border-line bg-canvas px-2 py-1 text-xs outline-none focus:border-accent"
               />
               <div className="max-h-72 overflow-y-auto">
                 {filtered.map((m) => (
@@ -219,17 +219,17 @@ export function ComposerBar({
                     key={m.id}
                     type="button"
                     onClick={() => applyModel(m.id)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-zinc-300 hover:bg-zinc-800"
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg-muted hover:bg-raised"
                     title={m.id}
                   >
                     <span className="truncate">{shortName(m)}</span>
                     {m.id === cfg.state.model.id && (
-                      <span className="ml-auto text-zinc-400">✓</span>
+                      <span className="ml-auto text-fg-muted">✓</span>
                     )}
                   </button>
                 ))}
                 {filtered.length === 0 && (
-                  <p className="px-3 py-2 text-xs text-zinc-500">No matches</p>
+                  <p className="px-3 py-2 text-xs text-fg-subtle">No matches</p>
                 )}
               </div>
             </>
@@ -239,11 +239,11 @@ export function ComposerBar({
 
       {/* Effort */}
       {open === "effort" && cfg && levels.length > 0 && (
-        <div className="absolute bottom-full right-0 mb-2 w-72 rounded-xl border border-zinc-700 bg-zinc-900 p-3 shadow-2xl">
-          <p className="text-sm text-zinc-400">
-            Effort <span className="capitalize text-zinc-100">{levels[effortIndex]}</span>
+        <div className="absolute bottom-full right-0 mb-2 w-72 rounded-xl border border-line bg-surface p-3 shadow-pop">
+          <p className="text-sm text-fg-muted">
+            Effort <span className="capitalize text-fg">{levels[effortIndex]}</span>
           </p>
-          <div className="mt-3 flex justify-between text-[11px] text-zinc-500">
+          <div className="mt-3 flex justify-between text-[11px] text-fg-subtle">
             <span>Faster</span>
             <span>Smarter</span>
           </div>
@@ -257,7 +257,7 @@ export function ComposerBar({
             onPointerUp={(e) => commitEffort(Number(e.currentTarget.value))}
             onKeyUp={(e) => commitEffort(Number(e.currentTarget.value))}
             onBlur={(e) => commitEffort(Number(e.currentTarget.value))}
-            className="mt-1 w-full accent-amber-400"
+            className="mt-1 w-full accent-[rgb(var(--warn))]"
           />
           <div className="mt-1 flex justify-between">
             {levels.map((lvl) => (
@@ -265,7 +265,7 @@ export function ComposerBar({
                 key={lvl}
                 title={lvl}
                 className={`h-1 w-1 rounded-full ${
-                  lvl === levels[effortIndex] ? "bg-amber-400" : "bg-zinc-700"
+                  lvl === levels[effortIndex] ? "bg-warn" : "bg-raised"
                 }`}
               />
             ))}

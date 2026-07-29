@@ -47,23 +47,23 @@ export function ExtensionDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-canvas/80 p-4 backdrop-blur-sm"
       onMouseDown={(e) => e.target === e.currentTarget && respond({ cancelled: true })}
     >
-      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-zinc-900 shadow-2xl">
-        <header className="flex items-start gap-3 border-b border-white/10 px-4 py-3">
-          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-cyan-500/15 text-cyan-300">
+      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-line bg-surface shadow-pop">
+        <header className="flex items-start gap-3 border-b border-line px-4 py-3">
+          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent/12 text-accent">
             <LuTerminal className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-medium text-zinc-100">{request.title || "Extension"}</h2>
+            <h2 className="text-sm font-medium text-fg">{request.title || "Extension"}</h2>
             {request.message && (
-              <p className="mt-0.5 text-xs text-zinc-400">{request.message}</p>
+              <p className="mt-0.5 text-xs text-fg-muted">{request.message}</p>
             )}
           </div>
           <button
             onClick={() => respond({ cancelled: true })}
-            className="rounded-lg p-1 text-zinc-500 transition hover:bg-white/10 hover:text-zinc-200"
+            className="rounded-lg p-1 text-fg-subtle transition hover:bg-fg/10 hover:text-fg"
           >
             <LuX className="h-4 w-4" />
           </button>
@@ -77,14 +77,14 @@ export function ExtensionDialog({
                   <button
                     disabled={busy}
                     onClick={() => respond({ value: opt })}
-                    className="w-full truncate rounded-lg px-3 py-2 text-left text-sm text-zinc-200 transition hover:bg-white/10 disabled:opacity-40"
+                    className="w-full truncate rounded-lg px-3 py-2 text-left text-sm text-fg transition hover:bg-fg/10 disabled:opacity-40"
                   >
                     {opt}
                   </button>
                 </li>
               ))}
               {(request.options ?? []).length === 0 && (
-                <p className="px-3 py-2 text-sm text-zinc-500">No options offered.</p>
+                <p className="px-3 py-2 text-sm text-fg-subtle">No options offered.</p>
               )}
             </ul>
           )}
@@ -97,7 +97,7 @@ export function ExtensionDialog({
                   rows={10}
                   value={value}
                   onChange={(e) => setValue(e.target.value)}
-                  className="w-full resize-y rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-cyan-500/60"
+                  className="w-full resize-y rounded-lg border border-line bg-raised/60 px-3 py-2 font-mono text-xs text-fg outline-none focus:border-accent/60"
                 />
               ) : (
                 <input
@@ -106,20 +106,20 @@ export function ExtensionDialog({
                   onChange={(e) => setValue(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && respond({ value })}
                   placeholder={request.placeholder}
-                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-500/60"
+                  className="w-full rounded-lg border border-line bg-raised/60 px-3 py-2 text-sm text-fg outline-none placeholder:text-fg-faint focus:border-accent/60"
                 />
               )}
               <div className="mt-3 flex justify-end gap-2">
                 <button
                   onClick={() => respond({ cancelled: true })}
-                  className="rounded-lg px-3 py-1.5 text-sm text-zinc-400 hover:bg-white/10"
+                  className="rounded-lg px-3 py-1.5 text-sm text-fg-muted hover:bg-fg/10"
                 >
                   Cancel
                 </button>
                 <button
                   disabled={busy}
                   onClick={() => respond({ value })}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 py-1.5 text-sm text-cyan-200 ring-1 ring-inset ring-cyan-400/30 hover:bg-cyan-500/25 disabled:opacity-40"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-1.5 text-sm text-accent ring-1 ring-inset ring-accent/25 hover:bg-accent/20 disabled:opacity-40"
                 >
                   <LuCheck className="h-3.5 w-3.5" /> Submit
                 </button>
@@ -132,14 +132,14 @@ export function ExtensionDialog({
               <button
                 disabled={busy}
                 onClick={() => respond({ value: false })}
-                className="rounded-lg px-3 py-1.5 text-sm text-zinc-400 hover:bg-white/10"
+                className="rounded-lg px-3 py-1.5 text-sm text-fg-muted hover:bg-fg/10"
               >
                 No
               </button>
               <button
                 disabled={busy}
                 onClick={() => respond({ value: true })}
-                className="rounded-lg bg-cyan-500/15 px-3 py-1.5 text-sm text-cyan-200 ring-1 ring-inset ring-cyan-400/30 hover:bg-cyan-500/25"
+                className="rounded-lg bg-accent/12 px-3 py-1.5 text-sm text-accent ring-1 ring-inset ring-accent/25 hover:bg-accent/20"
               >
                 Yes
               </button>

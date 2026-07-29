@@ -16,11 +16,11 @@ import {
 import { api, type FoundSkill, type Skill, type SkillDiagnostic } from "../api";
 
 const inputCls =
-  "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60";
+  "w-full rounded-lg border border-line bg-raised/60 px-3 py-2 text-sm outline-none transition placeholder:text-fg-faint focus:border-accent/60";
 const btnCls =
-  "inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-2 text-sm text-zinc-200 transition hover:bg-white/10 disabled:opacity-40";
+  "inline-flex items-center gap-1.5 rounded-lg bg-fg/5 px-3 py-2 text-sm text-fg transition hover:bg-fg/10 disabled:opacity-40";
 const primaryCls =
-  "inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 py-2 text-sm text-cyan-200 ring-1 ring-inset ring-cyan-400/30 transition hover:bg-cyan-500/25 disabled:opacity-40";
+  "inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-2 text-sm text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40";
 
 /**
  * Skills the agent can reach for.
@@ -66,14 +66,14 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
 
   return (
     <>
-      <section className="mb-6 rounded-xl border border-white/10 bg-black/20 p-3">
-        <p className="text-xs text-zinc-500">
+      <section className="mb-6 rounded-xl border border-line bg-raised/40 p-3">
+        <p className="text-xs text-fg-subtle">
           A skill is a set of instructions the agent pulls in when its description matches what is
           being asked. Every session sees them, so they are a good place for a procedure you would
           otherwise repeat. Switching one off stops pi loading it at all, rather than hiding it
           here.
         </p>
-        <p className="mt-1.5 truncate font-mono text-[11px] text-zinc-600">{root}</p>
+        <p className="mt-1.5 truncate font-mono text-[11px] text-fg-faint">{root}</p>
       </section>
 
       {diagnostics.length > 0 && (
@@ -81,7 +81,7 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
           {diagnostics.map((d, i) => (
             <li
               key={i}
-              className="flex items-start gap-2 rounded-lg border border-amber-900/50 bg-amber-950/25 px-3 py-2 text-xs text-amber-200/80"
+              className="flex items-start gap-2 rounded-lg border border-warn/25 bg-warn/10 px-3 py-2 text-xs text-warn/90"
             >
               <LuCircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <div className="min-w-0">
@@ -95,7 +95,7 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
 
       <section className="mb-6">
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">
             Yours{mine.length ? ` (${mine.length})` : ""}
           </h3>
           <div className="flex items-center gap-3">
@@ -104,7 +104,7 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
                 setImporting(!importing);
                 setAdding(false);
               }}
-              className="text-[11px] text-cyan-400 hover:text-cyan-300"
+              className="text-[11px] text-accent hover:text-accent"
             >
               {importing ? "Cancel" : "Import from GitHub"}
             </button>
@@ -113,7 +113,7 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
                 setAdding(!adding);
                 setImporting(false);
               }}
-              className="text-[11px] text-cyan-400 hover:text-cyan-300"
+              className="text-[11px] text-accent hover:text-accent"
             >
               {adding ? "Cancel" : "+ New"}
             </button>
@@ -144,11 +144,11 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
         )}
 
         {loading ? (
-          <p className="mt-2 text-sm text-zinc-500">Loading…</p>
+          <p className="mt-2 text-sm text-fg-subtle">Loading…</p>
         ) : mine.length === 0 ? (
-          <div className="mt-2 rounded-xl border border-dashed border-zinc-800 px-3 py-6 text-center text-sm text-zinc-500">
+          <div className="mt-2 rounded-xl border border-dashed border-line px-3 py-6 text-center text-sm text-fg-subtle">
             None yet.
-            <p className="mt-1 text-xs text-zinc-600">
+            <p className="mt-1 text-xs text-fg-faint">
               How you like releases cut, the shape of a good commit message, the steps for a
               deploy — anything you have explained more than twice.
             </p>
@@ -176,7 +176,7 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
 
       {theirs.length > 0 && (
         <section className="mb-6">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">
             From packages ({theirs.length})
           </h3>
           <ul className="mt-2 space-y-1">
@@ -201,41 +201,41 @@ function SkillRow({
 }) {
   return (
     <li
-      className={`flex items-center gap-2.5 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 transition hover:bg-white/5 ${
+      className={`flex items-center gap-2.5 rounded-xl border border-line bg-raised/40 px-3 py-2.5 transition hover:bg-fg/5 ${
         s.enabled ? "" : "opacity-60"
       }`}
     >
       <button onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
         {s.broken ? (
-          <LuCircleAlert className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+          <LuCircleAlert className="h-3.5 w-3.5 shrink-0 text-warn" />
         ) : s.editable ? (
-          <LuWrench className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+          <LuWrench className="h-3.5 w-3.5 shrink-0 text-fg-subtle" />
         ) : (
-          <LuLock className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
+          <LuLock className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm text-zinc-200">
+          <p className="truncate text-sm text-fg">
             {s.name}
             {!s.enabled && (
-              <span className="ml-1.5 rounded bg-white/5 px-1 py-0.5 text-[10px] text-zinc-500">
+              <span className="ml-1.5 rounded bg-fg/5 px-1 py-0.5 text-[10px] text-fg-subtle">
                 off
               </span>
             )}
             {s.manualOnly && (
-              <span className="ml-1.5 rounded bg-white/5 px-1 py-0.5 text-[10px] text-zinc-500">
+              <span className="ml-1.5 rounded bg-fg/5 px-1 py-0.5 text-[10px] text-fg-subtle">
                 /skill only
               </span>
             )}
           </p>
-          <p className="line-clamp-2 text-[11px] text-zinc-500">
+          <p className="line-clamp-2 text-[11px] text-fg-subtle">
             {s.broken ? (
-              <span className="text-amber-400/80">not loading — see the warning above</span>
+              <span className="text-warn/90">not loading — see the warning above</span>
             ) : (
               s.description
             )}
           </p>
           {s.source && (
-            <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-zinc-600">
+            <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-fg-faint">
               <LuGithub className="h-2.5 w-2.5 shrink-0" />
               {s.source.spec}
             </p>
@@ -248,7 +248,7 @@ function SkillRow({
           onClick={() => onToggle(!s.enabled)}
           title={s.enabled ? "Disable — pi stops loading it" : "Enable"}
           className={`relative h-5 w-9 shrink-0 rounded-full transition ${
-            s.enabled ? "bg-cyan-500/70" : "bg-zinc-700"
+            s.enabled ? "bg-accent" : "bg-raised"
           }`}
         >
           <span
@@ -258,7 +258,7 @@ function SkillRow({
           />
         </button>
       ) : (
-        <LuChevronRight className="h-4 w-4 shrink-0 text-zinc-600" />
+        <LuChevronRight className="h-4 w-4 shrink-0 text-fg-faint" />
       )}
     </li>
   );
@@ -290,9 +290,9 @@ function NewSkill({
   };
 
   return (
-    <div className="mt-2 space-y-3 rounded-xl border border-white/10 bg-black/20 p-3">
+    <div className="mt-2 space-y-3 rounded-xl border border-line bg-raised/40 p-3">
       <label className="block">
-        <span className="text-xs text-zinc-400">Name</span>
+        <span className="text-xs text-fg-muted">Name</span>
         <input
           autoFocus
           value={name}
@@ -302,7 +302,7 @@ function NewSkill({
         />
       </label>
       <label className="block">
-        <span className="text-xs text-zinc-400">When to use it</span>
+        <span className="text-xs text-fg-muted">When to use it</span>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -310,7 +310,7 @@ function NewSkill({
           placeholder="Use when cutting a release: version bump, changelog, tag and push."
           className={`${inputCls} mt-1 resize-y text-xs leading-relaxed`}
         />
-        <p className="mt-1 text-[11px] text-zinc-600">
+        <p className="mt-1 text-[11px] text-fg-faint">
           This is the only part the model reads when deciding whether the skill applies. Say when,
           not what.
         </p>
@@ -361,27 +361,27 @@ function SkillDetail({
     <>
       <button
         onClick={onBack}
-        className="mb-4 inline-flex items-center gap-1.5 text-xs text-zinc-500 transition hover:text-zinc-300"
+        className="mb-4 inline-flex items-center gap-1.5 text-xs text-fg-subtle transition hover:text-fg-muted"
       >
         <LuChevronLeft className="h-3.5 w-3.5" /> Skills
       </button>
 
       <div className="mb-5 flex items-start gap-3">
-        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-cyan-500/10 text-cyan-300">
+        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent/10 text-accent">
           {s.editable ? <LuWrench className="h-4 w-4" /> : <LuLock className="h-4 w-4" />}
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-medium text-zinc-100">{s.name}</h3>
-          <p className="text-xs text-zinc-500">
+          <h3 className="truncate text-sm font-medium text-fg">{s.name}</h3>
+          <p className="text-xs text-fg-subtle">
             {s.broken ? (
-              <span className="text-amber-400/80">
+              <span className="text-warn/90">
                 pi cannot parse this, so the agent is not seeing it. Fix the frontmatter below.
               </span>
             ) : (
               s.description
             )}
           </p>
-          <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-600">{s.path}</p>
+          <p className="mt-0.5 truncate font-mono text-[10px] text-fg-faint">{s.path}</p>
         </div>
         {s.editable && (
           <button
@@ -389,7 +389,7 @@ function SkillDetail({
             disabled={busy}
             title={s.enabled ? "Disable" : "Enable"}
             className={`relative mt-1 h-5 w-9 shrink-0 rounded-full transition disabled:opacity-40 ${
-              s.enabled ? "bg-cyan-500/70" : "bg-zinc-700"
+              s.enabled ? "bg-accent" : "bg-raised"
             }`}
           >
             <span
@@ -402,7 +402,7 @@ function SkillDetail({
       </div>
 
       {!s.enabled && (
-        <p className="mb-4 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-[11px] text-zinc-500">
+        <p className="mb-4 rounded-lg border border-line bg-raised/40 px-3 py-2 text-[11px] text-fg-subtle">
           Switched off. pi is not loading this, so the agent cannot see or use it.
         </p>
       )}
@@ -414,23 +414,23 @@ function SkillDetail({
             onChange={(e) => setDraft(e.target.value)}
             rows={18}
             spellCheck={false}
-            className="w-full resize-y rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-cyan-500/60"
+            className="w-full resize-y rounded-lg border border-line bg-raised/60 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-accent/60"
           />
-          <p className="mt-1 text-[11px] text-zinc-600">
+          <p className="mt-1 text-[11px] text-fg-faint">
             The frontmatter at the top is what pi reads — changing <code>name</code> renames the
             skill, and <code>description</code> is what the model matches against.
           </p>
 
           {s.source && (
-            <div className="mt-2 flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-[11px] text-zinc-500">
-              <LuGithub className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
+            <div className="mt-2 flex items-center gap-2 rounded-lg border border-line bg-raised/40 px-3 py-2 text-[11px] text-fg-subtle">
+              <LuGithub className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
               <span className="min-w-0 flex-1 truncate">
                 Imported from <span className="font-mono">{s.source.spec}</span>
               </span>
               <button
                 onClick={() => act(() => api.updateSkill(s.name))}
                 disabled={busy}
-                className="shrink-0 text-cyan-400 hover:text-cyan-300 disabled:opacity-40"
+                className="shrink-0 text-accent hover:text-accent disabled:opacity-40"
                 title="Re-import, replacing local edits"
               >
                 Update
@@ -467,15 +467,15 @@ function SkillDetail({
                 }
               }}
               disabled={busy}
-              className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-zinc-500 transition hover:bg-red-950/50 hover:text-red-300 disabled:opacity-40"
+              className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-fg-subtle transition hover:bg-danger/10 hover:text-danger disabled:opacity-40"
             >
               <LuTrash2 className="h-3.5 w-3.5" /> Delete
             </button>
           </div>
         </>
       ) : (
-        <div className="flex items-start gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-500">
-          <LuLock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-600" />
+        <div className="flex items-start gap-2 rounded-xl border border-line bg-raised/40 px-3 py-2 text-xs text-fg-subtle">
+          <LuLock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-fg-faint" />
           <p>
             This skill came with a package. Editing it here would be undone by the next update, so
             it is read-only — change it by removing or replacing the package in Extensions.
@@ -545,7 +545,7 @@ function ImportSkills({
     });
 
   return (
-    <div className="mt-2 space-y-3 rounded-xl border border-white/10 bg-black/20 p-3">
+    <div className="mt-2 space-y-3 rounded-xl border border-line bg-raised/40 p-3">
       <div className="flex gap-2">
         <input
           autoFocus
@@ -559,7 +559,7 @@ function ImportSkills({
           {busy === "look" ? <LuRefreshCw className="h-4 w-4 animate-spin" /> : "Look"}
         </button>
       </div>
-      <p className="text-[11px] text-zinc-600">
+      <p className="text-[11px] text-fg-faint">
         <code>user/repo</code>, <code>user/repo#branch</code>, a subdirectory like{" "}
         <code>user/repo/skills/pdf</code>, or a GitHub URL pasted from the address bar.
       </p>
@@ -567,7 +567,7 @@ function ImportSkills({
       {found && (
         <>
           <div className="flex items-baseline justify-between">
-            <p className="text-xs text-zinc-400">
+            <p className="text-xs text-fg-muted">
               {found.length} skill{found.length === 1 ? "" : "s"} found
               {found.some((f) => f.installed) &&
                 ` · ${found.filter((f) => f.installed).length} already installed`}
@@ -578,7 +578,7 @@ function ImportSkills({
                   chosen.size === found.length ? new Set() : new Set(found.map((f) => f.name))
                 )
               }
-              className="text-[11px] text-zinc-500 hover:text-zinc-300"
+              className="text-[11px] text-fg-subtle hover:text-fg-muted"
             >
               {chosen.size === found.length ? "none" : "all"}
             </button>
@@ -591,32 +591,32 @@ function ImportSkills({
                   onClick={() => toggle(f.name)}
                   className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition ${
                     chosen.has(f.name)
-                      ? "border-cyan-400/30 bg-cyan-500/10"
-                      : "border-white/10 bg-black/20 hover:bg-white/5"
+                      ? "border-accent/30 bg-accent/10"
+                      : "border-line bg-raised/40 hover:bg-fg/5"
                   }`}
                 >
                   <span
                     className={`mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded border ${
                       chosen.has(f.name)
-                        ? "border-cyan-400/60 bg-cyan-500/30 text-cyan-200"
+                        ? "border-accent/60 bg-accent/25 text-accent"
                         : "border-white/20"
                     }`}
                   >
                     {chosen.has(f.name) && <LuCheck className="h-2.5 w-2.5" />}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs text-zinc-200">
+                    <p className="truncate text-xs text-fg">
                       {f.name}
                       {f.installed && (
-                        <span className="ml-1.5 rounded bg-amber-500/15 px-1 py-0.5 text-[10px] text-amber-300/90">
+                        <span className="ml-1.5 rounded bg-warn/12 px-1 py-0.5 text-[10px] text-warn">
                           installed
                         </span>
                       )}
                     </p>
                     {f.description && (
-                      <p className="line-clamp-2 text-[11px] text-zinc-500">{f.description}</p>
+                      <p className="line-clamp-2 text-[11px] text-fg-subtle">{f.description}</p>
                     )}
-                    <p className="truncate font-mono text-[10px] text-zinc-600">{f.from}</p>
+                    <p className="truncate font-mono text-[10px] text-fg-faint">{f.from}</p>
                   </div>
                 </button>
               </li>
@@ -624,7 +624,7 @@ function ImportSkills({
           </ul>
 
           {[...chosen].some((n) => found.find((f) => f.name === n)?.installed) && (
-            <p className="flex items-start gap-1.5 text-[11px] text-amber-300/80">
+            <p className="flex items-start gap-1.5 text-[11px] text-warn/90">
               <LuTriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
               A ticked skill you already have will be replaced, including any edits you made to it.
             </p>
@@ -646,7 +646,7 @@ function ImportSkills({
         </>
       )}
 
-      <p className="flex items-start gap-1.5 border-t border-white/10 pt-2 text-[11px] text-zinc-600">
+      <p className="flex items-start gap-1.5 border-t border-line pt-2 text-[11px] text-fg-faint">
         <LuTriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
         Nothing is executed by an import — a skill is markdown. But it is markdown the agent will
         follow, so take them from somewhere you would take instructions from.

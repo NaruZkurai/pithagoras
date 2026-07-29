@@ -16,18 +16,18 @@ import {
 import { api, type BrokenChannelPackage, type Channel, type ChannelKind } from "../api";
 
 const inputCls =
-  "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60";
+  "w-full rounded-lg border border-line bg-raised/60 px-3 py-2 text-sm outline-none transition placeholder:text-fg-faint focus:border-accent/60";
 const btnCls =
-  "inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-2 text-sm text-zinc-200 transition hover:bg-white/10 disabled:opacity-40";
+  "inline-flex items-center gap-1.5 rounded-lg bg-fg/5 px-3 py-2 text-sm text-fg transition hover:bg-fg/10 disabled:opacity-40";
 const STATE_STYLE: Record<string, string> = {
-  running: "text-emerald-400",
-  starting: "text-amber-400",
-  error: "text-red-400",
-  stopped: "text-zinc-500",
+  running: "text-ok",
+  starting: "text-warn",
+  error: "text-danger",
+  stopped: "text-fg-subtle",
 };
 
 const primaryCls =
-  "inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 py-2 text-sm text-cyan-200 ring-1 ring-inset ring-cyan-400/30 transition hover:bg-cyan-500/25 disabled:opacity-40";
+  "inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-2 text-sm text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40";
 
 /**
  * Channels are two-way links into the agent — one long-lived session rooted at
@@ -105,13 +105,13 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
 
   return (
     <>
-      <section className="mb-6 rounded-xl border border-white/10 bg-black/20 p-3">
+      <section className="mb-6 rounded-xl border border-line bg-raised/40 p-3">
         <div className="flex items-center gap-2">
-          <LuFolder className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
-          <p className="text-xs text-zinc-500">Agent home</p>
-          <p className="ml-auto truncate pl-3 font-mono text-xs text-zinc-300">{home || "…"}</p>
+          <LuFolder className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
+          <p className="text-xs text-fg-subtle">Agent home</p>
+          <p className="ml-auto truncate pl-3 font-mono text-xs text-fg-muted">{home || "…"}</p>
         </div>
-        <p className="mt-1.5 text-xs text-zinc-600">
+        <p className="mt-1.5 text-xs text-fg-faint">
           Every channel below is a door into one long-lived session running here. They share the
           agent's memory rather than each starting a conversation of their own.
         </p>
@@ -119,20 +119,20 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
 
       <section className="mb-6">
         <div className="flex items-baseline justify-between">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">
             Channels{channels.length ? ` (${channels.length})` : ""}
           </h3>
-          <button onClick={load} className="text-[11px] text-zinc-500 hover:text-zinc-300">
+          <button onClick={load} className="text-[11px] text-fg-subtle hover:text-fg-muted">
             Refresh
           </button>
         </div>
 
         {loading ? (
-          <p className="mt-2 text-sm text-zinc-500">Loading…</p>
+          <p className="mt-2 text-sm text-fg-subtle">Loading…</p>
         ) : channels.length === 0 ? (
-          <div className="mt-2 rounded-xl border border-dashed border-zinc-800 px-3 py-6 text-center text-sm text-zinc-500">
+          <div className="mt-2 rounded-xl border border-dashed border-line px-3 py-6 text-center text-sm text-fg-subtle">
             No channels yet.
-            <p className="mt-1 text-xs text-zinc-600">
+            <p className="mt-1 text-xs text-fg-faint">
               Add one below to reach the agent from outside the portal.
             </p>
           </div>
@@ -151,7 +151,7 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
       </section>
 
       <section className="mb-6">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Add channel</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">Add channel</h3>
         <div className="mt-2 flex flex-wrap gap-1.5">
           {kinds.map((k) => (
             <button
@@ -159,8 +159,8 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
               onClick={() => setAdding(adding === k.id ? null : k.id)}
               className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition ${
                 adding === k.id
-                  ? "bg-cyan-500/15 text-cyan-200 ring-1 ring-inset ring-cyan-400/30"
-                  : "bg-white/5 text-zinc-300 hover:bg-white/10"
+                  ? "bg-accent/12 text-accent ring-1 ring-inset ring-accent/25"
+                  : "bg-fg/5 text-fg-muted hover:bg-fg/10"
               }`}
             >
               <LuPlus className="h-3.5 w-3.5" />
@@ -184,8 +184,8 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
       </section>
 
       <section className="mb-6">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Packages</h3>
-        <p className="mt-0.5 text-xs text-zinc-500">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">Packages</h3>
+        <p className="mt-0.5 text-xs text-fg-subtle">
           Channel types come from packages. Point at a GitHub repo following the convention and it
           becomes available above.
         </p>
@@ -211,7 +211,7 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
             {installing ? "Installing…" : "Install"}
           </button>
         </div>
-        <p className="mt-1 text-[11px] text-zinc-600">
+        <p className="mt-1 text-[11px] text-fg-faint">
           Anything npm understands: <code>user/repo</code>, <code>github:user/repo#v2</code>, a git
           URL, or an npm package name.
         </p>
@@ -220,23 +220,23 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
           {kinds.map((k) => (
             <li
               key={k.packageName}
-              className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2"
+              className="flex items-center gap-2 rounded-lg border border-line bg-raised/40 px-3 py-2"
             >
-              <LuPackage className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
+              <LuPackage className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs text-zinc-300">
+                <p className="truncate text-xs text-fg-muted">
                   {k.label}{" "}
-                  <span className="font-mono text-[10px] text-zinc-600">{k.packageName}</span>
+                  <span className="font-mono text-[10px] text-fg-faint">{k.packageName}</span>
                 </p>
                 {!k.runnable && (
-                  <p className="text-[10px] text-amber-400/80">no start() — cannot run</p>
+                  <p className="text-[10px] text-warn/90">no start() — cannot run</p>
                 )}
               </div>
               {k.version && (
-                <span className="shrink-0 font-mono text-[10px] text-zinc-600">v{k.version}</span>
+                <span className="shrink-0 font-mono text-[10px] text-fg-faint">v{k.version}</span>
               )}
               {k.builtin ? (
-                <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-500">
+                <span className="shrink-0 rounded bg-fg/5 px-1.5 py-0.5 text-[10px] text-fg-subtle">
                   builtin
                 </span>
               ) : (
@@ -246,7 +246,7 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
                       act(() => api.removeChannelPackage(k.packageName));
                     }
                   }}
-                  className="shrink-0 rounded p-1 text-zinc-500 hover:text-red-400"
+                  className="shrink-0 rounded p-1 text-fg-subtle hover:text-danger"
                   title="Uninstall"
                 >
                   <LuTrash2 className="h-3.5 w-3.5" />
@@ -261,12 +261,12 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
             {broken.map((b) => (
               <li
                 key={b.packageName}
-                className="flex items-start gap-2 rounded-lg border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-300"
+                className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
               >
                 <LuCircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <div className="min-w-0">
                   <p className="truncate font-mono text-[11px]">{b.packageName}</p>
-                  <p className="text-[11px] text-red-300/80">{b.error}</p>
+                  <p className="text-[11px] text-danger/80">{b.error}</p>
                 </div>
               </li>
             ))}
@@ -274,8 +274,8 @@ export function ChannelsPanel({ onError }: { onError: (e: string) => void }) {
         )}
       </section>
 
-      <div className="flex items-start gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-500">
-        <LuTriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-600" />
+      <div className="flex items-start gap-2 rounded-xl border border-line bg-raised/40 px-3 py-2 text-xs text-fg-subtle">
+        <LuTriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-fg-faint" />
         <p>
           An enabled channel is started as soon as you save it, and again when the portal restarts.
           Each conversation it sees becomes its own session on the Agent tab.
@@ -300,15 +300,15 @@ function Toggle({
     <button
       type="button"
       onClick={() => onChange(!on)}
-      className="flex w-full items-center gap-3 rounded-lg px-1 py-1.5 text-left transition hover:bg-white/5"
+      className="flex w-full items-center gap-3 rounded-lg px-1 py-1.5 text-left transition hover:bg-fg/5"
     >
       <div className="min-w-0 flex-1">
-        <p className="text-sm text-zinc-200">{label}</p>
-        <p className="text-[11px] text-zinc-500">{hint}</p>
+        <p className="text-sm text-fg">{label}</p>
+        <p className="text-[11px] text-fg-subtle">{hint}</p>
       </div>
       <span
         className={`relative h-5 w-9 shrink-0 rounded-full transition ${
-          on ? "bg-cyan-500/70" : "bg-zinc-700"
+          on ? "bg-accent" : "bg-raised"
         }`}
       >
         <span
@@ -335,20 +335,20 @@ function ChannelRow({
     <li>
       <button
         onClick={onOpen}
-        className="flex w-full items-center gap-2.5 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-left transition hover:bg-white/5"
+        className="flex w-full items-center gap-2.5 rounded-xl border border-line bg-raised/40 px-3 py-2.5 text-left transition hover:bg-fg/5"
       >
         <LuRadio
           className={`h-4 w-4 shrink-0 ${
             ch.state === "running"
-              ? "text-emerald-400"
+              ? "text-ok"
               : ch.state === "error"
-                ? "text-red-400"
-                : "text-zinc-600"
+                ? "text-danger"
+                : "text-fg-faint"
           }`}
         />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm text-zinc-200">{ch.name}</p>
-          <p className="truncate text-[11px] text-zinc-600">
+          <p className="truncate text-sm text-fg">{ch.name}</p>
+          <p className="truncate text-[11px] text-fg-faint">
             <span className={STATE_STYLE[ch.state] ?? ""}>{ch.state}</span> ·{" "}
             {kind?.label ?? ch.kind} · {ch.slug}
             {ch.sessionCount ? ` · ${ch.sessionCount} chats` : ""}
@@ -356,11 +356,11 @@ function ChannelRow({
           </p>
         </div>
         {!ch.enabled && (
-          <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-500">
+          <span className="shrink-0 rounded bg-fg/5 px-1.5 py-0.5 text-[10px] text-fg-subtle">
             disabled
           </span>
         )}
-        <LuChevronRight className="h-4 w-4 shrink-0 text-zinc-600" />
+        <LuChevronRight className="h-4 w-4 shrink-0 text-fg-faint" />
       </button>
     </li>
   );
@@ -440,7 +440,7 @@ function ChannelDetail({
     <>
       <button
         onClick={onBack}
-        className="mb-4 inline-flex items-center gap-1.5 text-xs text-zinc-500 transition hover:text-zinc-300"
+        className="mb-4 inline-flex items-center gap-1.5 text-xs text-fg-subtle transition hover:text-fg-muted"
       >
         <LuChevronLeft className="h-3.5 w-3.5" /> Channels
       </button>
@@ -449,10 +449,10 @@ function ChannelDetail({
         <div
           className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${
             ch.state === "running"
-              ? "bg-emerald-500/10 text-emerald-300"
+              ? "bg-ok/10 text-ok"
               : ch.state === "error"
-                ? "bg-red-500/10 text-red-300"
-                : "bg-white/5 text-zinc-500"
+                ? "bg-danger/10 text-danger"
+                : "bg-fg/5 text-fg-subtle"
           }`}
         >
           <LuRadio className="h-4 w-4" />
@@ -461,9 +461,9 @@ function ChannelDetail({
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full bg-transparent text-sm font-medium text-zinc-100 outline-none"
+            className="w-full bg-transparent text-sm font-medium text-fg outline-none"
           />
-          <p className="truncate text-xs text-zinc-500">
+          <p className="truncate text-xs text-fg-subtle">
             {kind?.label ?? ch.kind} ·{" "}
             <span className={STATE_STYLE[ch.state] ?? ""}>{ch.state}</span>
             {ch.since && ch.state === "running" ? ` since ${new Date(ch.since).toLocaleTimeString()}` : ""}
@@ -474,7 +474,7 @@ function ChannelDetail({
           disabled={busy}
           title={ch.enabled ? "Disable" : "Enable"}
           className={`relative mt-1 h-5 w-9 shrink-0 rounded-full transition disabled:opacity-40 ${
-            ch.enabled ? "bg-cyan-500/70" : "bg-zinc-700"
+            ch.enabled ? "bg-accent" : "bg-raised"
           }`}
         >
           <span
@@ -486,15 +486,15 @@ function ChannelDetail({
       </div>
 
       {ch.error && (
-        <div className="mb-5 flex items-start gap-2 rounded-xl border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+        <div className="mb-5 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
           <LuCircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <p className="min-w-0">{ch.error}</p>
         </div>
       )}
 
       <section className="mb-6">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Identity</h3>
-        <p className="mt-0.5 text-xs text-zinc-500">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">Identity</h3>
+        <p className="mt-0.5 text-xs text-fg-subtle">
           The agent's conversations hang off this slug, not off the channel itself. Delete this
           channel and recreate it under the same slug and its conversations come back; change the
           slug and it starts fresh.
@@ -504,7 +504,7 @@ function ChannelDetail({
           onChange={(e) => setSlug(e.target.value)}
           className={`${inputCls} mt-2 font-mono text-xs`}
         />
-        <p className="mt-1 text-[11px] text-zinc-600">
+        <p className="mt-1 text-[11px] text-fg-faint">
           {ch.sessionCount > 0
             ? `${ch.sessionCount} conversation${ch.sessionCount === 1 ? "" : "s"} keyed to "${ch.slug}".`
             : "No conversations yet."}
@@ -512,10 +512,10 @@ function ChannelDetail({
       </section>
 
       <section className="mb-6">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">
           While it works
         </h3>
-        <p className="mt-0.5 text-xs text-zinc-500">
+        <p className="mt-0.5 text-xs text-fg-subtle">
           A real task takes minutes. These decide whether the chat shows that, or stays quiet until
           there is an answer.
         </p>
@@ -536,10 +536,10 @@ function ChannelDetail({
       </section>
 
       <section className="mb-6">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">
           Instructions
         </h3>
-        <p className="mt-0.5 text-xs text-zinc-500">
+        <p className="mt-0.5 text-xs text-fg-subtle">
           Appended to the agent's system prompt for every message that arrives through this
           channel. Use it for standing guidance that only applies here — the shape of the reply,
           who is on the other end, what to leave out.
@@ -551,26 +551,26 @@ function ChannelDetail({
           placeholder={"You are answering over " + (kind?.label ?? "this channel") + ". Keep replies short — they are read on a phone. Never paste secrets or full file contents."}
           className={`${inputCls} mt-2 resize-y text-xs leading-relaxed`}
         />
-        <p className="mt-1 text-[11px] text-zinc-600">
+        <p className="mt-1 text-[11px] text-fg-faint">
           Leave empty for none. The agent's own memory is shared across channels; this is not.
         </p>
       </section>
 
       {kind && kind.fields.length > 0 && (
         <section className="mb-6">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">
             Connection
           </h3>
           <div className="mt-2 space-y-3">
             {kind.fields.map((f) => (
               <div key={f.key}>
                 <div className="flex items-baseline gap-2">
-                  <label className="font-mono text-xs text-zinc-300">{f.label}</label>
+                  <label className="font-mono text-xs text-fg-muted">{f.label}</label>
                   {f.secret &&
                     (ch.secretsSet.includes(f.key) ? (
-                      <span className="text-[10px] text-emerald-500/80">stored</span>
+                      <span className="text-[10px] text-ok/80">stored</span>
                     ) : (
-                      <span className="text-[10px] text-zinc-600">not set</span>
+                      <span className="text-[10px] text-fg-faint">not set</span>
                     ))}
                 </div>
                 <input
@@ -584,7 +584,7 @@ function ChannelDetail({
                   }
                   className={`${inputCls} mt-1 font-mono text-xs`}
                 />
-                {f.hint && <p className="mt-1 text-[11px] text-zinc-600">{f.hint}</p>}
+                {f.hint && <p className="mt-1 text-[11px] text-fg-faint">{f.hint}</p>}
               </div>
             ))}
           </div>
@@ -592,7 +592,7 @@ function ChannelDetail({
       )}
 
       {!kind && (
-        <div className="mb-6 flex items-start gap-2 rounded-xl border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+        <div className="mb-6 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
           <LuCircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <p>
             No installed package provides “{ch.kind}”. Reinstall it to edit this channel, or delete
@@ -603,14 +603,14 @@ function ChannelDetail({
 
       {ch.log.length > 0 && (
         <section className="mb-6">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Activity</h3>
-          <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto rounded-xl border border-white/10 bg-black/30 p-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">Activity</h3>
+          <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto rounded-xl border border-line bg-raised/60 p-2">
             {[...ch.log].reverse().map((entry, i) => (
               <li key={i} className="flex gap-2 font-mono text-[11px]">
-                <span className="shrink-0 text-zinc-600">
+                <span className="shrink-0 text-fg-faint">
                   {new Date(entry.at).toLocaleTimeString()}
                 </span>
-                <span className="min-w-0 text-zinc-400">{entry.text}</span>
+                <span className="min-w-0 text-fg-muted">{entry.text}</span>
               </li>
             ))}
           </ul>
@@ -647,7 +647,7 @@ function ChannelDetail({
             }
           }}
           disabled={busy}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-zinc-500 transition hover:bg-red-950/50 hover:text-red-300 disabled:opacity-40"
+          className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-fg-subtle transition hover:bg-danger/10 hover:text-danger disabled:opacity-40"
         >
           <LuTrash2 className="h-3.5 w-3.5" /> Remove channel
         </button>
@@ -689,11 +689,11 @@ function NewChannelForm({
   };
 
   return (
-    <div className="mt-3 space-y-3 rounded-xl border border-white/10 bg-black/20 p-3">
-      <p className="text-xs text-zinc-500">{kind.blurb}</p>
+    <div className="mt-3 space-y-3 rounded-xl border border-line bg-raised/40 p-3">
+      <p className="text-xs text-fg-subtle">{kind.blurb}</p>
 
       <div>
-        <label className="text-xs text-zinc-400">Name</label>
+        <label className="text-xs text-fg-muted">Name</label>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -704,8 +704,8 @@ function NewChannelForm({
       {kind.fields.map((f) => (
         <div key={f.key}>
           <div className="flex items-baseline gap-2">
-            <label className="font-mono text-xs text-zinc-300">{f.label}</label>
-            {f.required && <span className="text-[10px] text-zinc-600">required</span>}
+            <label className="font-mono text-xs text-fg-muted">{f.label}</label>
+            {f.required && <span className="text-[10px] text-fg-faint">required</span>}
           </div>
           <input
             type={f.secret ? "password" : "text"}
@@ -714,7 +714,7 @@ function NewChannelForm({
             placeholder={f.placeholder}
             className={`${inputCls} mt-1 font-mono text-xs`}
           />
-          {f.hint && <p className="mt-1 text-[11px] text-zinc-600">{f.hint}</p>}
+          {f.hint && <p className="mt-1 text-[11px] text-fg-faint">{f.hint}</p>}
         </div>
       ))}
 

@@ -75,22 +75,22 @@ export function Chat({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="border-b border-zinc-800 px-4 py-2">
+      <header className="border-b border-line px-4 py-3">
         <div className="mx-auto flex w-full max-w-3xl items-center gap-3">
         <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold text-zinc-200">{session.title}</h2>
-          <p className="truncate font-mono text-[11px] text-zinc-500">{session.workspace}</p>
+          <h2 className="truncate text-sm font-medium text-fg">{session.title}</h2>
+          <p className="truncate font-mono text-[11px] text-fg-faint">{session.workspace}</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
           {session.status === "interrupted" && (
-            <span className="rounded bg-amber-950/60 px-2 py-0.5 text-[11px] text-amber-300">
+            <span className="rounded-md bg-warn/10 px-2 py-0.5 text-[11px] text-warn">
               interrupted — send a message to resume
             </span>
           )}
           {running && (
             <button
               onClick={onAbort}
-              className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800"
+              className="rounded-lg border border-line px-2.5 py-1 text-xs text-fg-muted transition hover:bg-fg/5 hover:text-fg"
             >
               Stop
             </button>
@@ -102,7 +102,7 @@ export function Chat({
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto w-full max-w-3xl space-y-3">
         {items.length === 0 && (
-          <p className="pt-10 text-center text-sm text-zinc-600">
+          <p className="pt-10 text-center text-sm text-fg-faint">
             Give pi a task. You can close this tab — it keeps working.
           </p>
         )}
@@ -111,7 +111,7 @@ export function Chat({
           if (item.kind === "user") {
             return (
               <div key={item.id} className="flex justify-end">
-                <div className="max-w-[80%] whitespace-pre-wrap rounded-xl bg-cyan-900/40 px-3 py-2 text-sm">
+                <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-accent/10 px-3.5 py-2 text-sm text-fg ring-1 ring-inset ring-accent/15">
                   {item.text}
                 </div>
               </div>
@@ -121,15 +121,15 @@ export function Chat({
             return (
               <div key={item.id} className="max-w-[90%]">
                 {item.thinking && (
-                  <details className="mb-1 text-xs text-zinc-500">
-                    <summary className="cursor-pointer hover:text-zinc-400">thinking</summary>
-                    <div className="mt-1 whitespace-pre-wrap border-l border-zinc-800 pl-2">
+                  <details className="mb-1 text-xs text-fg-subtle">
+                    <summary className="cursor-pointer hover:text-fg-muted">thinking</summary>
+                    <div className="mt-1 whitespace-pre-wrap border-l border-line pl-2">
                       {item.thinking}
                     </div>
                   </details>
                 )}
                 {item.text && (
-                  <div className="md rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm">
+                  <div className="md text-sm leading-relaxed text-fg">
                     <ReactMarkdown>{item.text}</ReactMarkdown>
                   </div>
                 )}
@@ -137,20 +137,22 @@ export function Chat({
             );
           }
           if (item.kind === "tool") {
-            const color =
+            const tone =
               item.status === "error"
-                ? "border-red-900/60 bg-red-950/30 text-red-300"
+                ? "text-danger"
                 : item.status === "running"
-                  ? "border-cyan-900/60 bg-cyan-950/30 text-cyan-300"
-                  : "border-zinc-800 bg-zinc-900/60 text-zinc-400";
+                  ? "text-accent"
+                  : "text-fg-faint";
             return (
               <div
                 key={item.id}
-                className={`flex items-center gap-2 rounded-lg border px-2 py-1 font-mono text-xs ${color}`}
+                className="flex items-center gap-2 py-0.5 font-mono text-[11px] text-fg-faint"
               >
-                <span>{item.status === "running" ? "…" : item.status === "error" ? "✗" : "✓"}</span>
-                <span className="font-semibold">{item.name}</span>
-                {item.detail && <span className="truncate opacity-70">{item.detail}</span>}
+                <span className={`shrink-0 ${tone}`}>
+                  {item.status === "running" ? "◇" : item.status === "error" ? "✕" : "◆"}
+                </span>
+                <span className="shrink-0 text-fg-subtle">{item.name}</span>
+                {item.detail && <span className="truncate opacity-60">{item.detail}</span>}
               </div>
             );
           }
@@ -159,8 +161,8 @@ export function Chat({
               key={item.id}
               className={`whitespace-pre-wrap rounded-lg px-3 py-2 text-xs ${
                 item.tone === "error"
-                  ? "bg-red-950/40 text-red-300"
-                  : "bg-zinc-900 text-zinc-400"
+                  ? "bg-danger/10 text-danger"
+                  : "bg-raised/60 text-fg-muted"
               }`}
             >
               {item.text}
@@ -168,7 +170,12 @@ export function Chat({
           );
         })}
 
-          {running && <div className="animate-pulse text-xs text-zinc-500">pi is working…</div>}
+          {running && (
+            <div className="flex items-center gap-1.5 py-1 text-xs text-fg-subtle">
+              <span className="h-1 w-1 animate-pulse rounded-full bg-accent" />
+              working…
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
       </div>
@@ -178,11 +185,11 @@ export function Chat({
           e.preventDefault();
           send();
         }}
-        className="border-t border-zinc-800 px-4 py-3"
+        className="border-t border-line px-4 py-3"
       >
         <div className="relative mx-auto w-full max-w-3xl">
         {matches.length > 0 && (
-          <div className="absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl">
+          <div className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-line bg-surface shadow-pop">
             {matches.map((c) => (
               <button
                 key={c.name}
@@ -191,13 +198,11 @@ export function Chat({
                   e.preventDefault();
                   setInput(`/${c.name} `);
                 }}
-                className="flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-zinc-800"
+                className="flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-raised"
               >
-                <span className="font-mono text-xs text-cyan-300">/{c.name}</span>
-                <span className="truncate text-xs text-zinc-500">{c.description}</span>
-                <span className="ml-auto shrink-0 rounded bg-zinc-800 px-1 text-[10px] text-zinc-500">
-                  {c.source}
-                </span>
+                <span className="font-mono text-xs text-accent">/{c.name}</span>
+                <span className="truncate text-xs text-fg-subtle">{c.description}</span>
+                <span className="ml-auto shrink-0 text-[10px] text-fg-faint">{c.source}</span>
               </button>
             ))}
           </div>
@@ -213,7 +218,7 @@ export function Chat({
           }}
           rows={2}
           placeholder={running ? "pi is working — send to queue a follow-up…" : "Describe the task…"}
-          className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-cyan-600"
+          className="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
         />
           <ComposerBar
             sessionId={session.id}

@@ -3,7 +3,7 @@ import { LuArrowRight, LuBot, LuCheck, LuRefreshCw, LuUser } from "react-icons/l
 import { api, type AgentSetup as Setup } from "../api";
 
 const inputCls =
-  "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60";
+  "w-full rounded-lg border border-line bg-raised/60 px-3 py-2 text-sm outline-none transition placeholder:text-fg-faint focus:border-accent/60";
 
 /**
  * First run for the agent's home directory.
@@ -39,16 +39,16 @@ export function AgentSetup({ home, onDone }: { home: string; onDone: (s: Setup) 
   return (
     <div className="mx-auto w-full max-w-xl px-4 py-10">
       <div className="flex items-start gap-3">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-500/15 text-cyan-300">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/12 text-accent">
           <LuBot className="h-5 w-5" />
         </div>
         <div className="min-w-0">
-          <h2 className="text-base font-semibold text-zinc-100">Set up the agent</h2>
-          <p className="mt-0.5 text-sm text-zinc-400">
+          <h2 className="text-base font-semibold text-fg">Set up the agent</h2>
+          <p className="mt-0.5 text-sm text-fg-muted">
             Every channel talks to one agent, and it keeps what it learns. Two questions and it has
             somewhere to start.
           </p>
-          <p className="mt-1 truncate font-mono text-[11px] text-zinc-600">{home}</p>
+          <p className="mt-1 truncate font-mono text-[11px] text-fg-faint">{home}</p>
         </div>
       </div>
 
@@ -57,7 +57,7 @@ export function AgentSetup({ home, onDone }: { home: string; onDone: (s: Setup) 
           <div
             key={i}
             className={`h-0.5 flex-1 rounded-full transition ${
-              i <= step ? "bg-cyan-500/60" : "bg-white/10"
+              i <= step ? "bg-accent" : "bg-fg/10"
             }`}
           />
         ))}
@@ -65,12 +65,12 @@ export function AgentSetup({ home, onDone }: { home: string; onDone: (s: Setup) 
 
       {step === 0 ? (
         <section className="mt-6 space-y-4">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-fg-subtle">
             <LuBot className="h-3.5 w-3.5" /> Who it is
           </div>
 
           <label className="block">
-            <span className="text-xs text-zinc-400">Name</span>
+            <span className="text-xs text-fg-muted">Name</span>
             <input
               autoFocus
               value={agentName}
@@ -82,7 +82,7 @@ export function AgentSetup({ home, onDone }: { home: string; onDone: (s: Setup) 
           </label>
 
           <label className="block">
-            <span className="text-xs text-zinc-400">Character</span>
+            <span className="text-xs text-fg-muted">Character</span>
             <textarea
               value={vibe}
               onChange={(e) => setVibe(e.target.value)}
@@ -90,25 +90,25 @@ export function AgentSetup({ home, onDone }: { home: string; onDone: (s: Setup) 
               placeholder="How it should come across. Direct and a bit dry? Careful and thorough? Leave it empty for a sensible default you can edit later."
               className={`${inputCls} mt-1 resize-y text-xs leading-relaxed`}
             />
-            <p className="mt-1 text-[11px] text-zinc-600">Becomes SOUL.md.</p>
+            <p className="mt-1 text-[11px] text-fg-faint">Becomes SOUL.md.</p>
           </label>
 
           <button
             disabled={!agentName.trim()}
             onClick={() => setStep(1)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 py-2 text-sm text-cyan-200 ring-1 ring-inset ring-cyan-400/30 transition hover:bg-cyan-500/25 disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-2 text-sm text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40"
           >
             Next <LuArrowRight className="h-4 w-4" />
           </button>
         </section>
       ) : (
         <section className="mt-6 space-y-4">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-fg-subtle">
             <LuUser className="h-3.5 w-3.5" /> Who it works for
           </div>
 
           <label className="block">
-            <span className="text-xs text-zinc-400">Your name</span>
+            <span className="text-xs text-fg-muted">Your name</span>
             <input
               autoFocus
               value={userName}
@@ -119,7 +119,7 @@ export function AgentSetup({ home, onDone }: { home: string; onDone: (s: Setup) 
           </label>
 
           <label className="block">
-            <span className="text-xs text-zinc-400">About you</span>
+            <span className="text-xs text-fg-muted">About you</span>
             <textarea
               value={userAbout}
               onChange={(e) => setUserAbout(e.target.value)}
@@ -130,7 +130,7 @@ export function AgentSetup({ home, onDone }: { home: string; onDone: (s: Setup) 
           </label>
 
           <label className="block">
-            <span className="text-xs text-zinc-400">How to answer you</span>
+            <span className="text-xs text-fg-muted">How to answer you</span>
             <textarea
               value={userPrefers}
               onChange={(e) => setUserPrefers(e.target.value)}
@@ -138,16 +138,16 @@ export function AgentSetup({ home, onDone }: { home: string; onDone: (s: Setup) 
               placeholder="Short and blunt? Show the reasoning? Never guess?"
               className={`${inputCls} mt-1 resize-y text-xs leading-relaxed`}
             />
-            <p className="mt-1 text-[11px] text-zinc-600">Becomes PrimaryUser.md.</p>
+            <p className="mt-1 text-[11px] text-fg-faint">Becomes PrimaryUser.md.</p>
           </label>
 
-          {error && <p className="text-xs text-red-400">{error}</p>}
+          {error && <p className="text-xs text-danger">{error}</p>}
 
           <div className="flex items-center gap-2">
             <button
               disabled={!userName.trim() || busy}
               onClick={create}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 py-2 text-sm text-cyan-200 ring-1 ring-inset ring-cyan-400/30 transition hover:bg-cyan-500/25 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-2 text-sm text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40"
             >
               {busy ? (
                 <LuRefreshCw className="h-4 w-4 animate-spin" />
@@ -158,7 +158,7 @@ export function AgentSetup({ home, onDone }: { home: string; onDone: (s: Setup) 
             </button>
             <button
               onClick={() => setStep(0)}
-              className="rounded-lg px-3 py-2 text-sm text-zinc-400 transition hover:bg-white/5"
+              className="rounded-lg px-3 py-2 text-sm text-fg-muted transition hover:bg-fg/5"
             >
               Back
             </button>
@@ -166,7 +166,7 @@ export function AgentSetup({ home, onDone }: { home: string; onDone: (s: Setup) 
         </section>
       )}
 
-      <p className="mt-8 text-[11px] leading-relaxed text-zinc-600">
+      <p className="mt-8 text-[11px] leading-relaxed text-fg-faint">
         Writes SOUL.md, PrimaryUser.md and MEMORY.md into the agent's home directory. All three are
         handed to pi as context whenever a conversation starts, and stay editable here. An existing
         MEMORY.md is never overwritten.

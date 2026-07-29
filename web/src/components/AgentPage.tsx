@@ -4,10 +4,10 @@ import { api, type AgentSession, type AgentSetup as Setup, type SessionStatus } 
 import { AgentSetup } from "./AgentSetup";
 
 const STATUS_STYLE: Record<SessionStatus, string> = {
-  running: "bg-cyan-400 animate-pulse",
-  idle: "bg-zinc-600",
-  error: "bg-red-500",
-  interrupted: "bg-amber-500",
+  running: "bg-accent animate-pulse",
+  idle: "bg-fg-faint",
+  error: "bg-danger",
+  interrupted: "bg-warn",
 };
 
 const when = (iso: string) => {
@@ -86,14 +86,14 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto w-full max-w-3xl">
-          <header className="rounded-2xl border border-white/10 bg-gradient-to-br from-cyan-500/10 via-transparent to-transparent px-5 py-5">
+          <header className="rounded-2xl border border-line bg-gradient-to-br from-accent/10 via-transparent to-transparent px-5 py-5">
             <div className="flex items-start gap-3">
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-500/15 text-cyan-300">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/12 text-accent">
                 <LuBot className="h-5 w-5" />
               </div>
               <div className="min-w-0">
-                <h2 className="text-base font-semibold text-zinc-100">Agent</h2>
-                <p className="mt-0.5 max-w-xl text-sm text-zinc-400">
+                <h2 className="text-base font-semibold text-fg">Agent</h2>
+                <p className="mt-0.5 max-w-xl text-sm text-fg-muted">
                   Conversations that reached the agent through a channel. Each chat gets its own
                   session, so a group and a DM never share a memory.
                 </p>
@@ -101,19 +101,19 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <div className="flex items-baseline gap-1.5 rounded-lg bg-black/30 px-2.5 py-1">
-                <span className="text-sm tabular-nums text-zinc-200">{sessions.length}</span>
-                <span className="text-[11px] text-zinc-500">conversations</span>
+              <div className="flex items-baseline gap-1.5 rounded-lg bg-raised/60 px-2.5 py-1">
+                <span className="text-sm tabular-nums text-fg">{sessions.length}</span>
+                <span className="text-[11px] text-fg-subtle">conversations</span>
               </div>
-              <div className="flex items-baseline gap-1.5 rounded-lg bg-black/30 px-2.5 py-1">
-                <span className="text-sm tabular-nums text-cyan-300">
+              <div className="flex items-baseline gap-1.5 rounded-lg bg-raised/60 px-2.5 py-1">
+                <span className="text-sm tabular-nums text-accent">
                   {sessions.filter((s) => s.status === "running").length}
                 </span>
-                <span className="text-[11px] text-zinc-500">running</span>
+                <span className="text-[11px] text-fg-subtle">running</span>
               </div>
-              <div className="flex min-w-0 items-center gap-1.5 rounded-lg bg-black/30 px-2.5 py-1">
-                <LuFolder className="h-3 w-3 shrink-0 text-zinc-600" />
-                <span className="truncate font-mono text-[11px] text-zinc-500">{home}</span>
+              <div className="flex min-w-0 items-center gap-1.5 rounded-lg bg-raised/60 px-2.5 py-1">
+                <LuFolder className="h-3 w-3 shrink-0 text-fg-faint" />
+                <span className="truncate font-mono text-[11px] text-fg-subtle">{home}</span>
               </div>
             </div>
           </header>
@@ -121,11 +121,11 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
           {setup?.initialised && <AgentFiles setup={setup} onSaved={setSetup} />}
 
           {loading ? (
-            <p className="py-12 text-center text-sm text-zinc-500">Loading…</p>
+            <p className="py-12 text-center text-sm text-fg-subtle">Loading…</p>
           ) : sessions.length === 0 ? (
-            <div className="mt-4 rounded-xl border border-dashed border-zinc-800 px-4 py-10 text-center">
-              <p className="text-sm text-zinc-400">Nothing has reached the agent yet.</p>
-              <p className="mx-auto mt-2 max-w-md text-xs text-zinc-600">
+            <div className="mt-4 rounded-xl border border-dashed border-line px-4 py-10 text-center">
+              <p className="text-sm text-fg-muted">Nothing has reached the agent yet.</p>
+              <p className="mx-auto mt-2 max-w-md text-xs text-fg-faint">
                 Conversations appear here once a channel is running and someone messages it. No
                 transport is started yet, so nothing can arrive — configure a channel in Settings
                 and it will be waiting when the runtime lands.
@@ -136,22 +136,22 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
               {groups.map(([id, group]) => (
                 <section key={id}>
                   <div className="flex items-center gap-2 px-1">
-                    <LuRadio className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
-                    <h3 className="truncate text-xs font-medium text-zinc-400">{group.name}</h3>
+                    <LuRadio className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
+                    <h3 className="truncate text-xs font-medium text-fg-muted">{group.name}</h3>
                     {group.kind && (
-                      <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-500">
+                      <span className="shrink-0 rounded bg-fg/5 px-1.5 py-0.5 text-[10px] text-fg-subtle">
                         {group.kind}
                       </span>
                     )}
                     {!group.present && (
                       <span
-                        className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300/80"
+                        className="shrink-0 rounded bg-warn/10 px-1.5 py-0.5 text-[10px] text-warn/90"
                         title={`Recreate a channel with the slug "${id}" to reconnect these`}
                       >
                         no channel
                       </span>
                     )}
-                    <span className="ml-auto shrink-0 text-[11px] text-zinc-600">
+                    <span className="ml-auto shrink-0 text-[11px] text-fg-faint">
                       {group.items.length}
                     </span>
                   </div>
@@ -161,19 +161,19 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
                       <li key={s.id}>
                         <button
                           onClick={() => onSelect(s.id)}
-                          className="flex w-full items-center gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-left transition hover:bg-white/5"
+                          className="flex w-full items-center gap-3 rounded-xl border border-line bg-raised/40 px-3 py-2.5 text-left transition hover:bg-fg/5"
                         >
                           <span
                             className={`h-2 w-2 shrink-0 rounded-full ${STATUS_STYLE[s.status]}`}
                           />
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm text-zinc-200">{s.title}</p>
-                            <p className="truncate font-mono text-[10px] text-zinc-600">
+                            <p className="truncate text-sm text-fg">{s.title}</p>
+                            <p className="truncate font-mono text-[10px] text-fg-faint">
                               {s.channel_key}
                             </p>
                           </div>
-                          <LuMessageSquare className="h-3.5 w-3.5 shrink-0 text-zinc-700" />
-                          <span className="shrink-0 text-[11px] text-zinc-600">
+                          <LuMessageSquare className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
+                          <span className="shrink-0 text-[11px] text-fg-faint">
                             {when(s.updated_at)}
                           </span>
                         </button>
@@ -223,15 +223,15 @@ function AgentFiles({ setup, onSaved }: { setup: Setup; onSaved: (s: Setup) => v
             }}
             className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition ${
               open === f.name
-                ? "bg-cyan-500/15 text-cyan-200 ring-1 ring-inset ring-cyan-400/30"
-                : "bg-white/5 text-zinc-400 hover:bg-white/10"
+                ? "bg-accent/12 text-accent ring-1 ring-inset ring-accent/25"
+                : "bg-fg/5 text-fg-muted hover:bg-fg/10"
             }`}
           >
             <LuFileText className="h-3.5 w-3.5" />
             {f.name}
           </button>
         ))}
-        <span className="ml-auto text-[11px] text-zinc-600">
+        <span className="ml-auto text-[11px] text-fg-faint">
           loaded as context when a conversation starts
         </span>
       </div>
@@ -243,12 +243,12 @@ function AgentFiles({ setup, onSaved }: { setup: Setup; onSaved: (s: Setup) => v
             onChange={(e) => setDraft(e.target.value)}
             rows={14}
             spellCheck={false}
-            className="w-full resize-y rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-cyan-500/60"
+            className="w-full resize-y rounded-lg border border-line bg-raised/60 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-accent/60"
           />
           <button
             onClick={save}
             disabled={busy || draft === file.content}
-            className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-2 text-sm text-zinc-200 transition hover:bg-white/10 disabled:opacity-40"
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-fg/5 px-3 py-2 text-sm text-fg transition hover:bg-fg/10 disabled:opacity-40"
           >
             {busy ? (
               <LuRefreshCw className="h-4 w-4 animate-spin" />

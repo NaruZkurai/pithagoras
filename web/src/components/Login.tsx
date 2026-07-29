@@ -21,22 +21,32 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
   };
 
   return (
-    <div className="flex h-screen items-center justify-center">
-      <form onSubmit={submit} className="w-72 space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-        <h1 className="text-sm font-bold tracking-wide text-cyan-300">Pithagoras</h1>
+    <div className="flex h-screen items-center justify-center px-4">
+      <form onSubmit={submit} className="w-full max-w-[19rem]">
+        <div className="mb-6 flex flex-col items-center text-center">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-accent text-lg font-bold text-accent-fg">
+            π
+          </span>
+          <h1 className="mt-3 text-base font-semibold tracking-tight text-fg">Pithagoras</h1>
+          <p className="mt-1 text-xs text-fg-subtle">
+            Give it a task, close the browser, come back later.
+          </p>
+        </div>
+
         <input
           autoFocus
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Password"
-          className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-cyan-600"
+          className="w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm text-fg outline-none transition placeholder:text-fg-faint focus:border-accent/50 focus:ring-4 focus:ring-accent/10"
         />
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+
         <button
           type="submit"
-          disabled={busy}
-          className="w-full rounded-lg bg-cyan-900/60 px-3 py-2 text-sm text-cyan-200 hover:bg-cyan-900 disabled:opacity-50"
+          disabled={busy || !password}
+          className="mt-3 w-full rounded-xl bg-accent px-3 py-2.5 text-sm font-medium text-accent-fg transition hover:opacity-90 disabled:opacity-40"
         >
           {busy ? "Checking…" : "Sign in"}
         </button>

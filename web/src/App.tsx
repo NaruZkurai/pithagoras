@@ -9,6 +9,7 @@ import { ExtensionDialog, type UiRequest } from "./components/ExtensionDialog";
 import { SessionsPage } from "./components/SessionsPage";
 import { AgentPage } from "./components/AgentPage";
 import { RoutinesPage } from "./components/RoutinesPage";
+import { ThemeSwitcher } from "./components/ThemeSwitcher";
 
 // Legacy routes ("session", "global") still resolve — old links stay valid.
 type Tab = "general" | "extensions" | "advanced";
@@ -26,10 +27,19 @@ export default function App() {
 
   if (authed === null) {
     return (
-      <div className="flex h-screen items-center justify-center text-sm text-zinc-500">Loading…</div>
+      <div className="flex h-screen items-center justify-center text-sm text-fg-subtle">Loading…</div>
     );
   }
-  if (!authed) return <Login onSuccess={() => setAuthed(true)} />;
+  if (!authed) {
+    return (
+      <>
+        <div className="fixed right-4 top-4 z-10">
+          <ThemeSwitcher />
+        </div>
+        <Login onSuccess={() => setAuthed(true)} />
+      </>
+    );
+  }
 
   // Every meaningful view has a URL: a session, and its settings tabs. Deep
   // links and the back button work, and the server's SPA fallback serves them.
@@ -141,7 +151,7 @@ function Shell({
   const active = sessions.find((s) => s.id === sessionId) ?? null;
 
   return (
-    <div className="flex h-screen bg-zinc-950">
+    <div className="flex h-screen bg-canvas">
       <Sidebar
         sessions={sessions}
         workspaces={workspaces}
@@ -180,7 +190,7 @@ function Shell({
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {error && <div className="bg-red-950/60 px-4 py-2 text-sm text-red-300">{error}</div>}
+        {error && <div className="bg-danger/10 px-4 py-2 text-sm text-danger">{error}</div>}
         {view === "sessions" ? (
           <SessionsPage
             sessions={sessions}
@@ -249,13 +259,13 @@ function Shell({
 function EmptyState({ hasSessions }: { hasSessions: boolean }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-      <div className="grid h-12 w-12 place-items-center rounded-2xl bg-zinc-900 text-xl text-zinc-600">
+      <div className="grid h-12 w-12 place-items-center rounded-2xl bg-surface text-xl text-fg-faint">
         π
       </div>
-      <p className="text-sm text-zinc-400">
+      <p className="text-sm text-fg-muted">
         {hasSessions ? "Pick a session on the left." : "Start a session to get going."}
       </p>
-      <p className="max-w-xs text-xs text-zinc-600">
+      <p className="max-w-xs text-xs text-fg-faint">
         Give it a task and close the tab — it keeps working, and picks up where it left off when you
         come back.
       </p>

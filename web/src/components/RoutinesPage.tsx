@@ -13,16 +13,16 @@ import {
 import { api, type Routine } from "../api";
 
 const inputCls =
-  "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60";
+  "w-full rounded-lg border border-line bg-raised/60 px-3 py-2 text-sm outline-none transition placeholder:text-fg-faint focus:border-accent/60";
 const primaryCls =
-  "inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 py-2 text-sm text-cyan-200 ring-1 ring-inset ring-cyan-400/30 transition hover:bg-cyan-500/25 disabled:opacity-40";
+  "inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-2 text-sm text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40";
 const btnCls =
-  "inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-2 text-sm text-zinc-200 transition hover:bg-white/10 disabled:opacity-40";
+  "inline-flex items-center gap-1.5 rounded-lg bg-fg/5 px-3 py-2 text-sm text-fg transition hover:bg-fg/10 disabled:opacity-40";
 
 const STATUS_STYLE: Record<string, string> = {
-  ok: "text-emerald-400",
-  error: "text-red-400",
-  running: "text-cyan-400",
+  ok: "text-ok",
+  error: "text-danger",
+  running: "text-accent",
 };
 
 const PRESETS = [
@@ -93,8 +93,8 @@ function Timing({
             onClick={() => onMode(m)}
             className={`rounded-lg px-2.5 py-1 text-xs transition ${
               mode === m
-                ? "bg-cyan-500/15 text-cyan-200 ring-1 ring-inset ring-cyan-400/30"
-                : "bg-white/5 text-zinc-400 hover:bg-white/10"
+                ? "bg-accent/12 text-accent ring-1 ring-inset ring-accent/25"
+                : "bg-fg/5 text-fg-muted hover:bg-fg/10"
             }`}
           >
             {m === "repeats" ? "Repeats" : "Once"}
@@ -106,14 +106,14 @@ function Timing({
         <SchedulePicker value={schedule} onChange={onSchedule} />
       ) : (
         <div>
-          <span className="text-xs text-zinc-400">Run at</span>
+          <span className="text-xs text-fg-muted">Run at</span>
           <input
             type="datetime-local"
             value={runAt}
             onChange={(e) => onRunAt(e.target.value)}
             className={`${inputCls} mt-1 text-xs [color-scheme:dark]`}
           />
-          <p className="mt-1 text-[11px] text-zinc-600">
+          <p className="mt-1 text-[11px] text-fg-faint">
             Your local time. It runs once and then switches itself off, keeping the result. A time
             that passed while the portal was down still runs when it comes back.
           </p>
@@ -171,14 +171,14 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
   return (
     <div className="h-full overflow-y-auto px-4 py-6">
       <div className="mx-auto w-full max-w-3xl">
-        <header className="rounded-2xl border border-white/10 bg-gradient-to-br from-cyan-500/10 via-transparent to-transparent px-5 py-5">
+        <header className="rounded-2xl border border-line bg-gradient-to-br from-accent/10 via-transparent to-transparent px-5 py-5">
           <div className="flex items-start gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-500/15 text-cyan-300">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/12 text-accent">
               <LuClock className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-base font-semibold text-zinc-100">Routines</h2>
-              <p className="mt-0.5 max-w-xl text-sm text-zinc-400">
+              <h2 className="text-base font-semibold text-fg">Routines</h2>
+              <p className="mt-0.5 max-w-xl text-sm text-fg-muted">
                 Work the agent does on a schedule instead of because you asked. It wakes up, follows
                 its instructions, and goes quiet again.
               </p>
@@ -187,17 +187,17 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Stat value={routines.length} label="routines" />
-            <Stat value={routines.filter((r) => r.enabled).length} label="enabled" tone="text-cyan-300" />
+            <Stat value={routines.filter((r) => r.enabled).length} label="enabled" tone="text-accent" />
             <Stat
               value={routines.filter((r) => r.lastStatus === "error").length}
               label="failing"
-              tone="text-red-400"
+              tone="text-danger"
             />
           </div>
         </header>
 
         {error && (
-          <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm text-red-300">
+          <div className="mt-4 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
             <LuCircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <span className="min-w-0 flex-1">{error}</span>
             <button onClick={() => setError(null)}>✕</button>
@@ -205,7 +205,7 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
         )}
 
         <div className="mt-4 flex items-center justify-between">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">
             Scheduled
           </h3>
           <button onClick={() => setAdding(!adding)} className={adding ? btnCls : primaryCls}>
@@ -226,11 +226,11 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
         )}
 
         {loading ? (
-          <p className="py-10 text-center text-sm text-zinc-500">Loading…</p>
+          <p className="py-10 text-center text-sm text-fg-subtle">Loading…</p>
         ) : routines.length === 0 ? (
-          <div className="mt-3 rounded-xl border border-dashed border-zinc-800 px-4 py-10 text-center">
-            <p className="text-sm text-zinc-400">No routines yet.</p>
-            <p className="mx-auto mt-2 max-w-md text-xs text-zinc-600">
+          <div className="mt-3 rounded-xl border border-dashed border-line px-4 py-10 text-center">
+            <p className="text-sm text-fg-muted">No routines yet.</p>
+            <p className="mx-auto mt-2 max-w-md text-xs text-fg-faint">
               A morning summary of what changed overnight, a nightly check that backups ran, a
               weekly tidy of a directory — anything you would otherwise remember to ask for.
             </p>
@@ -241,14 +241,14 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
               <li key={r.id}>
                 <button
                   onClick={() => setOpenId(r.id)}
-                  className="flex w-full items-center gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-left transition hover:bg-white/5"
+                  className="flex w-full items-center gap-3 rounded-xl border border-line bg-raised/40 px-3 py-2.5 text-left transition hover:bg-fg/5"
                 >
                   <LuClock
-                    className={`h-4 w-4 shrink-0 ${r.enabled ? "text-cyan-400" : "text-zinc-600"}`}
+                    className={`h-4 w-4 shrink-0 ${r.enabled ? "text-accent" : "text-fg-faint"}`}
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-zinc-200">{r.name}</p>
-                    <p className="truncate text-[11px] text-zinc-600">
+                    <p className="truncate text-sm text-fg">{r.name}</p>
+                    <p className="truncate text-[11px] text-fg-faint">
                       <span className="font-mono">
                         {r.mode === "once"
                           ? `once · ${r.runAt ? new Date(r.runAt).toLocaleString() : "no time set"}`
@@ -265,14 +265,14 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
                       )}
                     </p>
                   </div>
-                  <LuChevronRight className="h-4 w-4 shrink-0 text-zinc-600" />
+                  <LuChevronRight className="h-4 w-4 shrink-0 text-fg-faint" />
                 </button>
               </li>
             ))}
           </ul>
         )}
 
-        <p className="mt-6 text-[11px] leading-relaxed text-zinc-600">
+        <p className="mt-6 text-[11px] leading-relaxed text-fg-faint">
           Repeating schedules use the server's clock and five-field cron, or a shorthand like{" "}
           <code>@daily</code>; a one-off uses the time you pick in your own timezone. A routine
           still running when its next slot comes round is skipped rather than stacked.
@@ -284,9 +284,9 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
 
 function Stat({ value, label, tone }: { value: number; label: string; tone?: string }) {
   return (
-    <div className="flex items-baseline gap-1.5 rounded-lg bg-black/30 px-2.5 py-1">
-      <span className={`text-sm tabular-nums ${tone ?? "text-zinc-200"}`}>{value}</span>
-      <span className="text-[11px] text-zinc-500">{label}</span>
+    <div className="flex items-baseline gap-1.5 rounded-lg bg-raised/60 px-2.5 py-1">
+      <span className={`text-sm tabular-nums ${tone ?? "text-fg"}`}>{value}</span>
+      <span className="text-[11px] text-fg-subtle">{label}</span>
     </div>
   );
 }
@@ -317,7 +317,7 @@ function SchedulePicker({
 
   return (
     <div>
-      <span className="text-xs text-zinc-400">Schedule</span>
+      <span className="text-xs text-fg-muted">Schedule</span>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -330,15 +330,15 @@ function SchedulePicker({
             key={p.cron}
             type="button"
             onClick={() => onChange(p.cron)}
-            className="rounded-lg bg-white/5 px-2 py-0.5 text-[11px] text-zinc-400 transition hover:bg-white/10 hover:text-zinc-200"
+            className="rounded-lg bg-fg/5 px-2 py-0.5 text-[11px] text-fg-muted transition hover:bg-fg/10 hover:text-fg"
           >
             {p.label}
           </button>
         ))}
       </div>
-      {preview.error && <p className="mt-1.5 text-[11px] text-red-400">{preview.error}</p>}
+      {preview.error && <p className="mt-1.5 text-[11px] text-danger">{preview.error}</p>}
       {preview.runs && preview.runs.length > 0 && (
-        <p className="mt-1.5 text-[11px] text-zinc-500">
+        <p className="mt-1.5 text-[11px] text-fg-subtle">
           Next: {preview.runs.slice(0, 3).map((r) => new Date(r).toLocaleString()).join(" · ")}
         </p>
       )}
@@ -380,9 +380,9 @@ function NewRoutine({
   };
 
   return (
-    <div className="mt-3 space-y-3 rounded-xl border border-white/10 bg-black/20 p-3">
+    <div className="mt-3 space-y-3 rounded-xl border border-line bg-raised/40 p-3">
       <label className="block">
-        <span className="text-xs text-zinc-400">Name</span>
+        <span className="text-xs text-fg-muted">Name</span>
         <input
           autoFocus
           value={name}
@@ -402,7 +402,7 @@ function NewRoutine({
       />
 
       <label className="block">
-        <span className="text-xs text-zinc-400">Instructions</span>
+        <span className="text-xs text-fg-muted">Instructions</span>
         <textarea
           value={instructions}
           onChange={(e) => setInstructions(e.target.value)}
@@ -487,7 +487,7 @@ function RoutineDetail({
     <>
       <button
         onClick={onBack}
-        className="mb-4 inline-flex items-center gap-1.5 text-xs text-zinc-500 transition hover:text-zinc-300"
+        className="mb-4 inline-flex items-center gap-1.5 text-xs text-fg-subtle transition hover:text-fg-muted"
       >
         <LuChevronLeft className="h-3.5 w-3.5" /> Routines
       </button>
@@ -495,7 +495,7 @@ function RoutineDetail({
       <div className="mb-5 flex items-start gap-3">
         <div
           className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${
-            r.enabled ? "bg-cyan-500/10 text-cyan-300" : "bg-white/5 text-zinc-500"
+            r.enabled ? "bg-accent/10 text-accent" : "bg-fg/5 text-fg-subtle"
           }`}
         >
           <LuClock className="h-4 w-4" />
@@ -504,9 +504,9 @@ function RoutineDetail({
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full bg-transparent text-sm font-medium text-zinc-100 outline-none"
+            className="w-full bg-transparent text-sm font-medium text-fg outline-none"
           />
-          <p className="truncate text-xs text-zinc-500">
+          <p className="truncate text-xs text-fg-subtle">
             {r.done ? "already ran" : r.enabled ? until(r.nextRun) : "disabled"} ·{" "}
             <span className="font-mono">{r.slug}</span>
           </p>
@@ -516,7 +516,7 @@ function RoutineDetail({
           disabled={busy !== null}
           title={r.enabled ? "Disable" : "Enable"}
           className={`relative mt-1 h-5 w-9 shrink-0 rounded-full transition disabled:opacity-40 ${
-            r.enabled ? "bg-cyan-500/70" : "bg-zinc-700"
+            r.enabled ? "bg-accent" : "bg-raised"
           }`}
         >
           <span
@@ -538,14 +538,14 @@ function RoutineDetail({
         />
 
         <label className="block">
-          <span className="text-xs text-zinc-400">Instructions</span>
+          <span className="text-xs text-fg-muted">Instructions</span>
           <textarea
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
             rows={8}
             className={`${inputCls} mt-1 resize-y text-xs leading-relaxed`}
           />
-          <p className="mt-1 text-[11px] text-zinc-600">
+          <p className="mt-1 text-[11px] text-fg-faint">
             Given to the agent verbatim, with a note that it was woken by a schedule and that
             nobody is waiting on a reply.
           </p>
@@ -554,18 +554,18 @@ function RoutineDetail({
         <button
           type="button"
           onClick={() => setFresh(!fresh)}
-          className="flex w-full items-center gap-3 rounded-lg px-1 py-1.5 text-left transition hover:bg-white/5"
+          className="flex w-full items-center gap-3 rounded-lg px-1 py-1.5 text-left transition hover:bg-fg/5"
         >
           <div className="min-w-0 flex-1">
-            <p className="text-sm text-zinc-200">Fresh session each run</p>
-            <p className="text-[11px] text-zinc-500">
+            <p className="text-sm text-fg">Fresh session each run</p>
+            <p className="text-[11px] text-fg-subtle">
               Off: one session it keeps, so a run can see what the last one did. On: a clean start
               every time.
             </p>
           </div>
           <span
             className={`relative h-5 w-9 shrink-0 rounded-full transition ${
-              fresh ? "bg-cyan-500/70" : "bg-zinc-700"
+              fresh ? "bg-accent" : "bg-raised"
             }`}
           >
             <span
@@ -579,18 +579,18 @@ function RoutineDetail({
 
       {r.lastStatus && (
         <section className="mb-6">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Last run</h3>
-          <div className="mt-2 rounded-xl border border-white/10 bg-black/20 p-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">Last run</h3>
+          <div className="mt-2 rounded-xl border border-line bg-raised/40 p-3">
             <p className="text-xs">
-              <span className={STATUS_STYLE[r.lastStatus] ?? "text-zinc-400"}>{r.lastStatus}</span>
-              <span className="text-zinc-600">
+              <span className={STATUS_STYLE[r.lastStatus] ?? "text-fg-muted"}>{r.lastStatus}</span>
+              <span className="text-fg-faint">
                 {" "}
                 · {when(r.lastRun)}
                 {r.lastMs ? ` · took ${Math.round(r.lastMs / 1000)}s` : ""}
               </span>
             </p>
             {r.lastOutput && (
-              <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-zinc-400">
+              <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-fg-muted">
                 {r.lastOutput}
               </pre>
             )}
@@ -600,7 +600,7 @@ function RoutineDetail({
 
       {runs.length > 0 && (
         <section className="mb-6">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">
             Sessions ({runs.length})
           </h3>
           <ul className="mt-2 space-y-1">
@@ -608,10 +608,10 @@ function RoutineDetail({
               <li key={s.id}>
                 <button
                   onClick={() => onOpenSession(s.id)}
-                  className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-left text-xs text-zinc-300 transition hover:bg-white/5"
+                  className="flex w-full items-center gap-2 rounded-lg border border-line bg-raised/40 px-3 py-2 text-left text-xs text-fg-muted transition hover:bg-fg/5"
                 >
                   <span className="min-w-0 flex-1 truncate">{s.title}</span>
-                  <LuChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
+                  <LuChevronRight className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
                 </button>
               </li>
             ))}
@@ -670,7 +670,7 @@ function RoutineDetail({
             }
           }}
           disabled={busy !== null}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-zinc-500 transition hover:bg-red-950/50 hover:text-red-300 disabled:opacity-40"
+          className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-fg-subtle transition hover:bg-danger/10 hover:text-danger disabled:opacity-40"
         >
           <LuTrash2 className="h-3.5 w-3.5" /> Delete
         </button>

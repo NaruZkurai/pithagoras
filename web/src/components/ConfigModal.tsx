@@ -126,10 +126,10 @@ export function ConfigModal({
       }
     >
       {error && (
-        <div className="mb-4 flex items-start gap-2 rounded-xl border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm text-red-300">
+        <div className="mb-4 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
           <LuCircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <span className="min-w-0 flex-1">{error}</span>
-          <button onClick={() => setError(null)} className="text-red-400/70 hover:text-red-300">
+          <button onClick={() => setError(null)} className="text-danger/70 hover:text-danger">
             ✕
           </button>
         </div>
@@ -166,7 +166,7 @@ function RailGroup({ label, children }: { label?: string; children: ReactNode })
   return (
     <div>
       {label && (
-        <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-600">
+        <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-fg-faint">
           {label}
         </p>
       )}
@@ -191,11 +191,11 @@ function RailItem({
       onClick={onClick}
       className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition ${
         active
-          ? "bg-cyan-500/10 text-cyan-200 ring-1 ring-inset ring-cyan-400/20"
-          : "text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
+          ? "bg-accent/10 text-accent ring-1 ring-inset ring-accent/20"
+          : "text-fg-muted hover:bg-fg/5 hover:text-fg"
       }`}
     >
-      <span className={`shrink-0 ${active ? "text-cyan-300" : "text-zinc-500"}`}>{icon}</span>
+      <span className={`shrink-0 ${active ? "text-accent" : "text-fg-subtle"}`}>{icon}</span>
       <span className="truncate">{label}</span>
     </button>
   );
@@ -206,8 +206,8 @@ function RailItem({
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
     <section className="mb-6">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">{title}</h3>
-      {hint && <p className="mt-0.5 text-xs text-zinc-500">{hint}</p>}
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">{title}</h3>
+      {hint && <p className="mt-0.5 text-xs text-fg-subtle">{hint}</p>}
       <div className="mt-2.5">{children}</div>
     </section>
   );
@@ -226,9 +226,9 @@ function Inherited({
   return (
     <label className="block">
       <div className="flex items-baseline gap-2">
-        <span className="text-xs text-zinc-400">{label}</span>
+        <span className="text-xs text-fg-muted">{label}</span>
         {value && (
-          <span className="truncate font-mono text-[10px] text-zinc-600">inherits {value}</span>
+          <span className="truncate font-mono text-[10px] text-fg-faint">inherits {value}</span>
         )}
       </div>
       {children}
@@ -238,18 +238,18 @@ function Inherited({
 
 function Empty({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-dashed border-zinc-800 px-3 py-8 text-center text-sm text-zinc-500">
+    <div className="rounded-xl border border-dashed border-line px-3 py-8 text-center text-sm text-fg-subtle">
       {children}
     </div>
   );
 }
 
 const inputCls =
-  "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60";
+  "w-full rounded-lg border border-line bg-raised/60 px-3 py-2 text-sm outline-none transition placeholder:text-fg-faint focus:border-accent/60";
 const btnCls =
-  "inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-2 text-sm text-zinc-200 transition hover:bg-white/10 disabled:opacity-40";
+  "inline-flex items-center gap-1.5 rounded-lg bg-fg/5 px-3 py-2 text-sm text-fg transition hover:bg-fg/10 disabled:opacity-40";
 const primaryCls =
-  "inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 py-2 text-sm text-cyan-200 ring-1 ring-inset ring-cyan-400/30 transition hover:bg-cyan-500/25 disabled:opacity-40";
+  "inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-2 text-sm text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40";
 
 const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -285,7 +285,7 @@ function GeneralPanel({ onError }: { onError: (e: string) => void }) {
     load();
   }, []);
 
-  if (!stored || !defaults) return <p className="text-sm text-zinc-500">Loading…</p>;
+  if (!stored || !defaults) return <p className="text-sm text-fg-subtle">Loading…</p>;
 
   const save = async () => {
     setBusy(true);
@@ -331,9 +331,9 @@ function GeneralPanel({ onError }: { onError: (e: string) => void }) {
           </Inherited>
           <div>
             <div className="flex items-baseline gap-2">
-              <span className="text-xs text-zinc-400">Effort</span>
+              <span className="text-xs text-fg-muted">Effort</span>
               {!stored.thinkingLevel && defaults.thinkingLevel && (
-                <span className="text-[10px] text-zinc-600">
+                <span className="text-[10px] text-fg-faint">
                   inheriting {defaults.thinkingLevel}
                 </span>
               )}
@@ -351,8 +351,8 @@ function GeneralPanel({ onError }: { onError: (e: string) => void }) {
                   }
                   className={`rounded-lg px-2.5 py-1 text-xs capitalize transition ${
                     stored.thinkingLevel === lvl
-                      ? "bg-amber-500/15 text-amber-200 ring-1 ring-inset ring-amber-400/30"
-                      : "bg-white/5 text-zinc-400 hover:bg-white/10"
+                      ? "bg-warn/12 text-warn ring-1 ring-inset ring-warn/30"
+                      : "bg-fg/5 text-fg-muted hover:bg-fg/10"
                   }`}
                 >
                   {lvl}
@@ -377,25 +377,25 @@ function GeneralPanel({ onError }: { onError: (e: string) => void }) {
       </Section>
 
       <Section title="Deployment">
-        <dl className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
+        <dl className="rounded-xl border border-line bg-raised/40 p-3 text-sm">
           <div className="flex items-center gap-2 py-0.5">
-            <LuServer className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
-            <dt className="text-zinc-500">executor</dt>
-            <dd className="ml-auto font-mono text-zinc-300">{meta?.executor}</dd>
+            <LuServer className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
+            <dt className="text-fg-subtle">executor</dt>
+            <dd className="ml-auto font-mono text-fg-muted">{meta?.executor}</dd>
           </div>
           <div className="flex items-center gap-2 py-0.5">
-            <LuChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
-            <dt className="shrink-0 text-zinc-500">workspaces</dt>
-            <dd className="ml-auto truncate pl-4 font-mono text-zinc-300">{meta?.workspaceRoot}</dd>
+            <LuChevronRight className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
+            <dt className="shrink-0 text-fg-subtle">workspaces</dt>
+            <dd className="ml-auto truncate pl-4 font-mono text-fg-muted">{meta?.workspaceRoot}</dd>
           </div>
           <div className="flex items-center gap-2 py-0.5">
-            <LuFileJson className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
-            <dt className="shrink-0 text-zinc-500">pi settings</dt>
-            <dd className="ml-auto truncate pl-4 font-mono text-zinc-300">
+            <LuFileJson className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
+            <dt className="shrink-0 text-fg-subtle">pi settings</dt>
+            <dd className="ml-auto truncate pl-4 font-mono text-fg-muted">
               {meta?.piSettingsPath}
             </dd>
           </div>
-          <p className="mt-1.5 text-xs text-zinc-600">
+          <p className="mt-1.5 text-xs text-fg-faint">
             Executor and workspace root are set at deploy time via environment.
           </p>
         </dl>
@@ -475,7 +475,7 @@ function ExtensionsPanel({
               key={s.label}
               onClick={() => setSpec(s.placeholder)}
               title={`Install from ${s.hint}`}
-              className="rounded-lg bg-white/5 px-2 py-0.5 font-mono text-[11px] text-zinc-400 transition hover:bg-white/10 hover:text-zinc-200"
+              className="rounded-lg bg-fg/5 px-2 py-0.5 font-mono text-[11px] text-fg-muted transition hover:bg-fg/10 hover:text-fg"
             >
               {s.label}
             </button>
@@ -485,11 +485,11 @@ function ExtensionsPanel({
 
       <Section title={`Installed${extensions.length ? ` (${extensions.length})` : ""}`}>
         {loading ? (
-          <p className="text-sm text-zinc-500">Reading installed packages…</p>
+          <p className="text-sm text-fg-subtle">Reading installed packages…</p>
         ) : extensions.length === 0 ? (
           <Empty>
             Nothing installed yet.
-            <p className="mt-1 text-xs text-zinc-600">
+            <p className="mt-1 text-xs text-fg-faint">
               Installed commands show up in the chat box when you type “/”.
             </p>
           </Empty>
@@ -498,18 +498,18 @@ function ExtensionsPanel({
             {extensions.map((ext) => (
               <li
                 key={ext.spec}
-                className="rounded-xl border border-white/10 bg-black/20 px-3 py-2.5"
+                className="rounded-xl border border-line bg-raised/40 px-3 py-2.5"
               >
                 <div className="flex items-center gap-2">
-                  <LuPuzzle className="h-4 w-4 shrink-0 text-zinc-500" />
-                  <p className="truncate text-sm text-zinc-200">{ext.name}</p>
+                  <LuPuzzle className="h-4 w-4 shrink-0 text-fg-subtle" />
+                  <p className="truncate text-sm text-fg">{ext.name}</p>
                   {ext.version && (
-                    <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500">
+                    <span className="shrink-0 rounded bg-fg/5 px-1.5 py-0.5 font-mono text-[10px] text-fg-subtle">
                       v{ext.version}
                     </span>
                   )}
                   {ext.scope && (
-                    <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-500">
+                    <span className="shrink-0 rounded bg-fg/5 px-1.5 py-0.5 text-[10px] text-fg-subtle">
                       {ext.scope}
                     </span>
                   )}
@@ -517,7 +517,7 @@ function ExtensionsPanel({
                     disabled={busy !== null}
                     onClick={() => act(ext.spec, () => api.removePackage(ext.spec))}
                     title="Remove"
-                    className="ml-auto shrink-0 rounded-lg p-1.5 text-zinc-500 transition hover:bg-red-950/50 hover:text-red-300 disabled:opacity-40"
+                    className="ml-auto shrink-0 rounded-lg p-1.5 text-fg-subtle transition hover:bg-danger/10 hover:text-danger disabled:opacity-40"
                   >
                     {busy === ext.spec ? (
                       <LuRefreshCw className="h-3.5 w-3.5 animate-spin" />
@@ -528,15 +528,15 @@ function ExtensionsPanel({
                 </div>
 
                 {ext.description && (
-                  <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{ext.description}</p>
+                  <p className="mt-1 line-clamp-2 text-xs text-fg-subtle">{ext.description}</p>
                 )}
 
                 <div className="mt-1.5 flex items-center gap-3">
-                  <span className="truncate font-mono text-[10px] text-zinc-600">{ext.spec}</span>
+                  <span className="truncate font-mono text-[10px] text-fg-faint">{ext.spec}</span>
                   {ext.settings.length > 0 && (
                     <button
                       onClick={() => onConfigure(ext.spec)}
-                      className="ml-auto shrink-0 text-[11px] text-cyan-400 hover:text-cyan-300"
+                      className="ml-auto shrink-0 text-[11px] text-accent hover:text-accent"
                     >
                       Configure ({ext.settings.length}) ›
                     </button>
@@ -604,20 +604,20 @@ function ExtensionPanel({
   return (
     <>
       <div className="mb-5 flex items-start gap-3">
-        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-cyan-500/10 text-cyan-300">
+        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent/10 text-accent">
           <LuPuzzle className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-medium text-zinc-100">{ext.name}</h3>
-          {ext.description && <p className="text-xs text-zinc-500">{ext.description}</p>}
-          <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-600">{ext.spec}</p>
+          <h3 className="truncate text-sm font-medium text-fg">{ext.name}</h3>
+          {ext.description && <p className="text-xs text-fg-subtle">{ext.description}</p>}
+          <p className="mt-0.5 truncate font-mono text-[10px] text-fg-faint">{ext.spec}</p>
         </div>
         {ext.homepage && (
           <a
             href={ext.homepage}
             target="_blank"
             rel="noreferrer"
-            className="shrink-0 rounded-lg p-1.5 text-zinc-500 transition hover:bg-white/10 hover:text-zinc-200"
+            className="shrink-0 rounded-lg p-1.5 text-fg-subtle transition hover:bg-fg/10 hover:text-fg"
             title="Homepage"
           >
             <LuExternalLink className="h-4 w-4" />
@@ -630,9 +630,9 @@ function ExtensionPanel({
           {ext.settings.map((s) => (
             <div key={s.key}>
               <div className="flex items-baseline gap-2">
-                <label className="font-mono text-xs text-zinc-300">{s.key}</label>
+                <label className="font-mono text-xs text-fg-muted">{s.key}</label>
                 {!s.configured && (
-                  <span className="text-[10px] text-zinc-600">not set — using its default</span>
+                  <span className="text-[10px] text-fg-faint">not set — using its default</span>
                 )}
               </div>
               <div className="mt-1 flex gap-2">
@@ -662,7 +662,7 @@ function ExtensionPanel({
         </div>
       </Section>
 
-      <div className="flex items-start gap-2 rounded-xl border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-200/80">
+      <div className="flex items-start gap-2 rounded-xl border border-warn/25 bg-warn/10 px-3 py-2 text-xs text-warn/90">
         <LuTriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <p>
           pi publishes no schema for extension settings, so these keys are recovered by reading the
@@ -697,7 +697,7 @@ function AdvancedPanel({
       hint="pi's own settings file, where installed extensions keep their configuration."
     >
       {!file ? (
-        <p className="text-sm text-zinc-500">Loading…</p>
+        <p className="text-sm text-fg-subtle">Loading…</p>
       ) : (
         <div className="space-y-2">
           <textarea
@@ -732,7 +732,7 @@ function AdvancedPanel({
                 "Save file"
               )}
             </button>
-            <span className="truncate font-mono text-[11px] text-zinc-600">
+            <span className="truncate font-mono text-[11px] text-fg-faint">
               {file.path || settingsPath}
             </span>
           </div>
