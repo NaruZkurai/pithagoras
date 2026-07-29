@@ -2,6 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type PiConfig, type PiModel, type Session } from "../api";
 import { ContextPill } from "./ContextPill";
 
+/**
+ * pi's levels, and the same list the server falls back to.
+ *
+ * Seeded so the effort slider is usable on the first click: it is gated on
+ * having levels, and waiting for the catalogue meant the popover opened empty.
+ * Replaced by whatever pi actually reports once that arrives.
+ */
+const DEFAULT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 const RECENTS_KEY = "pithagoras.recentModels";
 const MAX_RECENTS = 4;
 
@@ -55,7 +64,7 @@ export function ComposerBar({
       model: { id: s.model ?? "", name: s.model ?? "default", provider: s.provider ?? "" },
       thinkingLevel: s.thinking_level ?? "medium",
     },
-    thinking: { levels: [] },
+    thinking: { levels: DEFAULT_LEVELS },
     models: { models: [] },
     stats: null,
   });
@@ -75,7 +84,15 @@ export function ComposerBar({
   const load = () =>
     api
       .config(sessionId)
-      .then(setCfg)
+      .then((next) =>
+        setCfg((prev) => ({
+          ...next,
+          // /config is the cheap route and reports neither, so anything already
+          // known — seeded levels, a catalogue already fetched — is kept.
+          thinking: next.thinking.levels.length ? next.thinking : prev.thinking,
+          models: next.models.models.length ? next.models : prev.models,
+        }))
+      )
       .catch(() => {});
 
   useEffect(() => {
@@ -91,7 +108,10 @@ export function ComposerBar({
   useEffect(() => {
     if (!open || catalogue) return;
     setCatalogue(true);
-    api.models(sessionId).then(setCfg).catch(() => {});
+    api
+      .models(sessionId)
+      .then(setCfg)
+      .catch(() => setCatalogue(false));
   }, [open]);
 
   // Refresh once a run ends so token and cost figures stay current.
