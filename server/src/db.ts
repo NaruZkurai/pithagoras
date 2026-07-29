@@ -22,8 +22,11 @@ export interface SessionRow {
   pinned: number;
   /** pi's own session file, so the exact conversation is reopened on restart. */
   pi_session_file: string | null;
-  /** "task" for the ones you create here; "agent" for one reached via a channel. */
-  kind: "task" | "agent";
+  /**
+   * "task" for the ones you create here, "agent" for one reached through a
+   * channel, "routine" for one a schedule owns.
+   */
+  kind: "task" | "agent" | "routine";
   /**
    * Agent sessions only: the slug of the channel it arrived through.
    *
@@ -74,7 +77,8 @@ export function getDb(): Database.Database {
       pi_session_file TEXT,
       kind TEXT NOT NULL DEFAULT 'task',
       channel_slug TEXT,
-      channel_key TEXT
+      channel_key TEXT,
+      routine_slug TEXT
     );
     -- The index on (channel_id, channel_key) is created in migrate(), not here.
     -- CREATE TABLE IF NOT EXISTS is a no-op against an existing table, so on an
@@ -113,6 +117,28 @@ export function getDb(): Database.Database {
       -- end. Both are per channel: a phone wants less noise than a war room.
       relay_progress INTEGER NOT NULL DEFAULT 1,
       relay_tools INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Scheduled work. Each routine owns one session, so a run can see what the
+    -- last one did rather than starting blind every time.
+    CREATE TABLE IF NOT EXISTS routines (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL,
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      -- Five-field cron, or one of the @shorthands.
+      schedule TEXT NOT NULL,
+      -- What the agent is asked to do, verbatim.
+      instructions TEXT NOT NULL DEFAULT '',
+      -- Start each run in a clean session instead of the routine's own.
+      fresh_session INTEGER NOT NULL DEFAULT 0,
+      last_run TEXT,
+      last_status TEXT,
+      last_output TEXT,
+      last_ms INTEGER,
+      next_run TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -165,6 +191,7 @@ function migrate(d: Database.Database): void {
     d.exec("ALTER TABLE sessions ADD COLUMN channel_slug TEXT");
   }
   if (!names.includes("channel_key")) d.exec("ALTER TABLE sessions ADD COLUMN channel_key TEXT");
+  if (!names.includes("routine_slug")) d.exec("ALTER TABLE sessions ADD COLUMN routine_slug TEXT");
   // The key already carries its channel's slug, so it is unique on its own.
   d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_channel_key
             ON sessions(channel_key) WHERE channel_key IS NOT NULL`);
@@ -187,6 +214,7 @@ function migrate(d: Database.Database): void {
     d.exec("ALTER TABLE channels ADD COLUMN relay_tools INTEGER NOT NULL DEFAULT 1");
   }
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_slug ON channels(slug)");
+  d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_routines_slug ON routines(slug)");
 }
 
 export function createSession(row: {
@@ -194,19 +222,21 @@ export function createSession(row: {
   title: string;
   workspace: string;
   executor: string;
-  kind?: "task" | "agent";
+  kind?: "task" | "agent" | "routine";
   channel_slug?: string | null;
   channel_key?: string | null;
+  routine_slug?: string | null;
 }): void {
   getDb()
     .prepare(
-      `INSERT INTO sessions (id, title, workspace, executor, kind, channel_slug, channel_key)
-       VALUES (@id, @title, @workspace, @executor, @kind, @channel_slug, @channel_key)`
+      `INSERT INTO sessions (id, title, workspace, executor, kind, channel_slug, channel_key, routine_slug)
+       VALUES (@id, @title, @workspace, @executor, @kind, @channel_slug, @channel_key, @routine_slug)`
     )
     .run({
       kind: "task",
       channel_slug: null,
       channel_key: null,
+      routine_slug: null,
       ...row,
     });
 }
@@ -230,6 +260,20 @@ export function findChannelSession(key: string): SessionRow | undefined {
   return getDb().prepare("SELECT * FROM sessions WHERE channel_key = ?").get(key) as
     | SessionRow
     | undefined;
+}
+
+/** The session a routine owns, if it has run before. */
+export function findRoutineSession(slug: string): SessionRow | undefined {
+  return getDb()
+    .prepare("SELECT * FROM sessions WHERE routine_slug = ? AND kind = 'routine' ORDER BY created_at ASC")
+    .get(slug) as SessionRow | undefined;
+}
+
+export function listRoutineSessions(slug?: string): SessionRow[] {
+  const sql = slug
+    ? "SELECT * FROM sessions WHERE kind = 'routine' AND routine_slug = ? ORDER BY updated_at DESC"
+    : "SELECT * FROM sessions WHERE kind = 'routine' ORDER BY updated_at DESC";
+  return (slug ? getDb().prepare(sql).all(slug) : getDb().prepare(sql).all()) as SessionRow[];
 }
 
 /** How many conversations a channel would strand if it were removed. */

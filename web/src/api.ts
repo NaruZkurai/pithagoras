@@ -11,8 +11,27 @@ export interface Session {
   last_error: string | null;
   pinned: boolean;
   live?: boolean;
-  /** "task" for ones you create; "agent" for ones reached through a channel. */
-  kind?: "task" | "agent";
+  /** How the session came to exist. */
+  kind?: "task" | "agent" | "routine";
+}
+
+/** Work the agent does on a schedule. */
+export interface Routine {
+  id: string;
+  slug: string;
+  name: string;
+  enabled: boolean;
+  /** Five-field cron, or an @shorthand. */
+  schedule: string;
+  instructions: string;
+  freshSession: boolean;
+  lastRun: string | null;
+  lastStatus: string | null;
+  lastOutput: string | null;
+  lastMs: number | null;
+  nextRun: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** The agent's home directory and the files that define it. */
@@ -76,6 +95,30 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ id, ...payload }),
     }),
+
+  routines: () => json<{ routines: Routine[] }>("/api/routines"),
+  createRoutine: (input: { name: string; schedule: string; instructions?: string }) =>
+    json<Routine>("/api/routines", { method: "POST", body: JSON.stringify(input) }),
+  updateRoutine: (
+    id: string,
+    patch: {
+      name?: string;
+      slug?: string;
+      schedule?: string;
+      instructions?: string;
+      enabled?: boolean;
+      freshSession?: boolean;
+    }
+  ) => json<Routine>(`/api/routines/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteRoutine: (id: string) => json<{ ok: true }>(`/api/routines/${id}`, { method: "DELETE" }),
+  runRoutine: (id: string) => json<Routine>(`/api/routines/${id}/run`, { method: "POST" }),
+  previewSchedule: (schedule: string) =>
+    json<{ expression: string; runs: string[] }>("/api/routines/preview", {
+      method: "POST",
+      body: JSON.stringify({ schedule }),
+    }),
+  routineSessions: (id: string) =>
+    json<{ sessions: Session[] }>(`/api/routines/${id}/sessions`),
 
   agentSetup: () => json<AgentSetup>("/api/agent/setup"),
   runAgentWizard: (input: {

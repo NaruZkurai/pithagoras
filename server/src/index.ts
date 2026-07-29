@@ -25,6 +25,8 @@ import { authEnabled, checkPassword, isAuthed, issueCookie, requireAuth } from "
 import { packagesRouter } from "./api/packages.js";
 import { extensionsRouter } from "./api/extensions.js";
 import { channelsRouter } from "./api/channels.js";
+import { routinesRouter } from "./api/routines.js";
+import { routineSupervisor } from "./routines/supervisor.js";
 import { channelSupervisor } from "./channels/supervisor.js";
 import { piSettingsPath } from "./pi-settings.js";
 import { getDb } from "./db.js";
@@ -398,6 +400,7 @@ app.get("/api/sessions/:id/commands", async (req, res) => {
 app.use("/api", packagesRouter());
 app.use("/api", extensionsRouter());
 app.use("/api", channelsRouter());
+app.use("/api", routinesRouter());
 
 // --- event stream ---
 
@@ -471,6 +474,10 @@ const server = app.listen(PORT, "0.0.0.0", () => {
 
   // Enabled channels come up with the server, so a restart does not silently
   // leave the agent unreachable.
+  // Schedules resume with the server; a routine due while it was down does not
+  // fire retroactively, it simply waits for its next slot.
+  routineSupervisor.start();
+
   channelSupervisor
     .sync()
     .then(() => console.log(`  channels: ${channelSupervisor.summary()}`))
@@ -479,6 +486,7 @@ const server = app.listen(PORT, "0.0.0.0", () => {
 
 async function shutdown(signal: string) {
   console.log(`${signal} received — stopping running sessions`);
+  routineSupervisor.stop();
   await channelSupervisor.shutdown();
   await sessions.shutdown();
   server.close(() => process.exit(0));
