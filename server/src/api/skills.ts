@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { piAgentDir } from "../pi-settings.js";
 import { isValidSlug, slugify } from "../slug.js";
+import { importFromGit, previewFromGit, readSource, type SkillSource } from "../skills/github.js";
 
 /**
  * Skills are pi's, not the portal's: it discovers them, decides which are
@@ -71,6 +72,7 @@ const toApi = (s: LoadedSkill) => ({
   // Only invocable as /skill:name, never chosen by the model on its own.
   manualOnly: Boolean(s.disableModelInvocation),
   broken: false,
+  source: isEditable(s.filePath) ? readSource(skillDir(s.filePath)) : null,
   content: isEditable(s.filePath) ? readBody(s.filePath) : "",
 });
 
@@ -122,6 +124,7 @@ function brokenSkills(loaded: LoadedSkill[]) {
       editable: true,
       manualOnly: false,
       broken: true,
+      source: readSource(path.join(skillsRoot(), name)) as SkillSource | null,
       content: readBody(file),
     });
   }
@@ -185,6 +188,56 @@ export function skillsRouter(): Router {
       res.json({ ok: true, name: slug, path: path.join(dir, "SKILL.md") });
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  /** What is in a repository, and which of it you already have. */
+  router.post("/skills/preview-import", async (req, res) => {
+    const spec = req.body?.spec;
+    if (typeof spec !== "string" || !spec.trim()) {
+      return res.status(400).json({ error: "spec required" });
+    }
+    try {
+      res.json({ spec: spec.trim(), found: await previewFromGit(spec.trim(), skillsRoot()) });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  });
+
+  /**
+   * Import from a git repository.
+   *
+   * A repository can hold several skills, so this takes whatever it finds
+   * rather than making you point at each one.
+   */
+  router.post("/skills/import", async (req, res) => {
+    const spec = req.body?.spec;
+    if (typeof spec !== "string" || !spec.trim()) {
+      return res.status(400).json({ error: "spec required" });
+    }
+    try {
+      const result = await importFromGit(spec.trim(), skillsRoot(), {
+        overwrite: Boolean(req.body?.overwrite),
+        only: Array.isArray(req.body?.only) ? req.body.only.map(String) : undefined,
+      });
+      res.json({ ok: true, ...result });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  });
+
+  /** Re-import an imported skill from where it came from. */
+  router.post("/skills/:name/update", async (req, res) => {
+    const dir = path.join(skillsRoot(), req.params.name);
+    const source = readSource(dir);
+    if (!source) {
+      return res.status(400).json({ error: "That skill was not imported, so there is nothing to update from" });
+    }
+    try {
+      const result = await importFromGit(source.spec, skillsRoot(), { overwrite: true });
+      res.json({ ok: true, ...result });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
     }
   });
 

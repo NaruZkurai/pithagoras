@@ -27,7 +27,26 @@ export interface Skill {
   manualOnly: boolean;
   /** On disk but unparseable — pi is not loading it. */
   broken: boolean;
+  /** Set when it was imported rather than written here. */
+  source: SkillSource | null;
   content: string;
+}
+
+/** Where an imported skill came from, so it can be updated later. */
+export interface SkillSource {
+  spec: string;
+  url: string;
+  ref?: string;
+  subpath?: string;
+  importedAt: string;
+}
+
+/** A skill sitting in a repository, before you decide to take it. */
+export interface FoundSkill {
+  name: string;
+  description: string;
+  installed: boolean;
+  from: string;
 }
 
 export interface SkillDiagnostic {
@@ -119,6 +138,21 @@ export const api = {
 
   skills: () =>
     json<{ root: string; skills: Skill[]; diagnostics: SkillDiagnostic[] }>("/api/skills"),
+  previewSkillImport: (spec: string) =>
+    json<{ spec: string; found: FoundSkill[] }>("/api/skills/preview-import", {
+      method: "POST",
+      body: JSON.stringify({ spec }),
+    }),
+  importSkills: (spec: string, only: string[], overwrite: boolean) =>
+    json<{ ok: true; imported: string[]; skipped: { name: string; reason: string }[] }>(
+      "/api/skills/import",
+      { method: "POST", body: JSON.stringify({ spec, only, overwrite }) }
+    ),
+  updateSkill: (name: string) =>
+    json<{ ok: true; imported: string[] }>(`/api/skills/${encodeURIComponent(name)}/update`, {
+      method: "POST",
+    }),
+
   createSkill: (name: string, description: string, body?: string) =>
     json<{ ok: true; name: string; path: string }>("/api/skills", {
       method: "POST",

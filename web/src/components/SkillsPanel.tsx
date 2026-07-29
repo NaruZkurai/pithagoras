@@ -7,10 +7,13 @@ import {
   LuLock,
   LuPlus,
   LuRefreshCw,
+  LuDownload,
+  LuGithub,
   LuTrash2,
+  LuTriangleAlert,
   LuWrench,
 } from "react-icons/lu";
-import { api, type Skill, type SkillDiagnostic } from "../api";
+import { api, type FoundSkill, type Skill, type SkillDiagnostic } from "../api";
 
 const inputCls =
   "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none transition placeholder:text-zinc-600 focus:border-cyan-500/60";
@@ -34,6 +37,7 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
   const [loading, setLoading] = useState(true);
   const [openName, setOpenName] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const load = async () => {
     try {
@@ -93,10 +97,38 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
           <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
             Yours{mine.length ? ` (${mine.length})` : ""}
           </h3>
-          <button onClick={() => setAdding(!adding)} className="text-[11px] text-cyan-400 hover:text-cyan-300">
-            {adding ? "Cancel" : "+ New skill"}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                setImporting(!importing);
+                setAdding(false);
+              }}
+              className="text-[11px] text-cyan-400 hover:text-cyan-300"
+            >
+              {importing ? "Cancel" : "Import from GitHub"}
+            </button>
+            <button
+              onClick={() => {
+                setAdding(!adding);
+                setImporting(false);
+              }}
+              className="text-[11px] text-cyan-400 hover:text-cyan-300"
+            >
+              {adding ? "Cancel" : "+ New"}
+            </button>
+          </div>
         </div>
+
+        {importing && (
+          <ImportSkills
+            onCancel={() => setImporting(false)}
+            onError={onError}
+            onDone={async () => {
+              setImporting(false);
+              await load();
+            }}
+          />
+        )}
 
         {adding && (
           <NewSkill
@@ -175,6 +207,12 @@ function SkillRow({ skill: s, onOpen }: { skill: Skill; onOpen: () => void }) {
               s.description
             )}
           </p>
+          {s.source && (
+            <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-zinc-600">
+              <LuGithub className="h-2.5 w-2.5 shrink-0" />
+              {s.source.spec}
+            </p>
+          )}
         </div>
         <LuChevronRight className="h-4 w-4 shrink-0 text-zinc-600" />
       </button>
@@ -317,6 +355,23 @@ function SkillDetail({
             skill, and <code>description</code> is what the model matches against.
           </p>
 
+          {s.source && (
+            <div className="mt-2 flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-[11px] text-zinc-500">
+              <LuGithub className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
+              <span className="min-w-0 flex-1 truncate">
+                Imported from <span className="font-mono">{s.source.spec}</span>
+              </span>
+              <button
+                onClick={() => act(() => api.updateSkill(s.name))}
+                disabled={busy}
+                className="shrink-0 text-cyan-400 hover:text-cyan-300 disabled:opacity-40"
+                title="Re-import, replacing local edits"
+              >
+                Update
+              </button>
+            </div>
+          )}
+
           <div className="mt-3 flex items-center gap-2">
             <button
               onClick={() =>
@@ -362,5 +417,174 @@ function SkillDetail({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Taking skills out of a repository.
+ *
+ * The repository is inspected before anything is written, so you can see what
+ * is in there and what you already have — a repo of twenty skills should not be
+ * an all-or-nothing decision, and neither should it quietly replace one you
+ * have edited.
+ */
+function ImportSkills({
+  onCancel,
+  onDone,
+  onError,
+}: {
+  onCancel: () => void;
+  onDone: () => Promise<void>;
+  onError: (e: string) => void;
+}) {
+  const [spec, setSpec] = useState("");
+  const [found, setFound] = useState<FoundSkill[] | null>(null);
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState<null | "look" | "import">(null);
+
+  const look = async () => {
+    setBusy("look");
+    setFound(null);
+    try {
+      const r = await api.previewSkillImport(spec.trim());
+      setFound(r.found);
+      // Everything you do not already have, which is the common intent.
+      setChosen(new Set(r.found.filter((f) => !f.installed).map((f) => f.name)));
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doImport = async () => {
+    setBusy("import");
+    try {
+      // Overwrite is implied: anything already installed is only in the list
+      // because it was ticked deliberately.
+      await api.importSkills(spec.trim(), [...chosen], true);
+      await onDone();
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const toggle = (name: string) =>
+    setChosen((prev) => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+
+  return (
+    <div className="mt-2 space-y-3 rounded-xl border border-white/10 bg-black/20 p-3">
+      <div className="flex gap-2">
+        <input
+          autoFocus
+          value={spec}
+          onChange={(e) => setSpec(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && spec.trim() && look()}
+          placeholder="anthropics/skills"
+          className={`${inputCls} font-mono text-xs`}
+        />
+        <button disabled={!spec.trim() || busy !== null} onClick={look} className={btnCls}>
+          {busy === "look" ? <LuRefreshCw className="h-4 w-4 animate-spin" /> : "Look"}
+        </button>
+      </div>
+      <p className="text-[11px] text-zinc-600">
+        <code>user/repo</code>, <code>user/repo#branch</code>, a subdirectory like{" "}
+        <code>user/repo/skills/pdf</code>, or a GitHub URL pasted from the address bar.
+      </p>
+
+      {found && (
+        <>
+          <div className="flex items-baseline justify-between">
+            <p className="text-xs text-zinc-400">
+              {found.length} skill{found.length === 1 ? "" : "s"} found
+              {found.some((f) => f.installed) &&
+                ` · ${found.filter((f) => f.installed).length} already installed`}
+            </p>
+            <button
+              onClick={() =>
+                setChosen(
+                  chosen.size === found.length ? new Set() : new Set(found.map((f) => f.name))
+                )
+              }
+              className="text-[11px] text-zinc-500 hover:text-zinc-300"
+            >
+              {chosen.size === found.length ? "none" : "all"}
+            </button>
+          </div>
+
+          <ul className="max-h-64 space-y-1 overflow-y-auto">
+            {found.map((f) => (
+              <li key={f.name}>
+                <button
+                  onClick={() => toggle(f.name)}
+                  className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition ${
+                    chosen.has(f.name)
+                      ? "border-cyan-400/30 bg-cyan-500/10"
+                      : "border-white/10 bg-black/20 hover:bg-white/5"
+                  }`}
+                >
+                  <span
+                    className={`mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded border ${
+                      chosen.has(f.name)
+                        ? "border-cyan-400/60 bg-cyan-500/30 text-cyan-200"
+                        : "border-white/20"
+                    }`}
+                  >
+                    {chosen.has(f.name) && <LuCheck className="h-2.5 w-2.5" />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs text-zinc-200">
+                      {f.name}
+                      {f.installed && (
+                        <span className="ml-1.5 rounded bg-amber-500/15 px-1 py-0.5 text-[10px] text-amber-300/90">
+                          installed
+                        </span>
+                      )}
+                    </p>
+                    {f.description && (
+                      <p className="line-clamp-2 text-[11px] text-zinc-500">{f.description}</p>
+                    )}
+                    <p className="truncate font-mono text-[10px] text-zinc-600">{f.from}</p>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+
+          {[...chosen].some((n) => found.find((f) => f.name === n)?.installed) && (
+            <p className="flex items-start gap-1.5 text-[11px] text-amber-300/80">
+              <LuTriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
+              A ticked skill you already have will be replaced, including any edits you made to it.
+            </p>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button disabled={!chosen.size || busy !== null} onClick={doImport} className={primaryCls}>
+              {busy === "import" ? (
+                <LuRefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <LuDownload className="h-4 w-4" />
+              )}
+              Import {chosen.size || ""}
+            </button>
+            <button onClick={onCancel} className={btnCls}>
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+
+      <p className="flex items-start gap-1.5 border-t border-white/10 pt-2 text-[11px] text-zinc-600">
+        <LuTriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
+        Nothing is executed by an import — a skill is markdown. But it is markdown the agent will
+        follow, so take them from somewhere you would take instructions from.
+      </p>
+    </div>
   );
 }
