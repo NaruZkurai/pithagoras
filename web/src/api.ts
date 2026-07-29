@@ -63,8 +63,13 @@ export interface Routine {
   slug: string;
   name: string;
   enabled: boolean;
-  /** Five-field cron, or an @shorthand. */
+  /** Five-field cron, or an @shorthand. Empty for a one-off. */
   schedule: string;
+  /** ISO instant for a one-off, instead of a schedule. */
+  runAt: string | null;
+  mode: "once" | "repeats";
+  /** A one-off that has already happened. */
+  done: boolean;
   instructions: string;
   freshSession: boolean;
   lastRun: string | null;
@@ -174,7 +179,12 @@ export const api = {
     json<{ ok: true }>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),
 
   routines: () => json<{ routines: Routine[] }>("/api/routines"),
-  createRoutine: (input: { name: string; schedule: string; instructions?: string }) =>
+  createRoutine: (input: {
+    name: string;
+    schedule?: string;
+    runAt?: string;
+    instructions?: string;
+  }) =>
     json<Routine>("/api/routines", { method: "POST", body: JSON.stringify(input) }),
   updateRoutine: (
     id: string,
@@ -182,6 +192,7 @@ export const api = {
       name?: string;
       slug?: string;
       schedule?: string;
+      runAt?: string;
       instructions?: string;
       enabled?: boolean;
       freshSession?: boolean;

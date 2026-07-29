@@ -45,6 +45,13 @@ const when = (iso: string | null) => {
   return `${Math.round(mins / 1440)}d ago`;
 };
 
+/** datetime-local wants "YYYY-MM-DDTHH:mm" in local time, not an ISO string. */
+const toLocalInput = (iso: string | null) => {
+  const d = iso ? new Date(iso) : new Date(Date.now() + 60 * 60_000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
 const until = (iso: string | null) => {
   if (!iso) return "not scheduled";
   const mins = Math.round((new Date(iso).getTime() - Date.now()) / 60000);
@@ -54,6 +61,67 @@ const until = (iso: string | null) => {
   if (mins < 1440) return `in ${Math.round(mins / 60)}h`;
   return `in ${Math.round(mins / 1440)}d`;
 };
+
+/**
+ * Picking when. A routine either repeats or happens once, never both.
+ *
+ * The one-off input is the browser's own datetime picker, so the time you type
+ * is your local time — unlike cron, which runs on the server's clock.
+ */
+function Timing({
+  mode,
+  schedule,
+  runAt,
+  onMode,
+  onSchedule,
+  onRunAt,
+}: {
+  mode: "repeats" | "once";
+  schedule: string;
+  runAt: string;
+  onMode: (m: "repeats" | "once") => void;
+  onSchedule: (v: string) => void;
+  onRunAt: (v: string) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex gap-1">
+        {(["repeats", "once"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => onMode(m)}
+            className={`rounded-lg px-2.5 py-1 text-xs transition ${
+              mode === m
+                ? "bg-cyan-500/15 text-cyan-200 ring-1 ring-inset ring-cyan-400/30"
+                : "bg-white/5 text-zinc-400 hover:bg-white/10"
+            }`}
+          >
+            {m === "repeats" ? "Repeats" : "Once"}
+          </button>
+        ))}
+      </div>
+
+      {mode === "repeats" ? (
+        <SchedulePicker value={schedule} onChange={onSchedule} />
+      ) : (
+        <div>
+          <span className="text-xs text-zinc-400">Run at</span>
+          <input
+            type="datetime-local"
+            value={runAt}
+            onChange={(e) => onRunAt(e.target.value)}
+            className={`${inputCls} mt-1 text-xs [color-scheme:dark]`}
+          />
+          <p className="mt-1 text-[11px] text-zinc-600">
+            Your local time. It runs once and then switches itself off, keeping the result. A time
+            that passed while the portal was down still runs when it comes back.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Work that happens on a schedule rather than because somebody asked.
@@ -181,8 +249,12 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm text-zinc-200">{r.name}</p>
                     <p className="truncate text-[11px] text-zinc-600">
-                      <span className="font-mono">{r.schedule}</span>
-                      {r.enabled ? ` · ${until(r.nextRun)}` : " · disabled"}
+                      <span className="font-mono">
+                        {r.mode === "once"
+                          ? `once · ${r.runAt ? new Date(r.runAt).toLocaleString() : "no time set"}`
+                          : r.schedule}
+                      </span>
+                      {r.done ? " · done" : r.enabled ? ` · ${until(r.nextRun)}` : " · disabled"}
                       {r.lastStatus && (
                         <>
                           {" · "}
@@ -201,9 +273,9 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
         )}
 
         <p className="mt-6 text-[11px] leading-relaxed text-zinc-600">
-          Schedules use the server's clock and five-field cron, or a shorthand like{" "}
-          <code>@daily</code>. A routine that is still running when its next slot comes round is
-          skipped rather than stacked.
+          Repeating schedules use the server's clock and five-field cron, or a shorthand like{" "}
+          <code>@daily</code>; a one-off uses the time you pick in your own timezone. A routine
+          still running when its next slot comes round is skipped rather than stacked.
         </p>
       </div>
     </div>
@@ -284,14 +356,22 @@ function NewRoutine({
   onError: (e: string) => void;
 }) {
   const [name, setName] = useState("");
+  const [mode, setMode] = useState<"repeats" | "once">("repeats");
   const [schedule, setSchedule] = useState("0 9 * * *");
+  const [runAt, setRunAt] = useState(toLocalInput(null));
   const [instructions, setInstructions] = useState("");
   const [busy, setBusy] = useState(false);
 
   const create = async () => {
     setBusy(true);
     try {
-      await onCreated(await api.createRoutine({ name, schedule, instructions }));
+      await onCreated(
+        await api.createRoutine(
+          mode === "repeats"
+            ? { name, schedule, instructions }
+            : { name, runAt: new Date(runAt).toISOString(), instructions }
+        )
+      );
     } catch (e) {
       onError((e as Error).message);
     } finally {
@@ -312,7 +392,14 @@ function NewRoutine({
         />
       </label>
 
-      <SchedulePicker value={schedule} onChange={setSchedule} />
+      <Timing
+        mode={mode}
+        schedule={schedule}
+        runAt={runAt}
+        onMode={setMode}
+        onSchedule={setSchedule}
+        onRunAt={setRunAt}
+      />
 
       <label className="block">
         <span className="text-xs text-zinc-400">Instructions</span>
@@ -352,7 +439,9 @@ function RoutineDetail({
   onOpenSession: (id: string) => void;
 }) {
   const [name, setName] = useState(r.name);
-  const [schedule, setSchedule] = useState(r.schedule);
+  const [mode, setMode] = useState<"repeats" | "once">(r.mode);
+  const [schedule, setSchedule] = useState(r.schedule || "0 9 * * *");
+  const [runAt, setRunAt] = useState(toLocalInput(r.runAt));
   const [instructions, setInstructions] = useState(r.instructions);
   const [fresh, setFresh] = useState(r.freshSession);
   const [busy, setBusy] = useState<null | "save" | "run">(null);
@@ -361,7 +450,9 @@ function RoutineDetail({
 
   useEffect(() => {
     setName(r.name);
-    setSchedule(r.schedule);
+    setMode(r.mode);
+    setSchedule(r.schedule || "0 9 * * *");
+    setRunAt(toLocalInput(r.runAt));
     setInstructions(r.instructions);
     setFresh(r.freshSession);
   }, [r.id, r.updatedAt]);
@@ -375,7 +466,8 @@ function RoutineDetail({
 
   const dirty =
     name !== r.name ||
-    schedule !== r.schedule ||
+    mode !== r.mode ||
+    (mode === "repeats" ? schedule !== r.schedule : toLocalInput(r.runAt) !== runAt) ||
     instructions !== r.instructions ||
     fresh !== r.freshSession;
 
@@ -415,7 +507,8 @@ function RoutineDetail({
             className="w-full bg-transparent text-sm font-medium text-zinc-100 outline-none"
           />
           <p className="truncate text-xs text-zinc-500">
-            {r.enabled ? until(r.nextRun) : "disabled"} · <span className="font-mono">{r.slug}</span>
+            {r.done ? "already ran" : r.enabled ? until(r.nextRun) : "disabled"} ·{" "}
+            <span className="font-mono">{r.slug}</span>
           </p>
         </div>
         <button
@@ -435,7 +528,14 @@ function RoutineDetail({
       </div>
 
       <section className="mb-6 space-y-3">
-        <SchedulePicker value={schedule} onChange={setSchedule} />
+        <Timing
+          mode={mode}
+          schedule={schedule}
+          runAt={runAt}
+          onMode={setMode}
+          onSchedule={setSchedule}
+          onRunAt={setRunAt}
+        />
 
         <label className="block">
           <span className="text-xs text-zinc-400">Instructions</span>
@@ -525,7 +625,9 @@ function RoutineDetail({
             act("save", async () => {
               await api.updateRoutine(r.id, {
                 name,
-                schedule,
+                ...(mode === "repeats"
+                  ? { schedule, runAt: "" }
+                  : { schedule: "", runAt: new Date(runAt).toISOString() }),
                 instructions,
                 freshSession: fresh,
               });

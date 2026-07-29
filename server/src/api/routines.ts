@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import { getDb, listRoutineSessions } from "../db.js";
 import { isValidSlug, slugify } from "../slug.js";
 import { isValidCron, nextRun, parseCron } from "../routines/cron.js";
-import { routineSupervisor, type RoutineRow } from "../routines/supervisor.js";
+import { isOneOff, routineSupervisor, whenNext, type RoutineRow } from "../routines/supervisor.js";
 
 /**
  * Scheduled work: a standing instruction, a cron expression, and a record of
@@ -16,6 +16,11 @@ const toApi = (row: RoutineRow) => ({
   name: row.name,
   enabled: Boolean(row.enabled),
   schedule: row.schedule,
+  runAt: row.run_at,
+  /** "once" or "repeats" — the two are mutually exclusive. */
+  mode: isOneOff(row) ? ("once" as const) : ("repeats" as const),
+  /** A one-off that has already run. Kept so its result stays readable. */
+  done: isOneOff(row) && Boolean(row.last_run),
   instructions: row.instructions,
   freshSession: Boolean(row.fresh_session),
   lastRun: row.last_run,
@@ -26,6 +31,29 @@ const toApi = (row: RoutineRow) => ({
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
+
+/**
+ * A routine either repeats on a schedule or happens once at a moment. Both or
+ * neither is not a thing, and saying so beats guessing which was meant.
+ */
+function readTiming(input: { schedule?: unknown; runAt?: unknown }):
+  | { schedule: string; runAt: string | null }
+  | { error: string } {
+  const schedule = typeof input.schedule === "string" ? input.schedule.trim() : "";
+  const runAt = typeof input.runAt === "string" ? input.runAt.trim() : "";
+
+  if (schedule && runAt) return { error: "Give a schedule or a time to run once, not both" };
+  if (!schedule && !runAt) return { error: "Needs a schedule, or a time to run once" };
+
+  if (schedule) {
+    const bad = isValidCron(schedule);
+    return bad ? { error: bad } : { schedule, runAt: null };
+  }
+
+  const at = new Date(runAt);
+  if (Number.isNaN(at.getTime())) return { error: `"${runAt}" is not a time I can read` };
+  return { schedule: "", runAt: at.toISOString() };
+}
 
 /** Slugs own the sessions, so two routines must never share one. */
 function freeSlug(desired: string, exceptId?: string): string {
@@ -54,31 +82,30 @@ export function routinesRouter(): Router {
   });
 
   router.post("/routines", (req, res) => {
-    const { name, schedule, instructions, freshSession } = req.body ?? {};
+    const { name, schedule, runAt, instructions, freshSession } = req.body ?? {};
     if (typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ error: "name required" });
     }
-    if (typeof schedule !== "string" || !schedule.trim()) {
-      return res.status(400).json({ error: "schedule required" });
-    }
-    const bad = isValidCron(schedule);
-    if (bad) return res.status(400).json({ error: bad });
+
+    const timing = readTiming({ schedule, runAt });
+    if ("error" in timing) return res.status(400).json({ error: timing.error });
 
     const id = nanoid(10);
     const slug = freeSlug(typeof req.body?.slug === "string" && req.body.slug ? req.body.slug : name);
     getDb()
       .prepare(
-        `INSERT INTO routines (id, slug, name, schedule, instructions, fresh_session, next_run)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO routines (id, slug, name, schedule, run_at, instructions, fresh_session, next_run)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
         slug,
         name.trim(),
-        schedule.trim(),
+        timing.schedule,
+        timing.runAt,
         typeof instructions === "string" ? instructions.trim() : "",
         freshSession ? 1 : 0,
-        nextRun(parseCron(schedule))?.toISOString() ?? null
+        timing.schedule ? (nextRun(parseCron(timing.schedule))?.toISOString() ?? null) : timing.runAt
       );
     res.json(toApi(rowById(id)!));
   });
@@ -87,7 +114,7 @@ export function routinesRouter(): Router {
     const row = rowById(req.params.id);
     if (!row) return res.status(404).json({ error: "Not found" });
 
-    const { name, slug, schedule, instructions, enabled, freshSession } = req.body ?? {};
+    const { name, slug, schedule, runAt, instructions, enabled, freshSession } = req.body ?? {};
     const sets: string[] = [];
     const values: unknown[] = [];
 
@@ -105,11 +132,17 @@ export function routinesRouter(): Router {
       sets.push("name = ?");
       values.push(name.trim());
     }
-    if (typeof schedule === "string" && schedule.trim()) {
-      const bad = isValidCron(schedule);
-      if (bad) return res.status(400).json({ error: bad });
-      sets.push("schedule = ?");
-      values.push(schedule.trim());
+    // Setting one clears the other: a routine either repeats or happens once.
+    if (typeof schedule === "string" || typeof runAt === "string") {
+      const timing = readTiming({ schedule, runAt });
+      if ("error" in timing) return res.status(400).json({ error: timing.error });
+      sets.push("schedule = ?", "run_at = ?");
+      values.push(timing.schedule, timing.runAt);
+      // Re-arming a one-off that already ran: forget the old outcome, or it
+      // would look done the moment it was saved.
+      if (timing.runAt && timing.runAt !== row.run_at) {
+        sets.push("last_run = NULL", "last_status = NULL", "last_output = NULL");
+      }
     }
     if (typeof instructions === "string") {
       sets.push("instructions = ?");

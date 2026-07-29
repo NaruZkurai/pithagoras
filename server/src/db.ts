@@ -128,8 +128,10 @@ export function getDb(): Database.Database {
       slug TEXT NOT NULL,
       name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
-      -- Five-field cron, or one of the @shorthands.
-      schedule TEXT NOT NULL,
+      -- Five-field cron, or one of the @shorthands. Empty for a one-off.
+      schedule TEXT NOT NULL DEFAULT '',
+      -- Set instead of a schedule: an ISO instant to run at, once.
+      run_at TEXT,
       -- What the agent is asked to do, verbatim.
       instructions TEXT NOT NULL DEFAULT '',
       -- Start each run in a clean session instead of the routine's own.
@@ -214,6 +216,12 @@ function migrate(d: Database.Database): void {
     d.exec("ALTER TABLE channels ADD COLUMN relay_tools INTEGER NOT NULL DEFAULT 1");
   }
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_slug ON channels(slug)");
+  const routineCols = (d.prepare("PRAGMA table_info(routines)").all() as { name: string }[]).map(
+    (c) => c.name
+  );
+  if (routineCols.length && !routineCols.includes("run_at")) {
+    d.exec("ALTER TABLE routines ADD COLUMN run_at TEXT");
+  }
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_routines_slug ON routines(slug)");
 }
 

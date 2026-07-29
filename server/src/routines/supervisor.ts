@@ -19,6 +19,8 @@ export interface RoutineRow {
   name: string;
   enabled: number;
   schedule: string;
+  /** An ISO instant, for a routine that runs once instead of repeating. */
+  run_at: string | null;
   instructions: string;
   fresh_session: number;
   last_run: string | null;
@@ -62,16 +64,7 @@ class RoutineSupervisor {
   /** Recompute when each routine fires next. Cheap, and keeps the UI honest. */
   refreshSchedules(): void {
     for (const row of this.rows()) {
-      let next: string | null = null;
-      if (row.enabled) {
-        try {
-          next = nextRun(parseCron(row.schedule))?.toISOString() ?? null;
-        } catch {
-          // An unparseable schedule is reported by the API on save; here it
-          // simply never fires.
-        }
-      }
-      getDb().prepare("UPDATE routines SET next_run = ? WHERE id = ?").run(next, row.id);
+      getDb().prepare("UPDATE routines SET next_run = ? WHERE id = ?").run(whenNext(row), row.id);
     }
   }
 
@@ -83,6 +76,16 @@ class RoutineSupervisor {
     const now = new Date();
     for (const row of this.rows()) {
       if (!row.enabled || this.running.has(row.slug)) continue;
+
+      if (isOneOff(row)) {
+        // Deliberately catches up: a one-off whose moment passed while the
+        // server was down should still happen, unlike a recurring one which
+        // simply waits for its next slot.
+        if (row.last_run || new Date(row.run_at!) > now) continue;
+        void this.run(row, "schedule");
+        continue;
+      }
+
       let cron;
       try {
         cron = parseCron(row.schedule);
@@ -122,6 +125,11 @@ class RoutineSupervisor {
       this.finish(row.id, "error", (e as Error).message, Date.now() - started);
     } finally {
       this.running.delete(row.slug);
+      // A one-off has nothing left to do. Disabled rather than deleted, so the
+      // result stays readable and it can be re-armed by giving it a new time.
+      if (isOneOff(row)) {
+        getDb().prepare("UPDATE routines SET enabled = 0 WHERE id = ?").run(row.id);
+      }
       this.refreshSchedules();
     }
 
@@ -170,7 +178,12 @@ class RoutineSupervisor {
  * is waiting, and asks a follow-up question nobody will ever read.
  */
 function prompt(row: RoutineRow, trigger: "schedule" | "manual"): string {
-  const how = trigger === "manual" ? "run by hand" : `on its schedule (${row.schedule})`;
+  const how =
+    trigger === "manual"
+      ? "run by hand"
+      : isOneOff(row)
+        ? "at the time it was scheduled for"
+        : `on its schedule (${row.schedule})`;
   return [
     `<routine name="${row.name}" trigger="${how}">`,
     "This is a scheduled task. Nobody is waiting on a reply — do the work, then",
@@ -180,6 +193,23 @@ function prompt(row: RoutineRow, trigger: "schedule" | "manual"): string {
     "",
     row.instructions.trim(),
   ].join("\n");
+}
+
+/** A routine with a moment rather than a pattern. */
+export const isOneOff = (row: { run_at: string | null; schedule: string }) =>
+  Boolean(row.run_at) && !row.schedule.trim();
+
+/** When it fires next, or null if it never will again. */
+export function whenNext(row: RoutineRow): string | null {
+  if (!row.enabled) return null;
+  if (isOneOff(row)) return row.last_run ? null : row.run_at;
+  try {
+    return nextRun(parseCron(row.schedule))?.toISOString() ?? null;
+  } catch {
+    // An unparseable schedule is reported by the API on save; here it simply
+    // never fires.
+    return null;
+  }
 }
 
 export const routineSupervisor = new RoutineSupervisor();
