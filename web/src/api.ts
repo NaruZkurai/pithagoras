@@ -25,6 +25,8 @@ export interface Skill {
   editable: boolean;
   /** Invocable as /skill:name, never chosen by the model itself. */
   manualOnly: boolean;
+  /** On disk but unparseable — pi is not loading it. */
+  broken: boolean;
   content: string;
 }
 

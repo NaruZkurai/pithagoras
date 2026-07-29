@@ -1,5 +1,5 @@
 import express, { type Router } from "express";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { piAgentDir } from "../pi-settings.js";
@@ -70,27 +70,82 @@ const toApi = (s: LoadedSkill) => ({
   editable: isEditable(s.filePath),
   // Only invocable as /skill:name, never chosen by the model on its own.
   manualOnly: Boolean(s.disableModelInvocation),
+  broken: false,
   content: isEditable(s.filePath) ? readBody(s.filePath) : "",
 });
 
+/**
+ * Quoted, always.
+ *
+ * A description is a sentence, and sentences contain colons — "Use when cutting
+ * a release: bump, tag, push" is not valid YAML unquoted, and pi drops the
+ * whole skill with a parse warning. JSON string syntax is a valid YAML
+ * double-quoted scalar and handles the escaping.
+ */
+const yaml = (value: string) => JSON.stringify(value);
+
 const template = (name: string, description: string, body: string) =>
   `---
-name: ${name}
-description: ${description}
+name: ${yaml(name)}
+description: ${yaml(description)}
 ---
 
 ${body.trim() || `# ${name}\n\nWhat to do, step by step. The description above is what the model reads\nwhen deciding whether this applies, so make it say when to use it.`}
 `;
 
+/**
+ * Skills on disk that pi could not load.
+ *
+ * They have to be listed: an unparseable skill is invisible to the loader, so
+ * without this it could be neither repaired nor deleted from here — it would
+ * just sit there producing a warning forever.
+ */
+function brokenSkills(loaded: LoadedSkill[]) {
+  const known = new Set(loaded.map((s) => path.resolve(s.filePath)));
+  const out: ReturnType<typeof toApi>[] = [];
+
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(skillsRoot());
+  } catch {
+    return out;
+  }
+
+  for (const name of entries) {
+    const file = path.join(skillsRoot(), name, "SKILL.md");
+    if (!existsSync(file) || known.has(path.resolve(file))) continue;
+    out.push({
+      name,
+      description: "",
+      path: file,
+      scope: "agent",
+      editable: true,
+      manualOnly: false,
+      broken: true,
+      content: readBody(file),
+    });
+  }
+  return out;
+}
+
 export function skillsRouter(): Router {
   const router = express.Router();
+
+  /** By loaded name, or by directory for one pi could not parse. */
+  const locate = async (name: string) => {
+    const { skills } = await loadFromPi();
+    const loaded = skills.find((s) => s.name === name);
+    if (loaded) return { file: loaded.filePath, editable: isEditable(loaded.filePath) };
+    const file = path.join(skillsRoot(), name, "SKILL.md");
+    return existsSync(file) ? { file, editable: true } : null;
+  };
 
   router.get("/skills", async (_req, res) => {
     try {
       const { skills, diagnostics } = await loadFromPi();
       res.json({
         root: skillsRoot(),
-        skills: skills.map(toApi),
+        skills: [...skills.map(toApi), ...brokenSkills(skills)],
         // Name collisions and unreadable files — pi reports them, so should we.
         diagnostics: (diagnostics ?? []).map((d: any) => ({
           type: d.type,
@@ -137,15 +192,14 @@ export function skillsRouter(): Router {
     const content = req.body?.content;
     if (typeof content !== "string") return res.status(400).json({ error: "content required" });
     try {
-      const { skills } = await loadFromPi();
-      const skill = skills.find((s) => s.name === req.params.name);
-      if (!skill) return res.status(404).json({ error: "Not found" });
-      if (!isEditable(skill.filePath)) {
+      const found = await locate(req.params.name);
+      if (!found) return res.status(404).json({ error: "Not found" });
+      if (!found.editable) {
         return res.status(400).json({
           error: "That skill came from a package — editing it here would be lost on its next update",
         });
       }
-      writeFileSync(skill.filePath, content.endsWith("\n") ? content : `${content}\n`, "utf8");
+      writeFileSync(found.file, content.endsWith("\n") ? content : `${content}\n`, "utf8");
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });
@@ -154,13 +208,12 @@ export function skillsRouter(): Router {
 
   router.delete("/skills/:name", async (req, res) => {
     try {
-      const { skills } = await loadFromPi();
-      const skill = skills.find((s) => s.name === req.params.name);
-      if (!skill) return res.json({ ok: true });
-      if (!isEditable(skill.filePath)) {
+      const found = await locate(req.params.name);
+      if (!found) return res.json({ ok: true });
+      if (!found.editable) {
         return res.status(400).json({ error: "That skill belongs to a package; remove the package" });
       }
-      rmSync(skillDir(skill.filePath), { recursive: true, force: true });
+      rmSync(skillDir(found.file), { recursive: true, force: true });
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });

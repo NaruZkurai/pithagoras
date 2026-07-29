@@ -152,7 +152,9 @@ function SkillRow({ skill: s, onOpen }: { skill: Skill; onOpen: () => void }) {
         onClick={onOpen}
         className="flex w-full items-center gap-2.5 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-left transition hover:bg-white/5"
       >
-        {s.editable ? (
+        {s.broken ? (
+          <LuCircleAlert className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+        ) : s.editable ? (
           <LuWrench className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
         ) : (
           <LuLock className="h-3.5 w-3.5 shrink-0 text-zinc-600" />
@@ -166,7 +168,13 @@ function SkillRow({ skill: s, onOpen }: { skill: Skill; onOpen: () => void }) {
               </span>
             )}
           </p>
-          <p className="line-clamp-2 text-[11px] text-zinc-500">{s.description}</p>
+          <p className="line-clamp-2 text-[11px] text-zinc-500">
+            {s.broken ? (
+              <span className="text-amber-400/80">not loading — see the warning above</span>
+            ) : (
+              s.description
+            )}
+          </p>
         </div>
         <LuChevronRight className="h-4 w-4 shrink-0 text-zinc-600" />
       </button>
@@ -282,7 +290,15 @@ function SkillDetail({
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-medium text-zinc-100">{s.name}</h3>
-          <p className="text-xs text-zinc-500">{s.description}</p>
+          <p className="text-xs text-zinc-500">
+            {s.broken ? (
+              <span className="text-amber-400/80">
+                pi cannot parse this, so the agent is not seeing it. Fix the frontmatter below.
+              </span>
+            ) : (
+              s.description
+            )}
+          </p>
           <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-600">{s.path}</p>
         </div>
       </div>
