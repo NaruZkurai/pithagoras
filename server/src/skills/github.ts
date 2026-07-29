@@ -113,9 +113,28 @@ function frontmatter(file: string): { name?: string; description?: string } {
   if (!block) return {};
 
   const read = (key: string) => {
-    const line = new RegExp(`^${key}\\s*:\\s*(.+)$`, "m").exec(block[1]);
+    const line = new RegExp(`^${key}\\s*:\\s*(.*)$`, "m").exec(block[1]);
     if (!line) return undefined;
     const raw = line[1].trim();
+
+    // A block scalar — "description: |-" with the text indented underneath.
+    // Common in longer descriptions, and reading only the marker showed "|-"
+    // where the description should be.
+    if (/^[|>][+-]?$/.test(raw)) {
+      const after = block[1].slice(line.index + line[0].length).split(/\r?\n/);
+      const body: string[] = [];
+      for (const next of after) {
+        if (!next.trim()) {
+          if (body.length) body.push("");
+          continue;
+        }
+        if (!/^\s/.test(next)) break; // dedented: the block ended
+        body.push(next.trim());
+      }
+      // Folded scalars join with spaces; literal ones keep their line breaks,
+      // but a description is shown as one line either way.
+      return body.join(" ").trim();
+    }
     // Quoted values are the common case now, since a description contains
     // colons; unquoted ones still have to work for hand-written skills.
     if (raw.startsWith('"') && raw.endsWith('"')) {
