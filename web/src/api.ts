@@ -27,6 +27,8 @@ export interface Skill {
   manualOnly: boolean;
   /** On disk but unparseable — pi is not loading it. */
   broken: boolean;
+  /** Off means pi is not loading it at all — not merely hidden here. */
+  enabled: boolean;
   /** Set when it was imported rather than written here. */
   source: SkillSource | null;
   content: string;
@@ -162,6 +164,11 @@ export const api = {
     json<{ ok: true }>(`/api/skills/${encodeURIComponent(name)}`, {
       method: "PUT",
       body: JSON.stringify({ content }),
+    }),
+  setSkillEnabled: (name: string, enabled: boolean) =>
+    json<{ ok: true; enabled: boolean }>(`/api/skills/${encodeURIComponent(name)}/enabled`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
     }),
   deleteSkill: (name: string) =>
     json<{ ok: true }>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),

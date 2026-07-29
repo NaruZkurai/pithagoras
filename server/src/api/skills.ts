@@ -1,8 +1,17 @@
 import express, { type Router } from "express";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { piAgentDir } from "../pi-settings.js";
+import { agentHome } from "../agent.js";
 import { isValidSlug, slugify } from "../slug.js";
 import { importFromGit, previewFromGit, readSource, type SkillSource } from "../skills/github.js";
 
@@ -16,6 +25,16 @@ import { importFromGit, previewFromGit, readSource, type SkillSource } from "../
  * with a package belongs to that package — editing it in place would be undone
  * by the next update, silently.
  */
+
+/**
+ * How a skill is turned off.
+ *
+ * pi discovers a skill by finding SKILL.md in a directory, so the only way to
+ * make it genuinely stop loading — rather than hiding it here while the model
+ * still sees it — is for that file not to be there. Renaming keeps everything
+ * else in the directory intact, so enabling it again is the same move back.
+ */
+const DISABLED = "SKILL.md.disabled";
 
 const skillsRoot = () => {
   const dir = path.join(piAgentDir(), "skills");
@@ -32,19 +51,23 @@ interface LoadedSkill {
   sourceInfo?: { scope?: string; origin?: string; path?: string };
 }
 
-/** pi's skill loader, which is not on the package's exports map. */
+/**
+ * The same loader a session uses.
+ *
+ * Not core/skills.loadSkills directly: pi gathers the skills an installed
+ * package ships into `skillPaths` and then loads with includeDefaults false, so
+ * calling it directly with an empty list quietly omitted every package skill —
+ * this page claimed they did not exist while the agent was using them.
+ */
 async function loadFromPi(): Promise<{ skills: LoadedSkill[]; diagnostics: any[] }> {
-  const entry = import.meta.resolve("@earendil-works/pi-coding-agent");
-  const skills: any = await import(new URL("core/skills.js", entry).href);
   const pi: any = await import("@earendil-works/pi-coding-agent");
-  // Every field is required, skillPaths included — it throws "not iterable"
-  // rather than defaulting, so an omitted empty array breaks the whole list.
-  return skills.loadSkills({
-    cwd: skillsRoot(),
+  const loader = new pi.DefaultResourceLoader({
+    cwd: agentHome(),
     agentDir: pi.getAgentDir(),
-    skillPaths: [],
-    includeDefaults: true,
   });
+  await loader.reload();
+  const result = loader.getSkills();
+  return { skills: result?.skills ?? [], diagnostics: result?.diagnostics ?? [] };
 }
 
 const isEditable = (filePath: string) => {
@@ -72,6 +95,7 @@ const toApi = (s: LoadedSkill) => ({
   // Only invocable as /skill:name, never chosen by the model on its own.
   manualOnly: Boolean(s.disableModelInvocation),
   broken: false,
+  enabled: true,
   source: isEditable(s.filePath) ? readSource(skillDir(s.filePath)) : null,
   content: isEditable(s.filePath) ? readBody(s.filePath) : "",
 });
@@ -115,6 +139,8 @@ function brokenSkills(loaded: LoadedSkill[]) {
 
   for (const name of entries) {
     const file = path.join(skillsRoot(), name, "SKILL.md");
+    // A disabled skill has no SKILL.md by design; it is listed separately.
+    if (existsSync(path.join(skillsRoot(), name, DISABLED))) continue;
     if (!existsSync(file) || known.has(path.resolve(file))) continue;
     out.push({
       name,
@@ -124,8 +150,40 @@ function brokenSkills(loaded: LoadedSkill[]) {
       editable: true,
       manualOnly: false,
       broken: true,
+      enabled: true,
       source: readSource(path.join(skillsRoot(), name)) as SkillSource | null,
       content: readBody(file),
+    });
+  }
+  return out;
+}
+
+/** Skills switched off — invisible to pi, still here and re-enablable. */
+function disabledSkills() {
+  const out: ReturnType<typeof toApi>[] = [];
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(skillsRoot());
+  } catch {
+    return out;
+  }
+
+  for (const name of entries) {
+    const file = path.join(skillsRoot(), name, DISABLED);
+    if (!existsSync(file)) continue;
+    const content = readBody(file);
+    const described = /^description\s*:\s*(.+)$/m.exec(content);
+    out.push({
+      name,
+      description: described ? described[1].trim().replace(/^["']|["']$/g, "") : "",
+      path: file,
+      scope: "agent",
+      editable: true,
+      manualOnly: false,
+      broken: false,
+      enabled: false,
+      source: readSource(path.join(skillsRoot(), name)) as SkillSource | null,
+      content,
     });
   }
   return out;
@@ -139,8 +197,12 @@ export function skillsRouter(): Router {
     const { skills } = await loadFromPi();
     const loaded = skills.find((s) => s.name === name);
     if (loaded) return { file: loaded.filePath, editable: isEditable(loaded.filePath) };
-    const file = path.join(skillsRoot(), name, "SKILL.md");
-    return existsSync(file) ? { file, editable: true } : null;
+    // Not loaded means broken or disabled — both still editable and deletable.
+    for (const candidate of ["SKILL.md", DISABLED]) {
+      const file = path.join(skillsRoot(), name, candidate);
+      if (existsSync(file)) return { file, editable: true };
+    }
+    return null;
   };
 
   router.get("/skills", async (_req, res) => {
@@ -148,7 +210,7 @@ export function skillsRouter(): Router {
       const { skills, diagnostics } = await loadFromPi();
       res.json({
         root: skillsRoot(),
-        skills: [...skills.map(toApi), ...brokenSkills(skills)],
+        skills: [...skills.map(toApi), ...brokenSkills(skills), ...disabledSkills()],
         // Name collisions and unreadable files — pi reports them, so should we.
         diagnostics: (diagnostics ?? []).map((d: any) => ({
           type: d.type,
@@ -186,6 +248,34 @@ export function skillsRouter(): Router {
         "utf8"
       );
       res.json({ ok: true, name: slug, path: path.join(dir, "SKILL.md") });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  /**
+   * Turn a skill on or off.
+   *
+   * Only skills under the agent directory: one from a package lives outside it,
+   * and renaming a file inside a package would be undone by its next update.
+   */
+  router.post("/skills/:name/enabled", async (req, res) => {
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== "boolean") return res.status(400).json({ error: "enabled required" });
+
+    const dir = path.join(skillsRoot(), req.params.name);
+    const live = path.join(dir, "SKILL.md");
+    const off = path.join(dir, DISABLED);
+
+    if (!existsSync(live) && !existsSync(off)) {
+      return res.status(404).json({
+        error: "Not found here — a skill from a package is switched off by removing the package",
+      });
+    }
+    try {
+      if (enabled && existsSync(off)) renameSync(off, live);
+      if (!enabled && existsSync(live)) renameSync(live, off);
+      res.json({ ok: true, enabled });
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });
     }

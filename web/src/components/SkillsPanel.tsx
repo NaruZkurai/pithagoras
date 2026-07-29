@@ -70,7 +70,8 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
         <p className="text-xs text-zinc-500">
           A skill is a set of instructions the agent pulls in when its description matches what is
           being asked. Every session sees them, so they are a good place for a procedure you would
-          otherwise repeat.
+          otherwise repeat. Switching one off stops pi loading it at all, rather than hiding it
+          here.
         </p>
         <p className="mt-1.5 truncate font-mono text-[11px] text-zinc-600">{root}</p>
       </section>
@@ -155,7 +156,19 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
         ) : (
           <ul className="mt-2 space-y-1">
             {mine.map((s) => (
-              <SkillRow key={s.name} skill={s} onOpen={() => setOpenName(s.name)} />
+              <SkillRow
+                key={s.name}
+                skill={s}
+                onOpen={() => setOpenName(s.name)}
+                onToggle={async (enabled) => {
+                  try {
+                    await api.setSkillEnabled(s.name, enabled);
+                    await load();
+                  } catch (e) {
+                    onError((e as Error).message);
+                  }
+                }}
+              />
             ))}
           </ul>
         )}
@@ -177,13 +190,22 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
   );
 }
 
-function SkillRow({ skill: s, onOpen }: { skill: Skill; onOpen: () => void }) {
+function SkillRow({
+  skill: s,
+  onOpen,
+  onToggle,
+}: {
+  skill: Skill;
+  onOpen: () => void;
+  onToggle?: (enabled: boolean) => void;
+}) {
   return (
-    <li>
-      <button
-        onClick={onOpen}
-        className="flex w-full items-center gap-2.5 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-left transition hover:bg-white/5"
-      >
+    <li
+      className={`flex items-center gap-2.5 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 transition hover:bg-white/5 ${
+        s.enabled ? "" : "opacity-60"
+      }`}
+    >
+      <button onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
         {s.broken ? (
           <LuCircleAlert className="h-3.5 w-3.5 shrink-0 text-amber-400" />
         ) : s.editable ? (
@@ -194,6 +216,11 @@ function SkillRow({ skill: s, onOpen }: { skill: Skill; onOpen: () => void }) {
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm text-zinc-200">
             {s.name}
+            {!s.enabled && (
+              <span className="ml-1.5 rounded bg-white/5 px-1 py-0.5 text-[10px] text-zinc-500">
+                off
+              </span>
+            )}
             {s.manualOnly && (
               <span className="ml-1.5 rounded bg-white/5 px-1 py-0.5 text-[10px] text-zinc-500">
                 /skill only
@@ -214,8 +241,25 @@ function SkillRow({ skill: s, onOpen }: { skill: Skill; onOpen: () => void }) {
             </p>
           )}
         </div>
-        <LuChevronRight className="h-4 w-4 shrink-0 text-zinc-600" />
       </button>
+
+      {onToggle ? (
+        <button
+          onClick={() => onToggle(!s.enabled)}
+          title={s.enabled ? "Disable — pi stops loading it" : "Enable"}
+          className={`relative h-5 w-9 shrink-0 rounded-full transition ${
+            s.enabled ? "bg-cyan-500/70" : "bg-zinc-700"
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+              s.enabled ? "left-[1.125rem]" : "left-0.5"
+            }`}
+          />
+        </button>
+      ) : (
+        <LuChevronRight className="h-4 w-4 shrink-0 text-zinc-600" />
+      )}
     </li>
   );
 }
@@ -339,7 +383,29 @@ function SkillDetail({
           </p>
           <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-600">{s.path}</p>
         </div>
+        {s.editable && (
+          <button
+            onClick={() => act(() => api.setSkillEnabled(s.name, !s.enabled))}
+            disabled={busy}
+            title={s.enabled ? "Disable" : "Enable"}
+            className={`relative mt-1 h-5 w-9 shrink-0 rounded-full transition disabled:opacity-40 ${
+              s.enabled ? "bg-cyan-500/70" : "bg-zinc-700"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+                s.enabled ? "left-[1.125rem]" : "left-0.5"
+              }`}
+            />
+          </button>
+        )}
       </div>
+
+      {!s.enabled && (
+        <p className="mb-4 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-[11px] text-zinc-500">
+          Switched off. pi is not loading this, so the agent cannot see or use it.
+        </p>
+      )}
 
       {s.editable ? (
         <>
