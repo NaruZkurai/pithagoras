@@ -15,6 +15,25 @@ export interface Session {
   kind?: "task" | "agent" | "routine";
 }
 
+/** A set of instructions the agent pulls in when the description matches. */
+export interface Skill {
+  name: string;
+  description: string;
+  path: string;
+  scope: string;
+  /** Only skills under the agent directory can be changed here. */
+  editable: boolean;
+  /** Invocable as /skill:name, never chosen by the model itself. */
+  manualOnly: boolean;
+  content: string;
+}
+
+export interface SkillDiagnostic {
+  type: string;
+  message: string;
+  path?: string;
+}
+
 /** Work the agent does on a schedule. */
 export interface Routine {
   id: string;
@@ -95,6 +114,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ id, ...payload }),
     }),
+
+  skills: () =>
+    json<{ root: string; skills: Skill[]; diagnostics: SkillDiagnostic[] }>("/api/skills"),
+  createSkill: (name: string, description: string, body?: string) =>
+    json<{ ok: true; name: string; path: string }>("/api/skills", {
+      method: "POST",
+      body: JSON.stringify({ name, description, body }),
+    }),
+  saveSkill: (name: string, content: string) =>
+    json<{ ok: true }>(`/api/skills/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    }),
+  deleteSkill: (name: string) =>
+    json<{ ok: true }>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),
 
   routines: () => json<{ routines: Routine[] }>("/api/routines"),
   createRoutine: (input: { name: string; schedule: string; instructions?: string }) =>
