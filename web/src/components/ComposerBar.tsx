@@ -251,11 +251,12 @@ export function ComposerBar({
               <div className="my-1 border-t border-line" />
               <button
                 type="button"
+                disabled={!models.length}
                 onClick={() => setShowAll(true)}
-                className="flex w-full items-center px-3 py-1.5 text-left text-sm text-fg-muted hover:bg-raised"
+                className="flex w-full items-center px-3 py-1.5 text-left text-sm text-fg-muted transition hover:bg-fg/5 disabled:opacity-50"
               >
-                More models
-                <span className="ml-auto text-fg-subtle">›</span>
+                {models.length ? "More models" : "Loading models…"}
+                {models.length > 0 && <span className="ml-auto text-fg-subtle">›</span>}
               </button>
             </>
           ) : (
