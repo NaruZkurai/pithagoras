@@ -102,9 +102,10 @@ export function Chat({
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto w-full max-w-3xl space-y-3">
         {items.length === 0 && (
-          <p className="pt-10 text-center text-sm text-fg-faint">
-            Give pi a task. You can close this tab — it keeps working.
-          </p>
+          <div className="pt-16 text-center">
+            <p className="text-sm text-fg-muted">Give pi a task.</p>
+            <p className="mt-1 text-xs text-fg-faint">You can close this tab — it keeps working.</p>
+          </div>
         )}
 
         {items.map((item) => {
@@ -198,7 +199,7 @@ export function Chat({
                   e.preventDefault();
                   setInput(`/${c.name} `);
                 }}
-                className="flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-raised"
+                className="flex w-full items-baseline gap-2 px-3 py-2 text-left transition hover:bg-fg/5"
               >
                 <span className="font-mono text-xs text-accent">/{c.name}</span>
                 <span className="truncate text-xs text-fg-subtle">{c.description}</span>
@@ -222,6 +223,7 @@ export function Chat({
         />
           <ComposerBar
             sessionId={session.id}
+            session={session}
             running={running}
             panelRequest={panelRequest}
             onPanelConsumed={() => setPanelRequest(null)}

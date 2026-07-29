@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type PiConfig, type PiModel } from "../api";
+import { api, type PiConfig, type PiModel, type Session } from "../api";
 import { ContextPill } from "./ContextPill";
 
 const RECENTS_KEY = "pithagoras.recentModels";
@@ -33,17 +33,36 @@ const shortName = (m: { name: string }) => m.name.split(":").pop()!.trim();
  */
 export function ComposerBar({
   sessionId,
+  session,
   running,
   panelRequest,
   onPanelConsumed,
 }: {
   sessionId: string;
+  /** What the sidebar already knows, so the pills can paint immediately. */
+  session: Session;
   running: boolean;
   /** Set by /model so the slash command opens the same picker as the pill. */
   panelRequest?: "model" | "effort" | null;
   onPanelConsumed?: () => void;
 }) {
-  const [cfg, setCfg] = useState<PiConfig | null>(null);
+  // Seeded from the session row rather than starting empty. Waiting on a
+  // request to draw the model name meant the pills appeared blank for as long
+  // as the round trip took — and that request used to boot pi.
+  const seed = (s: Session): PiConfig => ({
+    live: false,
+    state: {
+      model: { id: s.model ?? "", name: s.model ?? "default", provider: s.provider ?? "" },
+      thinkingLevel: s.thinking_level ?? "medium",
+    },
+    thinking: { levels: [] },
+    models: { models: [] },
+    stats: null,
+  });
+
+  const [cfg, setCfg] = useState<PiConfig>(() => seed(session));
+  /** The catalogue is fetched separately, the first time a picker is opened. */
+  const [catalogue, setCatalogue] = useState(false);
   const [open, setOpen] = useState<null | "model" | "effort">(null);
   const [showAll, setShowAll] = useState(false);
   const [filter, setFilter] = useState("");
@@ -57,14 +76,23 @@ export function ComposerBar({
     api
       .config(sessionId)
       .then(setCfg)
-      .catch(() => setCfg(null));
+      .catch(() => {});
 
   useEffect(() => {
-    setCfg(null);
+    setCfg(seed(session));
+    setCatalogue(false);
     setOpen(null);
     setDragEffort(null);
     load();
   }, [sessionId]);
+
+  // Only when a picker is actually opened, since this is the call that starts
+  // pi to read the model catalogue.
+  useEffect(() => {
+    if (!open || catalogue) return;
+    setCatalogue(true);
+    api.models(sessionId).then(setCfg).catch(() => {});
+  }, [open]);
 
   // Refresh once a run ends so token and cost figures stay current.
   useEffect(() => {
@@ -90,14 +118,14 @@ export function ComposerBar({
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  const models = cfg?.models.models ?? [];
+  const models = cfg.models.models ?? [];
   const byId = useMemo(() => new Map(models.map((m) => [m.id, m])), [models]);
 
   // Short list: models picked here before, plus the current one.
   const quick = useMemo(() => {
     const ids = [...recents];
-    if (cfg && !ids.includes(cfg.state.model.id)) ids.push(cfg.state.model.id);
-    return ids.map((id) => byId.get(id) ?? (cfg && id === cfg.state.model.id ? cfg.state.model : null)).filter(Boolean) as PiModel[];
+    if (cfg.state.model.id && !ids.includes(cfg.state.model.id)) ids.push(cfg.state.model.id);
+    return ids.map((id) => byId.get(id) ?? (id === cfg.state.model.id ? cfg.state.model : null)).filter(Boolean) as PiModel[];
   }, [recents, cfg, byId]);
 
   const filtered = useMemo(() => {
@@ -119,8 +147,8 @@ export function ComposerBar({
     }
   };
 
-  const levels = cfg?.thinking.levels ?? [];
-  const serverEffort = Math.max(0, levels.indexOf(cfg?.state.thinkingLevel ?? ""));
+  const levels = cfg.thinking.levels ?? [];
+  const serverEffort = Math.max(0, levels.indexOf(cfg.state.thinkingLevel));
   // While dragging, the slider follows the pointer rather than the server. It
   // used to be disabled during the request, which dropped pointer capture and
   // ended the drag after a single step.
@@ -128,7 +156,7 @@ export function ComposerBar({
 
   const commitEffort = async (index: number) => {
     const level = levels[index];
-    if (!level || level === cfg?.state.thinkingLevel) {
+    if (!level || level === cfg.state.thinkingLevel) {
       setDragEffort(null);
       return;
     }
@@ -147,27 +175,33 @@ export function ComposerBar({
       <div className="ml-auto flex items-center gap-1">
         <button
           type="button"
-          disabled={!cfg || busy}
+          disabled={busy}
           onClick={() => setOpen(open === "model" ? null : "model")}
           className={`max-w-[220px] truncate rounded-lg px-2 py-1 transition disabled:opacity-50 ${
             open === "model" ? "bg-fg/10 text-fg" : "text-fg-subtle hover:bg-fg/5 hover:text-fg-muted"
           }`}
-          title={cfg?.state.model.id}
+          title={cfg.state.model.id}
         >
-          {cfg ? shortName(cfg.state.model) : "…"}
+          {shortName(cfg.state.model)}
         </button>
         <button
           type="button"
-          disabled={!cfg || busy}
+          disabled={busy}
           onClick={() => setOpen(open === "effort" ? null : "effort")}
           className={`rounded-lg px-2 py-1 capitalize transition disabled:opacity-50 ${
             open === "effort" ? "bg-fg/10 text-fg" : "text-fg-subtle hover:bg-fg/5 hover:text-fg-muted"
           }`}
           title="Effort / thinking level"
         >
-          {cfg?.state.thinkingLevel ?? "—"}
+          {cfg.state.thinkingLevel}
         </button>
-        {cfg && <ContextPill sessionId={sessionId} cfg={cfg} onChanged={load} />}
+        {cfg.stats && (
+          <ContextPill
+            sessionId={sessionId}
+            cfg={cfg as PiConfig & { stats: NonNullable<PiConfig["stats"]> }}
+            onChanged={load}
+          />
+        )}
         <span
           className={`ml-1 h-2 w-2 rounded-full ${running ? "animate-pulse bg-warn" : "bg-raised"}`}
           title={running ? "working" : "idle"}
@@ -175,7 +209,7 @@ export function ComposerBar({
       </div>
 
       {/* Models */}
-      {open === "model" && cfg && (
+      {open === "model" && (
         <div className="absolute bottom-full right-0 mb-2 w-72 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-pop">
           <p className="px-3 py-1 text-[11px] text-fg-subtle">Models</p>
           {!showAll ? (
@@ -238,10 +272,10 @@ export function ComposerBar({
       )}
 
       {/* Effort */}
-      {open === "effort" && cfg && levels.length > 0 && (
+      {open === "effort" && levels.length > 0 && (
         <div className="absolute bottom-full right-0 mb-2 w-72 rounded-xl border border-line bg-surface p-3 shadow-pop">
           <p className="text-sm text-fg-muted">
-            Effort <span className="capitalize text-fg">{levels[effortIndex]}</span>
+            Effort <span className="capitalize text-fg">{levels[effortIndex] ?? cfg.state.thinkingLevel}</span>
           </p>
           <div className="mt-3 flex justify-between text-[11px] text-fg-subtle">
             <span>Faster</span>

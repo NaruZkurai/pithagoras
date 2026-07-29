@@ -302,9 +302,33 @@ app.post("/api/sessions/:id/abort", async (req, res) => {
 app.get("/api/sessions/:id/config", async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Not found" });
+
+  // Deliberately does not start pi. Opening a session used to boot a model
+  // runtime just to draw the pills under the composer — around 600ms for
+  // whichever session got there first, before anything had been asked of it.
+  // The stored model and effort are what those pills need, and they are right
+  // here on the row.
+  if (!sessions.isRunning(session.id)) {
+    const defaults = getSettings();
+    return res.json({
+      live: false,
+      state: {
+        model: {
+          id: session.model || defaults.model || "default",
+          name: session.model || defaults.model || "pi's default",
+          provider: session.provider || defaults.provider,
+        },
+        thinkingLevel: session.thinking_level || defaults.thinkingLevel,
+      },
+      // Unknowable without the session open, and a made-up zero reads as
+      // "empty context" rather than "not measured yet".
+      stats: null,
+      thinking: { levels: [] },
+      models: { models: [] },
+    });
+  }
+
   try {
-    // Reading config starts pi if it isn't already up, so these are the live
-    // values rather than a guess from env defaults.
     const client = await sessions.client(session.id);
     const [state, levels, models, stats] = await Promise.all([
       client.getState(),
@@ -312,7 +336,30 @@ app.get("/api/sessions/:id/config", async (req, res) => {
       client.getModels(),
       client.getStats(),
     ]);
-    res.json({ state, thinking: { levels }, models: { models }, stats });
+    res.json({ live: true, state, thinking: { levels }, models: { models }, stats });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+/**
+ * The model catalogue and effort levels, which do need pi running.
+ *
+ * Split out so the cost lands when the picker is opened rather than on every
+ * session you glance at.
+ */
+app.get("/api/sessions/:id/models", async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Not found" });
+  try {
+    const client = await sessions.client(session.id);
+    const [state, levels, models, stats] = await Promise.all([
+      client.getState(),
+      client.getThinkingLevels(),
+      client.getModels(),
+      client.getStats(),
+    ]);
+    res.json({ live: true, state, thinking: { levels }, models: { models }, stats });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }

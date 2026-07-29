@@ -45,7 +45,8 @@ export function ContextPill({
   onChanged,
 }: {
   sessionId: string;
-  cfg: PiConfig;
+  /** Only rendered once pi is live, so the stats are known to be there. */
+  cfg: PiConfig & { stats: NonNullable<PiConfig["stats"]> };
   /** Stats move after compaction and after toggling auto-compaction. */
   onChanged: () => Promise<void> | void;
 }) {

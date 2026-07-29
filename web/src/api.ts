@@ -11,6 +11,10 @@ export interface Session {
   last_error: string | null;
   pinned: boolean;
   live?: boolean;
+  /** Per-session overrides, used to paint the composer pills before any fetch. */
+  provider: string | null;
+  model: string | null;
+  thinking_level: string | null;
   /** How the session came to exist. */
   kind?: "task" | "agent" | "routine";
 }
@@ -233,7 +237,10 @@ export const api = {
 
   abort: (id: string) => json<{ ok: true }>(`/api/sessions/${id}/abort`, { method: "POST" }),
 
+  /** Cheap: never starts pi. Stats are null when the session is not live. */
   config: (id: string) => json<PiConfig>(`/api/sessions/${id}/config`),
+  /** Starts pi if needed — only called when the model picker is opened. */
+  models: (id: string) => json<PiConfig>(`/api/sessions/${id}/models`),
   setConfig: (id: string, patch: ConfigPatch) =>
     json<{ ok: true; applied: string[]; state: PiState }>(`/api/sessions/${id}/config`, {
       method: "POST",
@@ -349,10 +356,12 @@ export interface PiState {
 }
 
 export interface PiConfig {
+  /** False when pi is not running: model and effort are the stored ones. */
+  live: boolean;
   state: PiState;
   thinking: { levels: string[] };
   models: { models: PiModel[] };
-  stats: {
+  stats: null | {
     tokens: { input: number; output: number; total: number };
     cost: number;
     contextUsage: { tokens: number; contextWindow: number; percent: number };

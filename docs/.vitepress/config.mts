@@ -9,7 +9,10 @@ export default defineConfig({
   lastUpdated: true,
   cleanUrls: true,
 
+  head: [["link", { rel: "icon", type: "image/png", href: "/pithagoras/favicon.png" }]],
+
   themeConfig: {
+    logo: "/logo.png",
     nav: [
       { text: "Guide", link: "/guide/what-is-pithagoras" },
       { text: "Channels", link: "/channels/" },

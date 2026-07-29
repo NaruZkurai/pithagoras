@@ -1,7 +1,20 @@
-# Pithagoras
+<p align="center">
+  <img src="assets/hero.png" alt="Pithagoras" width="620">
+</p>
 
-A web front end for the [pi coding agent](https://github.com/earendil-works/pi), built to be
-left alone: **give it a task, close the browser, come back later and read what it did.**
+<p align="center">
+  A web front end for the <a href="https://github.com/earendil-works/pi">pi coding agent</a>, built to be
+  left alone.<br>
+  <strong>Give it a task, close the browser, come back later and read what it did.</strong>
+</p>
+
+<p align="center">
+  <a href="https://thecodacus.github.io/pithagoras/">Documentation</a> ·
+  <a href="https://thecodacus.github.io/pithagoras/guide/deploying">Deploying</a> ·
+  <a href="https://thecodacus.github.io/pithagoras/channels/writing-a-channel">Write a channel</a>
+</p>
+
+---
 
 Runs are owned by the server, not by your tab. Every event pi emits is appended to a log, so
 reconnecting replays exactly what you missed and then continues live.
