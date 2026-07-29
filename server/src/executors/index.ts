@@ -15,6 +15,8 @@ export interface LaunchOptions {
   thinkingLevel?: string;
   /** A previous run's pi session file, reopened so the conversation continues. */
   sessionFile?: string;
+  /** Give this session the routine tools. Channel sessions only. */
+  routineTools?: boolean;
 }
 
 export interface Executor {
@@ -57,6 +59,7 @@ export class HostExecutor implements Executor {
       cwd: opts.workspacePath,
       sessionDir: path.join(this.sessionRoot, opts.sessionId),
       sessionFile: opts.sessionFile,
+      routineTools: opts.routineTools,
       provider: opts.provider,
       modelId: opts.model,
       thinkingLevel: opts.thinkingLevel,

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
+import { routineTools } from "./routine-tools.js";
 
 function asArray(v: any): any[] {
   const resolved = typeof v === "function" ? v() : v;
@@ -93,6 +94,11 @@ export class SdkPiClient extends EventEmitter implements PiClient {
     provider?: string;
     modelId?: string;
     thinkingLevel?: string;
+    /**
+     * Register the routine tools. Off unless asked: only a session reached
+     * through a channel should be able to touch the schedule.
+     */
+    routineTools?: boolean;
   }): Promise<SdkPiClient> {
     // Imported lazily so the server still boots (and the container executor
     // still works) if the SDK cannot initialise in this environment.
@@ -110,6 +116,12 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       resourceLoader = new pi.DefaultResourceLoader({
         cwd: opts.cwd,
         agentDir: pi.getAgentDir(),
+        // Inline rather than an installed package: the portal owns routines, so
+        // a package would have to call back over HTTP to reach the database it
+        // sits beside. Absent unless asked, so a task session never sees them.
+        ...(opts.routineTools
+          ? { extensionFactories: [{ name: "routines", factory: routineTools }] }
+          : {}),
         // pi discovers one context file per directory — AGENTS.md or CLAUDE.md
         // — so the agent's own files would be invisible to it. Rather than
         // generating an AGENTS.md from them and keeping it in sync, they are

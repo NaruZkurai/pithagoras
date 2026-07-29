@@ -110,6 +110,10 @@ class SessionManager extends EventEmitter {
       model: session.model || settings.model || undefined,
       thinkingLevel: session.thinking_level || settings.thinkingLevel || undefined,
       sessionFile: session.pi_session_file || undefined,
+      // Channels only. A task session works inside somebody's repository and
+      // has no business rescheduling anything; a routine run is excluded too,
+      // since a routine that can create routines can build a chain unwatched.
+      routineTools: session.kind === "agent",
     });
 
     // pi writes the file lazily, so it usually does not exist yet at launch.
