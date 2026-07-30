@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
 import { routineTools } from "./routine-tools.js";
@@ -52,6 +53,25 @@ function framing(cwd: string): string[] {
   return [
     `${present.join(", ")} in your working directory are yours, not reference material about someone else. Each opens with a block saying what it is for; follow it.`,
   ];
+}
+
+/**
+ * Skills shipped with the portal, loaded from the image rather than installed.
+ *
+ * Resolved relative to the compiled file so it works from dist and from source,
+ * the same way the builtin channels are found.
+ */
+export function builtinSkillsDir(): string | undefined {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [
+    path.resolve(here, "../../../skills"),
+    path.resolve(here, "../../skills"),
+    path.resolve(process.cwd(), "skills"),
+    path.resolve(process.cwd(), "../skills"),
+  ]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 /** Read a member that may be a getter or a method, without assuming which. */
@@ -113,9 +133,14 @@ export class SdkPiClient extends EventEmitter implements PiClient {
     try {
       // Both are required: the constructor resolves each and throws on
       // undefined, which previously left every session with no extensions.
+      const builtinSkills = builtinSkillsDir();
       resourceLoader = new pi.DefaultResourceLoader({
         cwd: opts.cwd,
         agentDir: pi.getAgentDir(),
+        // Available everywhere without being installed, and not editable in
+        // place: they belong to the image, so an edit would be lost on the next
+        // deploy without saying so.
+        ...(builtinSkills ? { additionalSkillPaths: [builtinSkills] } : {}),
         // Inline rather than an installed package: the portal owns routines, so
         // a package would have to call back over HTTP to reach the database it
         // sits beside. Absent unless asked, so a task session never sees them.

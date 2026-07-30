@@ -12,6 +12,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { piAgentDir } from "../pi-settings.js";
 import { agentHome } from "../agent.js";
+import { builtinSkillsDir } from "../pi/sdk-client.js";
 import { isValidSlug, slugify } from "../slug.js";
 import { importFromGit, previewFromGit, readSource, type SkillSource } from "../skills/github.js";
 
@@ -61,9 +62,13 @@ interface LoadedSkill {
  */
 async function loadFromPi(): Promise<{ skills: LoadedSkill[]; diagnostics: any[] }> {
   const pi: any = await import("@earendil-works/pi-coding-agent");
+  const builtin = builtinSkillsDir();
   const loader = new pi.DefaultResourceLoader({
     cwd: agentHome(),
     agentDir: pi.getAgentDir(),
+    // Same list a session gets, builtins included — this page disagreeing with
+    // what the model is offered is the failure it exists to prevent.
+    ...(builtin ? { additionalSkillPaths: [builtin] } : {}),
   });
   await loader.reload();
   const result = loader.getSkills();

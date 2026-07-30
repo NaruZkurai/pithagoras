@@ -31,6 +31,10 @@ COPY --from=build /app/web/dist web/dist
 # an image rebuild.
 COPY channels channels
 
+# Skills the portal ships. Loaded from here for every session; anything the
+# agent writes goes to the data volume instead.
+COPY skills skills
+
 # HOME lives on the data volume so pi packages and settings (~/.pi/agent)
 # survive image rebuilds instead of being silently wiped.
 ENV NODE_ENV=production \

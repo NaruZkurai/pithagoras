@@ -177,7 +177,7 @@ export function SkillsPanel({ onError }: { onError: (e: string) => void }) {
       {theirs.length > 0 && (
         <section className="mb-6">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">
-            From packages ({theirs.length})
+            Built in and from packages ({theirs.length})
           </h3>
           <ul className="mt-2 space-y-1">
             {theirs.map((s) => (
