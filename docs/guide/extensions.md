@@ -52,6 +52,24 @@ Those models only exist once extensions are bound, which is later than session
 creation — the portal handles that, but it is worth knowing when a local model
 seems not to stick.
 
+## Built-in skills
+
+The portal ships skills of its own, loaded from the image rather than installed,
+so they are there without anyone adding them. They appear in Settings → Skills
+under "Built in and from packages", read-only — editing one in place would be
+lost on the next deploy without saying so.
+
+There is one so far. **`skill-creator`** teaches the agent to write skills: the
+format, the frontmatter and the ways it silently fails, how to split detail into
+supporting files, and where to write one so it loads. Ask the agent to remember
+a procedure and it has somewhere to put it.
+
+::: tip A skills directory holds directories
+pi treats any `.md` file sitting directly in a skills root as a skill in its own
+right. A stray README there is reported as a broken skill — keep the root to
+directories only.
+:::
+
 ## Interactive commands
 
 Extensions can ask questions. `ctx.ui.select`, `confirm`, `input` and `editor`
