@@ -101,9 +101,13 @@ function freeSlug(desired: string, exceptId?: string): string {
  * summary from a Telegram chat means "tell me here" — anything else makes them
  * configure a destination for a thing they just described in one sentence.
  *
- * The portal default remains the fallback, for a routine created any other way.
+ * The portal default remains the fallback, for a routine created any other way
+ * — and for a conversation whose channel cannot speak first. A browser chat is
+ * an agent session like any other, but "reply in the portal" is not somewhere a
+ * report can be delivered, and pointing a routine there would be worse than
+ * leaving it on the default.
  */
-function reportBackTo(sessionId?: string): {
+export function reportBackTo(sessionId?: string): {
   channel: string | null;
   target: string | null;
 } {
@@ -112,6 +116,8 @@ function reportBackTo(sessionId?: string): {
     .prepare("SELECT * FROM sessions WHERE id = ?")
     .get(sessionId) as SessionRow | undefined;
   if (!session?.channel_slug || !session.channel_key)
+    return { channel: null, target: null };
+  if (!channelSupervisor.canSend(session.channel_slug))
     return { channel: null, target: null };
   return {
     channel: session.channel_slug,
