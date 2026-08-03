@@ -44,20 +44,39 @@ function toolArgs(p: any): any {
  * Talks straight to the second llama server (see serve-rank-model.sh), so the
  * main agent's context never grows from this.
  */
+/** Ordered word-tokenizer — words kept in order so instructions stay legible. */
+function tokenizeOrdered(text: string): string {
+  return (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).join(" ");
+}
+
+/**
+ * The scoring rubric — the prompt that tells the model to score this skill
+ * against the task. Precomputed once: the prose is tokenized, and the JSON
+ * output schema is kept literal inside it. The tiny rank model only reproduces
+ * the exact keys when it can see them as JSON, so stripping the schema makes
+ * it invent key names and the score is unusable (verified empirically).
+ */
+const RUBRIC =
+  tokenizeOrdered(
+    "Fill in the form for ONE skill. Output only a JSON object, no other text. " +
+      "relevant: 0 unrelated, 1 partially related, 2 directly related."
+  ) +
+  ' {"relevant": 0 or 1 or 2, "coverage": 0 to 10, "fit": 0 to 10}';
+
 async function scoreSkillWithRankModel(
   task: string,
-  skill: { name: string; description: string; content: string }
+  skill: SkillRow
 ): Promise<{ score: number; reason: string }> {
   const base = (process.env.LLAMA_RANK_BASE_URL || "http://127.0.0.1:8081").replace(/\/$/, "");
   const model = process.env.PI_RANK_MODEL || "bonsai-1.7b";
-  const system =
-    "Fill in the form for ONE skill. Output only a JSON object, no other text: " +
-    '{"relevant": 0 or 1 or 2, "coverage": 0 to 10, "fit": 0 to 10}. ' +
-    "relevant: 0=unrelated, 1=partially related, 2=directly related.";
+  const system = RUBRIC;
+  // The skill arrives as its raw precomputed token slots (name_tokens +
+  // desc_tokens) rather than the original text, so the request to the model
+  // is built from tokens.
   const user =
     `FORM\nTask: ${task}\n` +
-    `Skill name: ${skill.name}\n` +
-    `Skill description: ${skill.description}\n\n` +
+    `Skill name tokens: ${skill.name_tokens ?? ""}\n` +
+    `Skill description tokens: ${skill.desc_tokens ?? ""}\n\n` +
     "Fill the form:";
   const res = await fetch(`${base}/v1/chat/completions`, {
     method: "POST",
@@ -85,18 +104,37 @@ async function scoreSkillWithRankModel(
   } catch {
     form = {};
   }
-  const field = (key: string, lo: number, hi: number, dflt: number): number => {
-    const n = Number(form[key]);
-    return Number.isFinite(n) ? Math.max(lo, Math.min(hi, Math.round(n))) : dflt;
+  const num = (key: string): number | undefined => {
+    const n = Number(form[key] ?? form[key.replace(/[-_]/g, " ")]);
+    return Number.isFinite(n) ? n : undefined;
   };
-  const relevant = field("relevant", 0, 2, 0);
-  const coverage = field("coverage", 0, 10, 0);
-  const fit = field("fit", 0, 10, 0);
+  // The tiny model sometimes echoes the rubric's field names instead of the
+  // exact keys; accept the aliases and the breakdown fields.
+  const relevant =
+    num("relevant") ??
+    num("relevance") ??
+    num("relevancy") ??
+    num("relatedness") ??
+    num("relevance_score") ??
+    num("related") ??
+    (num("directly_related") && num("directly_related")! > 0
+      ? 2
+      : num("partially_related") && num("partially_related")! > 0
+        ? 1
+        : num("unrelated") !== undefined
+          ? 0
+          : undefined);
+  const coverage = num("coverage") ?? 0;
+  const fit = num("fit") ?? num("fitness") ?? 0;
+  const clamp = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, Math.round(n)));
+  const relevantN = clamp(relevant ?? 0, 0, 2);
+  const coverageN = clamp(coverage, 0, 10);
+  const fitN = clamp(fit, 0, 10);
   // Relevance is half the value; coverage and fit split the rest.
-  const score = Math.round((relevant / 2) * 40 + (coverage / 10) * 30 + (fit / 10) * 30);
+  const score = Math.round((relevantN / 2) * 40 + (coverageN / 10) * 30 + (fitN / 10) * 30);
   const relevance =
-    relevant === 2 ? "directly related" : relevant === 1 ? "partially related" : "unrelated";
-  return { score, reason: `${relevance}; coverage ${coverage}/10, fit ${fit}/10` };
+    relevantN === 2 ? "directly related" : relevantN === 1 ? "partially related" : "unrelated";
+  return { score, reason: `${relevance}; coverage ${coverageN}/10, fit ${fitN}/10` };
 }
 
 /** System hint: one-keyword search, rank, pick by number. */
