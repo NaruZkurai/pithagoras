@@ -152,8 +152,9 @@ export function senderFraming(
   // on refusing things it is permitted to do, and escalates instead.
   const exceptions = allowed.length
     ? [
-        "Two exceptions, which you may run for them without asking — these and nothing",
-        "resembling them:",
+        "You may run these for them without asking — these exactly, and nothing that merely",
+        "resembles them. Run one on its own: a pipe, a redirect, a semicolon or a second command",
+        "turns it into something else and it will be refused. Filter the output yourself after.",
         ...allowed.map((a) => `  ${a}`),
       ]
     : [];

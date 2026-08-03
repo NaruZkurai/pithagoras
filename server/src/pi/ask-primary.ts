@@ -54,6 +54,18 @@ export function askPrimaryTool(sessionId: string) {
         if (!session?.channel_slug || !session.channel_key) {
           return { output: "This conversation has nowhere to send an answer back to.", isError: true };
         }
+        // Checked before the question is recorded, not when the answer bounces.
+        // Otherwise the failure surfaces to the primary user hours later, about
+        // a conversation they were never in.
+        if (!channelSupervisor.canSend(session.channel_slug)) {
+          return {
+            output:
+              "This conversation cannot receive anything sent later, so an answer could never " +
+              "reach them. Tell them to ask through a channel that can, or to contact the " +
+              "primary user directly.",
+            isError: true,
+          };
+        }
 
         const who = sessions.currentSpeaker(sessionId);
         const row = askQuestion({

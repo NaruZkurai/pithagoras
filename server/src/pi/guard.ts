@@ -165,9 +165,19 @@ function globToRegExp(pattern: string): RegExp {
 const subjectOf = (toolName: string, input: Record<string, unknown>) =>
   toolName === "bash" ? cmd(input) : target(input) || JSON.stringify(input);
 
+/**
+ * Folding stderr in is a fixed idiom, not redirection.
+ *
+ * Models write it by reflex on almost every command. Refusing it means an
+ * allowed command is refused for a reason nobody can act on, so the two exact
+ * forms are stripped before matching — and nothing else is.
+ */
+const STDERR_IDIOM = /\s+2>(&1|\/dev\/null)$/;
+
 export function ruleAllows(rules: ToolRule[], role: string, toolName: string, input: Record<string, unknown>): boolean {
-  const subject = subjectOf(toolName, input).trim();
+  let subject = subjectOf(toolName, input).trim();
   if (!subject) return false;
+  if (toolName === "bash") subject = subject.replace(STDERR_IDIOM, "").trim();
   if (toolName === "bash" && CHAINING.test(subject)) return false;
   return rules.some(
     (r) =>
@@ -217,8 +227,10 @@ export function guardExtension(sessionId: string, roleNow: () => string = () => 
           reason:
             `Refused: you are speaking with someone who is not your primary user, and ` +
             `"${event.toolName}" changes things or runs commands. You can read and explain, ` +
-            `nothing else. Tell them plainly that this needs the primary user, and offer to ` +
-            `pass the request along. Do not look for another way to do it.`,
+            `plus anything explicitly allowed for this role — and an allowed command must be ` +
+            `run on its own, exactly as permitted: a pipe, a redirect, a semicolon or a second ` +
+            `command makes it something else and it is refused. Tell them plainly that this ` +
+            `needs the primary user, and pass the request along. Do not look for another route.`,
         };
       }
 
