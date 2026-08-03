@@ -1,4 +1,11 @@
-import { addNote, findChannelSession, getDb, getDefaultReportTo, takeNotes } from "../db.js";
+import {
+  addNote,
+  findChannelSession,
+  getDb,
+  getDefaultReportTo,
+  listToolRules,
+  takeNotes,
+} from "../db.js";
 import { resolveChannelSession, scopeKey } from "../agent.js";
 import { sessions, EXECUTOR_KIND } from "../session-manager.js";
 import { readAnswer, recordAnswer } from "../questions.js";
@@ -514,7 +521,16 @@ function withInstructions(
         "\n</sent-since-you-last-spoke>"
     );
   }
-  const who = person ? senderFraming(person, primaryName(), Boolean(getDefaultReportTo())) : "";
+  const who = person
+    ? senderFraming(
+        person,
+        primaryName(),
+        Boolean(getDefaultReportTo()),
+        listToolRules()
+          .filter((r) => r.role === person.role || r.role === "all")
+          .map((r) => `${r.tool}: ${r.pattern}`)
+      )
+    : "";
   if (who) parts.push(`<speaker>\n${who}\n</speaker>`);
   const extra = (instructions ?? "").trim();
   if (extra) parts.push(`<channel-instructions>\n${extra}\n</channel-instructions>`);
