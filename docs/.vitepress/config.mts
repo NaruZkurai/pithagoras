@@ -29,6 +29,7 @@ export default defineConfig({
           { text: "Slash commands", link: "/guide/commands" },
           { text: "Settings", link: "/guide/settings" },
           { text: "Extensions", link: "/guide/extensions" },
+          { text: "MCP servers", link: "/guide/mcp" },
         ],
       },
       {

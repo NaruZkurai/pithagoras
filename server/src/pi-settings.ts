@@ -9,6 +9,7 @@ import path from "node:path";
  * place rather than being rebuilt at each call site.
  */
 export const piAgentDir = (): string =>
+  process.env.PI_CODING_AGENT_DIR?.trim() ||
   path.join(process.env.HOME || "/data/home", ".pi", "agent");
 
 export const piSettingsPath = (): string => path.join(piAgentDir(), "settings.json");

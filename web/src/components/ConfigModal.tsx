@@ -7,6 +7,7 @@ import {
   LuDownload,
   LuExternalLink,
   LuFileJson,
+  LuPlug,
   LuPuzzle,
   LuRadio,
   LuWrench,
@@ -19,9 +20,10 @@ import {
 import { api, type ExtensionInfo, type GlobalSettings } from "../api";
 import { ChannelsPanel } from "./ChannelsPanel";
 import { SkillsPanel } from "./SkillsPanel";
+import { McpPanel } from "./McpPanel";
 import { Modal } from "./Modal";
 
-export type Tab = "general" | "channels" | "skills" | "extensions" | "advanced";
+export type Tab = "general" | "channels" | "skills" | "mcp" | "extensions" | "advanced";
 
 /** Either a fixed tab or one extension's own configuration page. */
 type Nav = { kind: "tab"; id: Tab } | { kind: "ext"; spec: string };
@@ -44,6 +46,12 @@ const TABS: { id: Tab; label: string; icon: ReactNode; hint: string }[] = [
     label: "Skills",
     icon: <LuWrench />,
     hint: "Procedures the agent can reach for",
+  },
+  {
+    id: "mcp",
+    label: "MCP",
+    icon: <LuPlug />,
+    hint: "Servers the agent can pull tools from",
   },
   { id: "extensions", label: "Extensions", icon: <LuBlocks />, hint: "Install and manage packages" },
   { id: "advanced", label: "Advanced", icon: <LuFileJson />, hint: "pi's raw settings file" },
@@ -138,6 +146,7 @@ export function ConfigModal({
       {nav.kind === "tab" && nav.id === "general" && <GeneralPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "channels" && <ChannelsPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "skills" && <SkillsPanel onError={setError} />}
+      {nav.kind === "tab" && nav.id === "mcp" && <McpPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "extensions" && (
         <ExtensionsPanel
           extensions={extensions}
