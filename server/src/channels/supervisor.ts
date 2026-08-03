@@ -55,6 +55,11 @@ interface Running {
   stop?: () => Promise<void> | void;
   /** Optional: not every transport can speak first. A webhook cannot. */
   send?: (target: string, text: string) => Promise<void> | void;
+  /** Optional: platform-native question rendering, with a text fallback. */
+  prompt?: (
+    target: string,
+    request: { id: string; method: string; question: string; options?: string[] }
+  ) => Promise<{ value?: unknown; cancelled?: boolean } | null>;
   log: { at: string; text: string }[];
 }
 
@@ -176,6 +181,7 @@ class ChannelSupervisor {
       });
       live.stop = handle?.stop;
       live.send = handle?.send;
+      live.prompt = handle?.prompt;
       live.state = "running";
       log("started");
     } catch (e) {
@@ -401,6 +407,44 @@ class ChannelSupervisor {
         // decline immediately instead of holding the run until it times out.
         if (!packageReply) {
           sessions.respondUi(session.id, request.id, { cancelled: true });
+          return;
+        }
+
+        // Let the channel present it natively first — buttons where a platform
+        // has buttons. Numbered text is the fallback, which is what a channel
+        // without the affordance gets, and what any channel gets for a question
+        // that does not fit one.
+        const native = this.running.get(row.id)?.prompt;
+        if (native && typeof meta.session === "string") {
+          // The package's own key, as it supplied it — the scoped form is the
+          // portal's business, not the transport's.
+          void native(meta.session, {
+            id: request.id,
+            method: request.method,
+            question,
+            options: request.options,
+          })
+            .then((answer) => {
+              if (!answer) {
+                // Declined it: fall back to asking in words.
+                this.pendingUi.set(session.id, {
+                  id: request.id,
+                  method: request.method,
+                  options: request.options,
+                });
+                void packageReply?.(question);
+                return;
+              }
+              sessions.respondUi(session.id, request.id, answer);
+            })
+            .catch(() => {
+              this.pendingUi.set(session.id, {
+                id: request.id,
+                method: request.method,
+                options: request.options,
+              });
+              void packageReply?.(question);
+            });
           return;
         }
 

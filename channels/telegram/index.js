@@ -57,6 +57,8 @@ export async function start(ctx) {
 
   let offset = 0;
   let running = true;
+  /** Questions waiting on a button press, by the id the portal gave them. */
+  const waiting = new Map();
 
   const loop = (async () => {
     while (running && !ctx.signal.aborted) {
@@ -66,7 +68,7 @@ export async function start(ctx) {
         updates = await call(
           token,
           "getUpdates",
-          { offset, timeout: 50, allowed_updates: ["message"] },
+          { offset, timeout: 50, allowed_updates: ["message", "callback_query"] },
           ctx.signal
         );
       } catch (e) {
@@ -78,6 +80,37 @@ export async function start(ctx) {
 
       for (const update of updates) {
         offset = update.update_id + 1;
+
+        // A button press on a question we asked. Answered here rather than
+        // through the message loop: it is not a message, and the run waiting on
+        // it is not waiting for one.
+        if (update.callback_query) {
+          const q = update.callback_query;
+          const [promptId, index] = String(q.data || "").split(":");
+          const pending = waiting.get(promptId);
+          await call(token, "answerCallbackQuery", { callback_query_id: q.id }, ctx.signal).catch(
+            () => {}
+          );
+          if (pending) {
+            waiting.delete(promptId);
+            const chosen = pending.options[Number(index)];
+            // Replace the buttons with what was picked, so the chat reads as a
+            // record of the decision rather than a question nobody answered.
+            await call(
+              token,
+              "editMessageText",
+              {
+                chat_id: q.message.chat.id,
+                message_id: q.message.message_id,
+                text: `${pending.question}\n\n→ ${chosen}`,
+              },
+              ctx.signal
+            ).catch(() => {});
+            pending.resolve(pending.confirm ? { value: chosen === "Yes" } : { value: chosen });
+          }
+          continue;
+        }
+
         const message = update.message;
         const text = message?.text?.trim();
         if (!text) continue;
@@ -104,6 +137,54 @@ export async function start(ctx) {
     async stop() {
       running = false;
       await loop.catch(() => {});
+    },
+
+    /**
+     * Ask with buttons, which is how Telegram asks.
+     *
+     * Only for questions with a fixed set of answers: free text has no keyboard
+     * to draw, so it returns null and the portal asks in words instead.
+     */
+    async prompt(target, request) {
+      const options =
+        request.method === "confirm" ? ["Yes", "No"] : (request.options ?? []).slice(0, 20);
+      if (!options.length) return null;
+      // Telegram caps callback_data at 64 bytes, so the payload is an index.
+      const promptId = request.id.slice(-16);
+      const chatId = String(target).replace(/^chat:/, "");
+
+      await call(
+        token,
+        "sendMessage",
+        {
+          chat_id: chatId,
+          text: request.question,
+          reply_markup: {
+            inline_keyboard: options.map((label, i) => [
+              { text: String(label).slice(0, 60), callback_data: `${promptId}:${i}` },
+            ]),
+          },
+        },
+        ctx.signal
+      );
+
+      return new Promise((resolve) => {
+        waiting.set(promptId, {
+          options,
+          question: request.question,
+          confirm: request.method === "confirm",
+          resolve,
+        });
+        // The portal gives up on an unanswered dialog too; settling here as well
+        // means the map does not grow a stale entry for every ignored question.
+        const timer = setTimeout(
+          () => {
+            if (waiting.delete(promptId)) resolve({ cancelled: true });
+          },
+          5 * 60_000
+        );
+        if (typeof timer.unref === "function") timer.unref();
+      });
     },
 
     /**

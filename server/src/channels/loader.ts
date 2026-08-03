@@ -34,6 +34,19 @@ export interface LoadedChannel extends ChannelManifest {
     stop: () => Promise<void> | void;
     /** Optional. A transport that can only answer, like a webhook, omits it. */
     send?: (target: string, text: string) => Promise<void> | void;
+    /**
+     * Optional. Render a question the way this platform renders questions —
+     * Telegram has buttons, Slack has blocks — and capture the answer.
+     *
+     * Returning null means "not something I can present", and the portal falls
+     * back to asking in plain text. That is the default, not a failure: it is
+     * how a channel with no such affordance behaves, and how any channel
+     * behaves for a question that does not fit buttons.
+     */
+    prompt?: (
+      target: string,
+      request: { id: string; method: string; question: string; options?: string[] }
+    ) => Promise<{ value?: unknown; cancelled?: boolean } | null>;
   }>;
 }
 
