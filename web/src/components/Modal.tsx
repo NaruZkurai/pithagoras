@@ -16,6 +16,7 @@ export function Modal({
   children,
   footer,
   wide,
+  actions,
 }: {
   title: ReactNode;
   subtitle?: ReactNode;
@@ -24,6 +25,8 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** Extra controls pinned to the header's right, before the close button. */
+  actions?: ReactNode;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -49,6 +52,7 @@ export function Modal({
             <h2 className="truncate text-sm font-semibold text-fg">{title}</h2>
             {subtitle && <p className="truncate text-xs text-fg-subtle">{subtitle}</p>}
           </div>
+          {actions}
           <button
             onClick={onClose}
             className="rounded-lg p-1.5 text-fg-subtle transition hover:bg-fg/10 hover:text-fg"

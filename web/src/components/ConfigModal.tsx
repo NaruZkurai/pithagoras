@@ -24,6 +24,7 @@ import { SkillsPanel } from "./SkillsPanel";
 import { ModelServersPanel } from "./ModelServersPanel";
 import { McpPanel } from "./McpPanel";
 import { PeoplePanel } from "./PeoplePanel";
+import { ThemeSwitcher } from "./ThemeSwitcher";
 import { Modal } from "./Modal";
 
 export type Tab = "general" | "channels" | "people" | "skills" | "models" | "mcp" | "extensions" | "advanced";
@@ -116,6 +117,7 @@ export function ConfigModal({
       wide
       title="Settings"
       subtitle="Applies to the whole portal"
+      actions={<ThemeSwitcher />}
       onClose={onClose}
       rail={
         <div className="space-y-4">

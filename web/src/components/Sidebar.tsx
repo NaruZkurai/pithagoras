@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from "react";
-import { ThemeSwitcher } from "./ThemeSwitcher";
 import { Tooltip } from "./Tooltip";
 import {
   LuBot,
@@ -272,7 +271,6 @@ export function Sidebar({
             />
           </div>
           <ModelStatusDot state={modelState} onClick={onOpenModels} />
-          <ThemeSwitcher />
         </div>
       </div>
     </aside>
