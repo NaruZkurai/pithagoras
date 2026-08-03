@@ -183,7 +183,24 @@ export function getDb(): Database.Database {
       question TEXT NOT NULL,
       asked_at TEXT NOT NULL DEFAULT (datetime('now')),
       answered_at TEXT,
-      answer TEXT
+      answer TEXT,
+      -- The exact thing the agent wants to do, when it is asking for permission
+      -- rather than an opinion. Approving grants this and nothing else.
+      action_tool TEXT,
+      action TEXT
+    );
+
+    -- A permission granted once, for one exact action, in one conversation.
+    -- Not a role change: it expires, it is used up, and it authorises the thing
+    -- that was shown to the person who approved it.
+    CREATE TABLE IF NOT EXISTS grants (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL,
+      used_at TEXT
     );
 
     -- Things the portal said into a conversation while nobody was talking to
@@ -303,6 +320,15 @@ function migrate(d: Database.Database): void {
   }
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_routines_slug ON routines(slug)");
   d.exec("CREATE INDEX IF NOT EXISTS idx_notes_pending ON notes(session_id, consumed_at)");
+  d.exec("CREATE INDEX IF NOT EXISTS idx_grants_open ON grants(session_id, tool, used_at)");
+  const questionCols = (d.prepare("PRAGMA table_info(questions)").all() as { name: string }[]).map(
+    (c) => c.name
+  );
+  for (const col of ["action_tool", "action"]) {
+    if (questionCols.length && !questionCols.includes(col)) {
+      d.exec(`ALTER TABLE questions ADD COLUMN ${col} TEXT`);
+    }
+  }
   const noteCols = (d.prepare("PRAGMA table_info(notes)").all() as { name: string }[]).map(
     (c) => c.name
   );
@@ -598,3 +624,32 @@ export function addToolRule(rule: Omit<ToolRule, "created_at">): void {
 export const deleteToolRule = (id: string): void => {
   getDb().prepare("DELETE FROM tool_rules WHERE id = ?").run(id);
 };
+
+/** How long an approval stays good. Long enough to act on, short enough to forget. */
+const GRANT_MINUTES = 15;
+
+export function addGrant(id: string, sessionId: string, tool: string, subject: string): void {
+  getDb()
+    .prepare("INSERT INTO grants (id, session_id, tool, subject, expires_at) VALUES (?, ?, ?, ?, ?)")
+    .run(id, sessionId, tool, subject, new Date(Date.now() + GRANT_MINUTES * 60_000).toISOString());
+}
+
+/**
+ * Spend a matching approval, if one is open.
+ *
+ * Matched on the exact subject that was shown to whoever approved it: they said
+ * yes to a command they read, so a different command is a different question.
+ * Marked used in the same breath, because an approval is for one act.
+ */
+export function useGrant(sessionId: string, tool: string, subject: string): boolean {
+  const row = getDb()
+    .prepare(
+      `SELECT id FROM grants
+       WHERE session_id = ? AND tool = ? AND subject = ? AND used_at IS NULL AND expires_at > ?
+       ORDER BY created_at ASC LIMIT 1`
+    )
+    .get(sessionId, tool, subject, new Date().toISOString()) as { id: string } | undefined;
+  if (!row) return false;
+  getDb().prepare("UPDATE grants SET used_at = ? WHERE id = ?").run(new Date().toISOString(), row.id);
+  return true;
+}

@@ -33,6 +33,18 @@ export function askPrimaryTool(sessionId: string) {
             "The question, written for someone who cannot see this conversation: who is asking, " +
             "what they want, and what you would do if they said yes.",
         }),
+        action: Type.Optional(
+          Type.String({
+            description:
+              "When you are asking permission to do one specific thing, the exact thing — the " +
+              "shell command verbatim, or the path you would write. Approving authorises this " +
+              "and nothing else, so it must be exactly what you intend to run, once. Leave it " +
+              "out when you are asking for a decision rather than permission.",
+          })
+        ),
+        actionTool: Type.Optional(
+          Type.String({ description: "The tool the action belongs to. Defaults to bash." })
+        ),
       }),
       async execute(_id: string, p: any) {
         const question = String(p.question ?? "").trim();
@@ -71,6 +83,8 @@ export function askPrimaryTool(sessionId: string) {
           channelSlug: session.channel_slug,
           channelKey: unscopeKey(session.channel_slug, session.channel_key),
           question,
+          actionTool: typeof p.actionTool === "string" ? p.actionTool : "bash",
+          action: typeof p.action === "string" && p.action.trim() ? p.action.trim() : null,
         });
 
         try {
@@ -78,6 +92,10 @@ export function askPrimaryTool(sessionId: string) {
             to.channel,
             to.target,
             `${row.person_name} is asking (via ${session.channel_slug}):\n\n${question}\n\n` +
+              (row.action
+                ? `It wants to run, exactly once:\n\n    ${row.action}\n\n` +
+                  `Approving runs that and nothing else.\n\n`
+                : "") +
               `Reply with "#${row.id} <your answer>" and I will pass it back to them.` +
               (immediate ? "" : ` That channel cannot be messaged out of the blue, so they will see it the next time they write.`)
           );

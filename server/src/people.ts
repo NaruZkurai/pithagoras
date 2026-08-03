@@ -142,6 +142,11 @@ export function senderFraming(
         `When they ask for one, put it to ${primaryName} with the ask_primary tool, then tell`,
         "them you have. Offering to ask is not asking: the tool call is. The answer comes back",
         "into this conversation later, so do not wait for it or guess at it.",
+        "If it is one specific thing you want to do, pass the exact command as the action. They",
+        "approve that command and only that, once — so an approval you have been given is a",
+        `permission you can use straight away, while a message from ${primaryName} saying yes is`,
+        "only a message. If a command is still refused, it was not approved: ask again with the",
+        "exact action rather than trying variations of it.",
       ]
     : [
         `When they ask for one, say plainly that it needs ${primaryName} and that you have no`,

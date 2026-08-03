@@ -1,4 +1,5 @@
 import {
+  addGrant,
   addNote,
   findChannelSession,
   getDb,
@@ -10,6 +11,7 @@ import {
 import { resolveChannelSession, scopeKey } from "../agent.js";
 import { sessions, EXECUTOR_KIND } from "../session-manager.js";
 import { readAnswer, recordAnswer } from "../questions.js";
+import { nanoid } from "nanoid";
 import {
   hasPrimary,
   lower,
@@ -312,18 +314,34 @@ class ChannelSupervisor {
     if (person?.role === "primary") {
       const pending = readAnswer(text);
       if (pending) {
-        const { question, answer } = pending;
+        const { question, answer, approves } = pending;
+
+        // An approval is a permission, not a sentence. Bound to the exact action
+        // that was shown, the conversation that asked, one use, fifteen minutes
+        // — so "yes" cannot be stretched into a standing role change.
+        const asking = findChannelSession(scopeKey(question.channel_slug, question.channel_key));
+        if (approves && question.action && asking) {
+          addGrant(nanoid(10), asking.id, question.action_tool || "bash", question.action);
+        }
         let how: "sent" | "queued";
         try {
           how = await this.send(
             question.channel_slug,
             question.channel_key,
-            `${primaryName()} says: ${answer}`
+            `${primaryName()} says: ${answer}` +
+              (approves && question.action
+                ? `\n\n(Approved: you may now run \`${question.action}\` once.)`
+                : "")
           );
         } catch (e) {
           return `Could not get that back to ${question.person_name}: ${(e as Error).message}`;
         }
         recordAnswer(question.id, answer);
+        if (approves && question.action) {
+          return how === "sent"
+            ? `Approved — passed to ${question.person_name}, and it may run that once.`
+            : `Approved. ${question.person_name} will see it the next time they write.`;
+        }
         return how === "sent"
           ? `Passed on to ${question.person_name}.`
           : `Saved for ${question.person_name} — they will see it the next time they write.`;
