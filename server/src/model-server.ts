@@ -191,7 +191,7 @@ let idleTimer: NodeJS.Timeout | null = null;
  */
 export function startIdleSweeper(isBusy: () => boolean): void {
   stopIdleSweeper();
-  const idleMs = Number(process.env.LAZY_IDLE_MS || 10 * 60 * 1000);
+  const idleMs = Number(process.env.LAZY_IDLE_MS || 15 * 60 * 1000);
   if (!Number.isFinite(idleMs) || idleMs <= 0) return;
   idleTimer = setInterval(async () => {
     if (isBusy()) return;
