@@ -7,6 +7,7 @@ import {
   LuDownload,
   LuExternalLink,
   LuFileJson,
+  LuPlug,
   LuPuzzle,
   LuRadio,
   LuWrench,
@@ -15,14 +16,17 @@ import {
   LuSlidersHorizontal,
   LuTrash2,
   LuTriangleAlert,
+  LuUsers,
 } from "react-icons/lu";
-import { api, type ExtensionInfo, type GlobalSettings } from "../api";
+import { api, type ExtensionInfo, type GlobalSettings, type ReportTarget, type ReportTo } from "../api";
 import { ChannelsPanel } from "./ChannelsPanel";
 import { SkillsPanel } from "./SkillsPanel";
 import { ModelServersPanel } from "./ModelServersPanel";
+import { McpPanel } from "./McpPanel";
+import { PeoplePanel } from "./PeoplePanel";
 import { Modal } from "./Modal";
 
-export type Tab = "general" | "channels" | "skills" | "models" | "extensions" | "advanced";
+export type Tab = "general" | "channels" | "people" | "skills" | "models" | "mcp" | "extensions" | "advanced";
 
 /** Either a fixed tab or one extension's own configuration page. */
 type Nav = { kind: "tab"; id: Tab } | { kind: "ext"; spec: string };
@@ -41,6 +45,12 @@ const TABS: { id: Tab; label: string; icon: ReactNode; hint: string }[] = [
     hint: "Two-way links into the agent",
   },
   {
+    id: "people",
+    label: "People",
+    icon: <LuUsers />,
+    hint: "Who the agent will talk to",
+  },
+  {
     id: "skills",
     label: "Skills",
     icon: <LuWrench />,
@@ -51,6 +61,12 @@ const TABS: { id: Tab; label: string; icon: ReactNode; hint: string }[] = [
     label: "Models",
     icon: <LuServer />,
     hint: "Launch and stop llama.cpp servers",
+  },
+  {
+    id: "mcp",
+    label: "MCP",
+    icon: <LuPlug />,
+    hint: "Servers the agent can pull tools from",
   },
   { id: "extensions", label: "Extensions", icon: <LuBlocks />, hint: "Install and manage packages" },
   { id: "advanced", label: "Advanced", icon: <LuFileJson />, hint: "pi's raw settings file" },
@@ -144,8 +160,10 @@ export function ConfigModal({
 
       {nav.kind === "tab" && nav.id === "general" && <GeneralPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "channels" && <ChannelsPanel onError={setError} />}
+      {nav.kind === "tab" && nav.id === "people" && <PeoplePanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "skills" && <SkillsPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "models" && <ModelServersPanel onError={setError} />}
+      {nav.kind === "tab" && nav.id === "mcp" && <McpPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "extensions" && (
         <ExtensionsPanel
           extensions={extensions}
@@ -262,6 +280,72 @@ const primaryCls =
 const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 // --- general ---
+
+/**
+ * Where a routine reports when it does not name a destination itself.
+ *
+ * Lives here rather than on the Routines page because it is a portal-wide
+ * default: a routine created by the agent from a chat gets it without anyone
+ * opening a form.
+ */
+function ReportDefault({ onError }: { onError: (e: string) => void }) {
+  const [targets, setTargets] = useState<ReportTarget[]>([]);
+  const [current, setCurrent] = useState<ReportTo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = () =>
+    api
+      .reportTargets()
+      .then((r) => {
+        setTargets(r.targets);
+        setCurrent(r.default);
+        setLoaded(true);
+      })
+      .catch((e) => onError((e as Error).message));
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  if (!loaded) return null;
+
+  const value = current ? `${current.channel}\u0000${current.target}` : "";
+
+  return (
+    <Section
+      title="Routine reports"
+      hint="Where a scheduled run reaches you when it has something worth saying. The agent decides whether a run is worth reporting; a routine can point somewhere else of its own."
+    >
+      <select
+        value={value}
+        onChange={async (e) => {
+          const [channel, target] = e.target.value.split("\u0000");
+          try {
+            await api.setReportDefault(channel && target ? { channel, target } : null);
+            await load();
+          } catch (err) {
+            onError((err as Error).message);
+          }
+        }}
+        className={inputCls}
+      >
+        <option value="">Nowhere — routines stay silent</option>
+        {targets.map((t) => (
+          <option key={`${t.channel}\u0000${t.target}`} value={`${t.channel}\u0000${t.target}`}>
+            {t.channel} — {t.label}
+          </option>
+        ))}
+      </select>
+      {targets.length === 0 && (
+        <p className="mt-1.5 text-xs text-fg-faint">
+          Nothing to pick yet. A destination is a conversation that already exists on a channel
+          that can speak first — message your bot once and it appears here. A webhook never will:
+          it can only answer.
+        </p>
+      )}
+    </Section>
+  );
+}
 
 function GeneralPanel({ onError }: { onError: (e: string) => void }) {
   /** Only the explicit overrides — an empty field means "inherit". */
@@ -383,6 +467,8 @@ function GeneralPanel({ onError }: { onError: (e: string) => void }) {
           </button>
         </div>
       </Section>
+
+      <ReportDefault onError={onError} />
 
       <Section title="Deployment">
         <dl className="rounded-xl border border-line bg-raised/40 p-3 text-sm">

@@ -59,9 +59,36 @@ Inside `/data`:
 | `/data/home` | `HOME` for pi — `~/.pi/agent`, its settings and packages |
 | `/data/channels` | Installed third-party channel packages |
 | `/data/agent-home` | The agent's fixed working directory |
+| `/data/bin` | CLIs you add yourself — on `PATH`, survives rebuilds |
 
 `HOME` deliberately points at the volume. Otherwise every image rebuild would
 silently wipe the pi packages you installed.
+
+## Installing command-line tools
+
+Updating rebuilds the image, so anything installed into the container's own
+filesystem is lost — `apt-get install` or `npm i -g` inside a running container
+survives a restart, which makes it look like it stuck, and then disappears on
+the next deploy.
+
+Three places that do survive, in the order worth reaching for:
+
+**Nowhere.** `npx -y <package>` needs no install. Its cache lives under `HOME`,
+which is on the volume, so only the first run pays the download. Most MCP
+servers are published this way. The Python equivalent is `uvx <tool>`; `uv` and
+`uvx` ship in the image, and `uv` fetches its own interpreter on first use, so
+there is no Python to install either.
+
+**`/data/bin`.** On `PATH` for the portal and everything pi launches, and on the
+volume. Drop a binary there — no redeploy, no image change:
+
+```bash
+docker exec pithagoras sh -c "curl -fsSL <url> -o /data/bin/tool && chmod +x /data/bin/tool"
+```
+
+**The Dockerfile.** For anything that should be part of the deployment rather
+than a local fix — it is versioned, reproducible, and rebuilt on every update
+anyway. This is the right home for `apt-get install` lines.
 
 ## Environment
 

@@ -1,6 +1,7 @@
 import express, { type Router } from "express";
 import { nanoid } from "nanoid";
-import { getDb, listRoutineSessions } from "../db.js";
+import { getDb, getDefaultReportTo, listRoutineSessions, setDefaultReportTo } from "../db.js";
+import { channelSupervisor } from "../channels/supervisor.js";
 import { isValidSlug, slugify } from "../slug.js";
 import { isValidCron, nextRun, parseCron } from "../routines/cron.js";
 import { isOneOff, routineSupervisor, whenNext, type RoutineRow } from "../routines/supervisor.js";
@@ -39,6 +40,10 @@ const toApi = (row: RoutineRow) => {
   done: isOneOff(row) && Boolean(row.last_run),
   instructions: row.instructions,
   freshSession: Boolean(row.fresh_session),
+  /** null inherits the portal default; "" is an explicit "never report". */
+  reportChannel: row.report_channel,
+  reportTarget: row.report_target,
+  lastReportAt: row.last_report_at,
   lastRun: row.last_run,
   lastStatus: routineSupervisor.isRunning(row.slug) ? "running" : row.last_status,
   lastOutput: row.last_output,
@@ -76,6 +81,21 @@ function readTiming(
   return { schedule: "", runAt: at.toISOString() };
 }
 
+/**
+ * A destination, as three states rather than two.
+ *
+ * Absent or null inherits the portal default; the empty string is an explicit
+ * "this one stays quiet" that a later change to the default must not override.
+ */
+function readReport(body: any): { channel: string | null; target: string | null } {
+  const channel = body?.reportChannel;
+  if (channel === "") return { channel: "", target: "" };
+  if (typeof channel === "string" && channel && typeof body?.reportTarget === "string") {
+    return { channel, target: body.reportTarget };
+  }
+  return { channel: null, target: null };
+}
+
 /** Slugs own the sessions, so two routines must never share one. */
 function freeSlug(desired: string, exceptId?: string): string {
   const base = slugify(desired) || "routine";
@@ -89,8 +109,58 @@ function freeSlug(desired: string, exceptId?: string): string {
   throw new Error(`Could not find a free slug for "${desired}"`);
 }
 
+/**
+ * Somewhere a report could be sent.
+ *
+ * Built from conversations that already exist rather than asked for as a chat
+ * id: you pick "Telegram — Anirban Kar", and a channel that can only answer
+ * (a webhook) never appears, because it cannot speak first.
+ */
+function reportTargets() {
+  const rows = getDb()
+    .prepare(
+      `SELECT channel_slug, channel_key, title FROM sessions
+       WHERE kind = 'agent' AND channel_slug IS NOT NULL AND channel_key IS NOT NULL
+       ORDER BY updated_at DESC`
+    )
+    .all() as { channel_slug: string; channel_key: string; title: string }[];
+
+  const seen = new Set<string>();
+  const out: { channel: string; target: string; label: string }[] = [];
+  for (const r of rows) {
+    if (!channelSupervisor.canSend(r.channel_slug)) continue;
+    // The key is stored scoped by channel; the package expects its own key back.
+    const target = r.channel_key.startsWith(`${r.channel_slug}:`)
+      ? r.channel_key.slice(r.channel_slug.length + 1)
+      : r.channel_key;
+    const id = `${r.channel_slug}\u0000${target}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ channel: r.channel_slug, target, label: r.title });
+  }
+  return out;
+}
+
 export function routinesRouter(): Router {
   const router = express.Router();
+
+  /** Destinations a routine can report to, and the portal-wide default. */
+  router.get("/routines/report-targets", (_req, res) => {
+    res.json({ targets: reportTargets(), default: getDefaultReportTo() });
+  });
+
+  router.put("/routines/report-default", (req, res) => {
+    const { channel, target } = req.body ?? {};
+    if (!channel || !target) {
+      setDefaultReportTo(null);
+      return res.json({ default: null });
+    }
+    if (typeof channel !== "string" || typeof target !== "string") {
+      return res.status(400).json({ error: "channel and target must be strings" });
+    }
+    setDefaultReportTo({ channel, target });
+    res.json({ default: getDefaultReportTo() });
+  });
 
   const rowById = (id: string) =>
     getDb().prepare("SELECT * FROM routines WHERE id = ?").get(id) as RoutineRow | undefined;
@@ -105,6 +175,7 @@ export function routinesRouter(): Router {
   router.post("/routines", (req, res) => {
     const { name, schedule, runAt, instructions, freshSession, trigger, target, targetSessionId } =
       req.body ?? {};
+    const report = readReport(req.body);
     if (typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ error: "name required" });
     }
@@ -136,8 +207,10 @@ export function routinesRouter(): Router {
           : timing.runAt;
     getDb()
       .prepare(
-        `INSERT INTO routines (id, slug, name, trigger, schedule, run_at, instructions, fresh_session, next_run, target, target_session_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO routines
+           (id, slug, name, trigger, schedule, run_at, instructions, fresh_session, next_run,
+            target, target_session_id, report_channel, report_target)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -150,7 +223,9 @@ export function routinesRouter(): Router {
         freshSession ? 1 : 0,
         next,
         targetCol,
-        targetSessionCol
+        targetSessionCol,
+        report.channel,
+        report.target
       );
     res.json(toApi(rowById(id)!));
   });
@@ -220,6 +295,11 @@ export function routinesRouter(): Router {
     if (typeof instructions === "string") {
       sets.push("instructions = ?");
       values.push(instructions.trim());
+    }
+    if ("reportChannel" in (req.body ?? {})) {
+      const report = readReport(req.body);
+      sets.push("report_channel = ?", "report_target = ?");
+      values.push(report.channel, report.target);
     }
     if (typeof enabled === "boolean") {
       sets.push("enabled = ?");

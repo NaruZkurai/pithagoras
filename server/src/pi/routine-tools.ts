@@ -1,9 +1,15 @@
 import { Type } from "typebox";
 import { nanoid } from "nanoid";
-import { getDb } from "../db.js";
+import { getDb, type SessionRow } from "../db.js";
+import { unscopeKey } from "../agent.js";
+import { channelSupervisor } from "../channels/supervisor.js";
 import { isValidSlug, slugify } from "../slug.js";
 import { isValidCron, nextRun, parseCron } from "../routines/cron.js";
-import { routineSupervisor, whenNext, type RoutineRow } from "../routines/supervisor.js";
+import {
+  routineSupervisor,
+  whenNext,
+  type RoutineRow,
+} from "../routines/supervisor.js";
 
 /**
  * Routine management, as tools the agent can call.
@@ -30,7 +36,9 @@ const ok = (text: string) => ({ output: text, isError: false });
 const bad = (text: string) => ({ output: text, isError: true });
 
 const rows = () =>
-  getDb().prepare("SELECT * FROM routines ORDER BY created_at ASC").all() as RoutineRow[];
+  getDb()
+    .prepare("SELECT * FROM routines ORDER BY created_at ASC")
+    .all() as RoutineRow[];
 
 const byName = (needle: string): RoutineRow | undefined => {
   const key = needle.trim().toLowerCase();
@@ -57,168 +65,258 @@ const describe = (r: RoutineRow) => ({
 function timing(schedule?: string, runAt?: string) {
   const cron = (schedule ?? "").trim();
   const at = (runAt ?? "").trim();
-  if (cron && at) return { error: "Give a schedule or a one-off time, not both" };
-  if (!cron && !at) return { error: "Needs either a cron schedule or a time to run once" };
+  if (cron && at)
+    return { error: "Give a schedule or a one-off time, not both" };
+  if (!cron && !at)
+    return { error: "Needs either a cron schedule or a time to run once" };
   if (cron) {
     const problem = isValidCron(cron);
-    return problem ? { error: problem } : { schedule: cron, runAt: null as string | null };
+    return problem
+      ? { error: problem }
+      : { schedule: cron, runAt: null as string | null };
   }
   const when = new Date(at);
-  if (Number.isNaN(when.getTime())) return { error: `"${at}" is not a time I can read` };
+  if (Number.isNaN(when.getTime()))
+    return { error: `"${at}" is not a time I can read` };
   return { schedule: "", runAt: when.toISOString() };
 }
 
 function freeSlug(desired: string, exceptId?: string): string {
   const base = slugify(desired) || "routine";
-  const taken = new Set(rows().filter((r) => r.id !== exceptId).map((r) => r.slug));
+  const taken = new Set(
+    rows()
+      .filter((r) => r.id !== exceptId)
+      .map((r) => r.slug),
+  );
   if (!taken.has(base)) return base;
-  for (let n = 2; n < 500; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
+  for (let n = 2; n < 500; n++)
+    if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
   throw new Error(`No free slug for "${desired}"`);
 }
 
+/**
+ * Where a routine created from a conversation should report.
+ *
+ * Back into the conversation that asked for it. Someone setting up a morning
+ * summary from a Telegram chat means "tell me here" — anything else makes them
+ * configure a destination for a thing they just described in one sentence.
+ *
+ * The portal default remains the fallback, for a routine created any other way
+ * — and for a conversation whose channel cannot speak first. A browser chat is
+ * an agent session like any other, but "reply in the portal" is not somewhere a
+ * report can be delivered, and pointing a routine there would be worse than
+ * leaving it on the default.
+ */
+export function reportBackTo(sessionId?: string): {
+  channel: string | null;
+  target: string | null;
+} {
+  if (!sessionId) return { channel: null, target: null };
+  const session = getDb()
+    .prepare("SELECT * FROM sessions WHERE id = ?")
+    .get(sessionId) as SessionRow | undefined;
+  if (!session?.channel_slug || !session.channel_key)
+    return { channel: null, target: null };
+  if (!channelSupervisor.canSend(session.channel_slug))
+    return { channel: null, target: null };
+  return {
+    channel: session.channel_slug,
+    target: unscopeKey(session.channel_slug, session.channel_key),
+  };
+}
+
 /** An ExtensionFactory — see pi's InlineExtension. */
-export function routineTools(pi: any): void {
-  pi.registerTool({
-    name: "routines_list",
-    label: "List routines",
-    description:
-      "List the scheduled routines: what each does, when it next runs, and how the last run went.",
-    promptSnippet: "routines_list — see the scheduled work that already exists",
-    parameters: Type.Object({}),
-    async execute() {
-      const all = rows();
-      if (!all.length) return ok("No routines are set up.");
-      return ok(JSON.stringify(all.map(describe), null, 2));
-    },
-  });
+export function routineTools(sessionId?: string) {
+  return (pi: any): void => {
+    pi.registerTool({
+      name: "routines_list",
+      label: "List routines",
+      description:
+        "List the scheduled routines: what each does, when it next runs, and how the last run went.",
+      promptSnippet:
+        "routines_list — see the scheduled work that already exists",
+      parameters: Type.Object({}),
+      async execute() {
+        const all = rows();
+        if (!all.length) return ok("No routines are set up.");
+        return ok(JSON.stringify(all.map(describe), null, 2));
+      },
+    });
 
-  pi.registerTool({
-    name: "routine_create",
-    label: "Create routine",
-    description:
-      "Schedule work to happen later, either repeatedly on a cron schedule or once at a given time. " +
-      "The instructions are what you will be asked to do when it fires, so write them as a standing " +
-      "instruction to yourself — nobody is there to answer a question.",
-    promptSnippet: "routine_create — schedule work for later, once or repeatedly",
-    parameters: Type.Object({
-      name: Type.String({ description: "Short human name, e.g. 'Morning summary'" }),
-      instructions: Type.String({ description: "What to do when it fires" }),
-      schedule: Type.Optional(
-        Type.String({ description: "Five-field cron or an @shorthand, e.g. '0 9 * * 1-5' or '@daily'" })
-      ),
-      runAt: Type.Optional(
-        Type.String({ description: "ISO 8601 instant for a one-off, e.g. '2026-08-01T09:00:00Z'" })
-      ),
-      freshSession: Type.Optional(
-        Type.Boolean({ description: "Start each run with no memory of the last one. Defaults to false." })
-      ),
-    }),
-    async execute(_id: string, p: any) {
-      if (!p.name?.trim()) return bad("A routine needs a name");
-      const t = timing(p.schedule, p.runAt);
-      if ("error" in t) return bad(t.error!);
-
-      const id = nanoid(10);
-      const slug = freeSlug(p.name);
-      getDb()
-        .prepare(
-          `INSERT INTO routines (id, slug, name, schedule, run_at, instructions, fresh_session, next_run)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          id,
-          slug,
-          p.name.trim(),
-          t.schedule,
-          t.runAt,
-          (p.instructions ?? "").trim(),
-          p.freshSession ? 1 : 0,
-          t.schedule ? (nextRun(parseCron(t.schedule))?.toISOString() ?? null) : t.runAt
-        );
-      routineSupervisor.refreshSchedules();
-
-      const created = byName(slug)!;
-      return ok(`Created "${created.name}". Next run: ${whenNext(created) ?? "not scheduled"}`);
-    },
-  });
-
-  pi.registerTool({
-    name: "routine_update",
-    label: "Update routine",
-    description:
-      "Change an existing routine: its schedule, its instructions, its name, or whether it is enabled. " +
-      "Only the fields you pass are changed.",
-    parameters: Type.Object({
-      routine: Type.String({ description: "Name or slug of the routine to change" }),
-      name: Type.Optional(Type.String()),
-      instructions: Type.Optional(Type.String()),
-      schedule: Type.Optional(Type.String({ description: "Cron. Clears any one-off time." })),
-      runAt: Type.Optional(Type.String({ description: "ISO instant. Clears any cron schedule." })),
-      enabled: Type.Optional(
-        Type.Boolean({ description: "False stops it running while keeping it. This is how you cancel one." })
-      ),
-    }),
-    async execute(_id: string, p: any) {
-      const row = byName(p.routine ?? "");
-      if (!row) return bad(`No routine called "${p.routine}"`);
-
-      const sets: string[] = [];
-      const values: unknown[] = [];
-
-      if (typeof p.name === "string" && p.name.trim()) {
-        sets.push("name = ?");
-        values.push(p.name.trim());
-      }
-      if (typeof p.instructions === "string") {
-        sets.push("instructions = ?");
-        values.push(p.instructions.trim());
-      }
-      if (typeof p.enabled === "boolean") {
-        sets.push("enabled = ?");
-        values.push(p.enabled ? 1 : 0);
-      }
-      if (p.schedule !== undefined || p.runAt !== undefined) {
+    pi.registerTool({
+      name: "routine_create",
+      label: "Create routine",
+      description:
+        "Schedule work to happen later, either repeatedly on a cron schedule or once at a given time. " +
+        "The instructions are what you will be asked to do when it fires, so write them as a standing " +
+        "instruction to yourself — nobody is there to answer a question.",
+      promptSnippet:
+        "routine_create — schedule work for later, once or repeatedly",
+      parameters: Type.Object({
+        name: Type.String({
+          description: "Short human name, e.g. 'Morning summary'",
+        }),
+        instructions: Type.String({ description: "What to do when it fires" }),
+        schedule: Type.Optional(
+          Type.String({
+            description:
+              "Five-field cron or an @shorthand, e.g. '0 9 * * 1-5' or '@daily'",
+          }),
+        ),
+        runAt: Type.Optional(
+          Type.String({
+            description:
+              "ISO 8601 instant for a one-off, e.g. '2026-08-01T09:00:00Z'",
+          }),
+        ),
+        freshSession: Type.Optional(
+          Type.Boolean({
+            description:
+              "Start each run with no memory of the last one. Defaults to false.",
+          }),
+        ),
+      }),
+      async execute(_id: string, p: any) {
+        if (!p.name?.trim()) return bad("A routine needs a name");
         const t = timing(p.schedule, p.runAt);
         if ("error" in t) return bad(t.error!);
-        sets.push("schedule = ?", "run_at = ?");
-        values.push(t.schedule, t.runAt);
-        // A one-off given a new time is armed again rather than looking done.
-        if (t.runAt && t.runAt !== row.run_at) {
-          sets.push("last_run = NULL", "last_status = NULL", "last_output = NULL");
+
+        const id = nanoid(10);
+        const slug = freeSlug(p.name);
+        const back = reportBackTo(sessionId);
+        getDb()
+          .prepare(
+            `INSERT INTO routines
+           (id, slug, name, schedule, run_at, instructions, fresh_session, next_run,
+            report_channel, report_target)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            id,
+            slug,
+            p.name.trim(),
+            t.schedule,
+            t.runAt,
+            (p.instructions ?? "").trim(),
+            p.freshSession ? 1 : 0,
+            t.schedule
+              ? (nextRun(parseCron(t.schedule))?.toISOString() ?? null)
+              : t.runAt,
+            back.channel,
+            back.target,
+          );
+        routineSupervisor.refreshSchedules();
+
+        const created = byName(slug)!;
+        return ok(
+          `Created "${created.name}". Next run: ${whenNext(created) ?? "not scheduled"}.` +
+            (back.channel
+              ? " It will report back into this conversation."
+              : ""),
+        );
+      },
+    });
+
+    pi.registerTool({
+      name: "routine_update",
+      label: "Update routine",
+      description:
+        "Change an existing routine: its schedule, its instructions, its name, or whether it is enabled. " +
+        "Only the fields you pass are changed.",
+      parameters: Type.Object({
+        routine: Type.String({
+          description: "Name or slug of the routine to change",
+        }),
+        name: Type.Optional(Type.String()),
+        instructions: Type.Optional(Type.String()),
+        schedule: Type.Optional(
+          Type.String({ description: "Cron. Clears any one-off time." }),
+        ),
+        runAt: Type.Optional(
+          Type.String({
+            description: "ISO instant. Clears any cron schedule.",
+          }),
+        ),
+        enabled: Type.Optional(
+          Type.Boolean({
+            description:
+              "False stops it running while keeping it. This is how you cancel one.",
+          }),
+        ),
+      }),
+      async execute(_id: string, p: any) {
+        const row = byName(p.routine ?? "");
+        if (!row) return bad(`No routine called "${p.routine}"`);
+
+        const sets: string[] = [];
+        const values: unknown[] = [];
+
+        if (typeof p.name === "string" && p.name.trim()) {
+          sets.push("name = ?");
+          values.push(p.name.trim());
         }
-      }
-      if (!sets.length) return bad("Nothing to change — pass at least one field");
+        if (typeof p.instructions === "string") {
+          sets.push("instructions = ?");
+          values.push(p.instructions.trim());
+        }
+        if (typeof p.enabled === "boolean") {
+          sets.push("enabled = ?");
+          values.push(p.enabled ? 1 : 0);
+        }
+        if (p.schedule !== undefined || p.runAt !== undefined) {
+          const t = timing(p.schedule, p.runAt);
+          if ("error" in t) return bad(t.error!);
+          sets.push("schedule = ?", "run_at = ?");
+          values.push(t.schedule, t.runAt);
+          // A one-off given a new time is armed again rather than looking done.
+          if (t.runAt && t.runAt !== row.run_at) {
+            sets.push(
+              "last_run = NULL",
+              "last_status = NULL",
+              "last_output = NULL",
+            );
+          }
+        }
+        if (!sets.length)
+          return bad("Nothing to change — pass at least one field");
 
-      sets.push("updated_at = datetime('now')");
-      getDb().prepare(`UPDATE routines SET ${sets.join(", ")} WHERE id = ?`).run(...values, row.id);
-      routineSupervisor.refreshSchedules();
+        sets.push("updated_at = datetime('now')");
+        getDb()
+          .prepare(`UPDATE routines SET ${sets.join(", ")} WHERE id = ?`)
+          .run(...values, row.id);
+        routineSupervisor.refreshSchedules();
 
-      const after = byName(row.slug)!;
-      return ok(`Updated "${after.name}". Next run: ${whenNext(after) ?? "not scheduled"}`);
-    },
-  });
+        const after = byName(row.slug)!;
+        return ok(
+          `Updated "${after.name}". Next run: ${whenNext(after) ?? "not scheduled"}`,
+        );
+      },
+    });
 
-  pi.registerTool({
-    name: "routine_run",
-    label: "Run routine now",
-    description:
-      "Run a routine immediately without waiting for its schedule. Useful for checking that a routine " +
-      "you just created does what was intended.",
-    parameters: Type.Object({
-      routine: Type.String({ description: "Name or slug of the routine to run" }),
-    }),
-    async execute(_id: string, p: any) {
-      const row = byName(p.routine ?? "");
-      if (!row) return bad(`No routine called "${p.routine}"`);
-      try {
-        const after = await routineSupervisor.run(row, "manual");
-        const output = (after.last_output ?? "").trim();
-        return after.last_status === "ok"
-          ? ok(output || "Ran, with no output.")
-          : bad(`It failed: ${output}`);
-      } catch (e) {
-        return bad((e as Error).message);
-      }
-    },
-  });
+    pi.registerTool({
+      name: "routine_run",
+      label: "Run routine now",
+      description:
+        "Run a routine immediately without waiting for its schedule. Useful for checking that a routine " +
+        "you just created does what was intended.",
+      parameters: Type.Object({
+        routine: Type.String({
+          description: "Name or slug of the routine to run",
+        }),
+      }),
+      async execute(_id: string, p: any) {
+        const row = byName(p.routine ?? "");
+        if (!row) return bad(`No routine called "${p.routine}"`);
+        try {
+          const after = await routineSupervisor.run(row, "manual");
+          const output = (after.last_output ?? "").trim();
+          return after.last_status === "ok"
+            ? ok(output || "Ran, with no output.")
+            : bad(`It failed: ${output}`);
+        } catch (e) {
+          return bad((e as Error).message);
+        }
+      },
+    });
+  };
 }

@@ -1,6 +1,24 @@
-import { getDb } from "../db.js";
-import { resolveChannelSession } from "../agent.js";
+import {
+  addNote,
+  findChannelSession,
+  getDb,
+  getDefaultReportTo,
+  listToolRules,
+  takeNotes,
+} from "../db.js";
+import { resolveChannelSession, scopeKey } from "../agent.js";
 import { sessions, EXECUTOR_KIND } from "../session-manager.js";
+import { readAnswer, recordAnswer } from "../questions.js";
+import {
+  hasPrimary,
+  lower,
+  markAnnounced,
+  personKey,
+  primaryName,
+  seen,
+  senderFraming,
+  type PersonRow,
+} from "../people.js";
 import { loadChannels, type LoadedChannel } from "./loader.js";
 
 /**
@@ -35,6 +53,13 @@ interface Running {
   since: string;
   controller: AbortController;
   stop?: () => Promise<void> | void;
+  /** Optional: not every transport can speak first. A webhook cannot. */
+  send?: (target: string, text: string) => Promise<void> | void;
+  /** Optional: platform-native question rendering, with a text fallback. */
+  prompt?: (
+    target: string,
+    request: { id: string; method: string; question: string; options?: string[] }
+  ) => Promise<{ value?: unknown; cancelled?: boolean } | null>;
   log: { at: string; text: string }[];
 }
 
@@ -155,6 +180,8 @@ class ChannelSupervisor {
           this.ask(row.id, text, meta),
       });
       live.stop = handle?.stop;
+      live.send = handle?.send;
+      live.prompt = handle?.prompt;
       live.state = "running";
       log("started");
     } catch (e) {
@@ -162,6 +189,57 @@ class ChannelSupervisor {
       live.error = (e as Error).message;
       log(`failed to start: ${live.error}`);
     }
+  }
+
+  /** Can this channel speak first? Only running channels that implement send. */
+  canSend(slug: string): boolean {
+    return Boolean(this.liveBySlug(slug)?.send);
+  }
+
+  /**
+   * Say something nobody asked for — a routine reporting back.
+   *
+   * Deliberately not routed through a session: this is the portal talking, not
+   * the agent mid-conversation, and pushing it through the channel's session
+   * would leave a message in the transcript that nobody sent.
+   */
+  async send(slug: string, target: string, text: string): Promise<void> {
+    const live = this.liveBySlug(slug);
+    if (!live) throw new Error(`Channel "${slug}" is not running`);
+    if (!live.send) throw new Error(`"${slug}" cannot start a conversation, only answer one`);
+    if (!text.trim()) return;
+    await live.send(target, text);
+
+    // The agent said this, so its conversation has to know it said it. Without
+    // this, a routine reports into a chat and the follow-up question — "what did
+    // you mean by that?" — reaches an agent with no idea what "that" is.
+    const session = findChannelSession(scopeKey(slug, target));
+    if (session) addNote(session.id, text);
+  }
+
+  /** Tell the primary user that somebody new turned up — once per person. */
+  private async announce(person: PersonRow, slug: string): Promise<void> {
+    if (person.announced_at) return;
+    markAnnounced(person.key);
+    const to = getDefaultReportTo();
+    if (!to) return;
+    try {
+      await this.send(
+        to.channel,
+        to.target,
+        `${person.name} messaged me on ${slug} and I do not know them, so I said no. ` +
+          `Add them in Settings → People if they should get through.`
+      );
+    } catch {
+      // Nothing to do about it here; they are recorded either way.
+    }
+  }
+
+  private liveBySlug(slug: string): Running | undefined {
+    for (const live of this.running.values()) {
+      if (live.slug === slug && live.state === "running") return live;
+    }
+    return undefined;
   }
 
   private async stopChannel(id: string): Promise<void> {
@@ -193,6 +271,46 @@ class ChannelSupervisor {
       | undefined;
     if (!row) throw new Error("This channel has been removed");
 
+    // Who is speaking, as opposed to which conversation this is. A package that
+    // cannot tell says so, and an anonymous sender is a stranger by definition.
+    const from = (meta.from ?? null) as { id?: unknown; name?: unknown } | null;
+    const senderId = from && typeof from.id === "string" && from.id ? from.id : null;
+    const person = senderId
+      ? seen(personKey(row.slug, senderId), typeof from?.name === "string" ? from.name : "")
+      : null;
+
+    if (person && person.role === "unknown" && hasPrimary()) {
+      // Refused before a session exists: an unclassified sender never reaches
+      // the agent at all, so there is nothing for them to talk it into.
+      await this.announce(person, row.slug);
+      return (
+        "I only talk to people I have been introduced to. I have let my primary user know you " +
+        "got in touch — if they add you, try again."
+      );
+    }
+
+    // The primary user answering a question a colleague's session raised. Handled
+    // before anything else: it is not a turn in this conversation, it is a reply
+    // destined for a different one, and routing it through the agent would have
+    // it answering itself.
+    if (person?.role === "primary") {
+      const pending = readAnswer(text);
+      if (pending) {
+        const { question, answer } = pending;
+        try {
+          await this.send(
+            question.channel_slug,
+            question.channel_key,
+            `${primaryName()} says: ${answer}`
+          );
+        } catch (e) {
+          return `Could not get that back to ${question.person_name}: ${(e as Error).message}`;
+        }
+        recordAnswer(question.id, answer);
+        return `Passed on to ${question.person_name}.`;
+      }
+    }
+
     const key = typeof meta.session === "string" ? meta.session : "";
     if (!key) {
       // Loud on purpose: silently lumping every chat into one session is the
@@ -208,6 +326,23 @@ class ChannelSupervisor {
       title: typeof meta.title === "string" ? meta.title : undefined,
       executor: EXECUTOR_KIND,
     });
+
+    // A conversation is only ever as trusted as its least trusted participant,
+    // and it does not recover: a group where a guest has spoken keeps serving
+    // guest-level context even when the next message is from the primary user.
+    // Before a primary is named nobody is a stranger, so nothing is downgraded
+    // either — otherwise the upgrade itself would quietly strip context from
+    // every existing conversation.
+    if (person && hasPrimary()) {
+      const settled = lower(session.role, person.role);
+      if (settled !== session.role) {
+        getDb().prepare("UPDATE sessions SET role = ? WHERE id = ?").run(settled, session.id);
+        // The running pi process loaded context for the old role, so it has to
+        // go before the next turn rather than after.
+        await sessions.shutdownSession(session.id);
+      }
+      sessions.setSpeaker(session.id, person);
+    }
 
     // Everything below jumps the queue on purpose. ask() serialises per
     // session, so anything meant to affect the run in progress has to be
@@ -252,7 +387,7 @@ class ChannelSupervisor {
     const wantsTools = Boolean(row.relay_tools);
     const relaying = packageReply && (wantsProgress || wantsTools);
 
-    return sessions.ask(session.id, withInstructions(text, row.instructions), {
+    return sessions.ask(session.id, withInstructions(text, row.instructions, person, takeNotes(session.id)), {
       onReply: relaying ? packageReply : undefined,
       streamText: wantsProgress,
       // Dialogs are relayed whatever the toggles say. They are not progress
@@ -272,6 +407,44 @@ class ChannelSupervisor {
         // decline immediately instead of holding the run until it times out.
         if (!packageReply) {
           sessions.respondUi(session.id, request.id, { cancelled: true });
+          return;
+        }
+
+        // Let the channel present it natively first — buttons where a platform
+        // has buttons. Numbered text is the fallback, which is what a channel
+        // without the affordance gets, and what any channel gets for a question
+        // that does not fit one.
+        const native = this.running.get(row.id)?.prompt;
+        if (native && typeof meta.session === "string") {
+          // The package's own key, as it supplied it — the scoped form is the
+          // portal's business, not the transport's.
+          void native(meta.session, {
+            id: request.id,
+            method: request.method,
+            question,
+            options: request.options,
+          })
+            .then((answer) => {
+              if (!answer) {
+                // Declined it: fall back to asking in words.
+                this.pendingUi.set(session.id, {
+                  id: request.id,
+                  method: request.method,
+                  options: request.options,
+                });
+                void packageReply?.(question);
+                return;
+              }
+              sessions.respondUi(session.id, request.id, answer);
+            })
+            .catch(() => {
+              this.pendingUi.set(session.id, {
+                id: request.id,
+                method: request.method,
+                options: request.options,
+              });
+              void packageReply?.(question);
+            });
           return;
         }
 
@@ -369,10 +542,43 @@ function interpretAnswer(
  * systemPrompt as a getter with no setter, and editing the instructions should
  * take effect on the next message rather than the next restart.
  */
-function withInstructions(text: string, instructions: string): string {
+/**
+ * The message, plus what the agent needs to know to answer it properly.
+ *
+ * Who is speaking is attached to every message rather than stated once at
+ * session start, because in a group the sender changes between turns and an
+ * agent working from the first one answers the wrong person.
+ */
+function withInstructions(
+  text: string,
+  instructions: string,
+  person?: PersonRow | null,
+  notes: string[] = []
+): string {
+  const parts = [text];
+  if (notes.length) {
+    parts.push(
+      "<sent-since-you-last-spoke>\n" +
+        "You sent these into this conversation while it was idle — a routine's report, or an " +
+        "answer passed back. They are yours and the other person has already read them.\n\n" +
+        notes.join("\n\n---\n\n") +
+        "\n</sent-since-you-last-spoke>"
+    );
+  }
+  const who = person
+    ? senderFraming(
+        person,
+        primaryName(),
+        Boolean(getDefaultReportTo()),
+        listToolRules()
+          .filter((r) => r.role === person.role || r.role === "all")
+          .map((r) => `${r.tool}: ${r.pattern}`)
+      )
+    : "";
+  if (who) parts.push(`<speaker>\n${who}\n</speaker>`);
   const extra = (instructions ?? "").trim();
-  if (!extra) return text;
-  return `${text}\n\n<channel-instructions>\n${extra}\n</channel-instructions>`;
+  if (extra) parts.push(`<channel-instructions>\n${extra}\n</channel-instructions>`);
+  return parts.join("\n\n");
 }
 
 const parseConfig = (raw: string): Record<string, unknown> => {

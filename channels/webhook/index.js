@@ -14,6 +14,14 @@ export const manifest = {
   blurb: "POST a message in, get the agent's reply in the response body.",
   fields: [
     {
+      key: "callbackUrl",
+      label: "Callback URL",
+      hint:
+        "Optional. Without one this channel can only answer a request that is already open — " +
+        "so it never receives anything sent later, like an answer to a question it raised.",
+      placeholder: "https://chat.internal/hooks/agent",
+    },
+    {
       key: "secret",
       label: "Shared secret",
       secret: true,
@@ -63,9 +71,17 @@ export async function start(ctx) {
 
     let message;
     let session;
+    let from = null;
     try {
       const body = JSON.parse((await readBody(req)) || "{}");
       message = typeof body.message === "string" ? body.message.trim() : "";
+      // Who the caller is speaking for, when it knows. The secret authenticates
+      // the caller, not the person — so this is only as trustworthy as whatever
+      // is holding the secret, and it says so in the docs.
+      from =
+        body.from && typeof body.from.id === "string" && body.from.id
+          ? { id: body.from.id, name: typeof body.from.name === "string" ? body.from.name : body.from.id }
+          : null;
       // Only the caller knows what counts as a conversation here, so it picks.
       // Everything without one shares a single session, which is what you want
       // for a cron job talking to itself.
@@ -76,7 +92,7 @@ export async function start(ctx) {
     if (!message) return send(400, { error: "message required" });
 
     try {
-      const reply = await ctx.ask(message, { session, title: `Webhook ${session}` });
+      const reply = await ctx.ask(message, { session, title: `Webhook ${session}`, from });
       send(200, { reply });
     } catch (e) {
       ctx.log(`request failed: ${e.message}`);
@@ -97,6 +113,27 @@ export async function start(ctx) {
     async stop() {
       await new Promise((resolve) => server.close(resolve));
     },
+
+    ...(ctx.config.callbackUrl
+      ? {
+          /**
+           * Speak first, when somebody has said where to.
+           *
+           * The conversation key travels with the message: the receiving end has
+           * to know which of its conversations this belongs to, and it is the
+           * one that chose the key in the first place.
+           */
+          async send(target, text) {
+            const res = await fetch(ctx.config.callbackUrl, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ session: target, message: text }),
+              signal: ctx.signal,
+            });
+            if (!res.ok) throw new Error(`Callback returned ${res.status}`);
+          },
+        }
+      : {}),
   };
 }
 

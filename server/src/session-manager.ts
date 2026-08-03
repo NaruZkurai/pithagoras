@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { PersonRow, Role } from "./people.js";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { PiClient } from "./pi/types.js";
@@ -67,6 +68,14 @@ class SessionManager extends EventEmitter {
   private live = new Map<string, LiveSession>();
   /** In-flight ask() per session, so messages in one chat are answered in turn. */
   private asking = new Map<string, Promise<string>>();
+  /**
+   * Who sent the message being handled, per session.
+   *
+   * Per message rather than per session because a group conversation has many
+   * senders: the guard asks this at tool-call time so capability follows whoever
+   * is actually speaking, not whoever spoke first.
+   */
+  private speaker = new Map<string, PersonRow>();
 
   constructor() {
     super();
@@ -127,6 +136,13 @@ class SessionManager extends EventEmitter {
       // tools so it stays a focused sub-agent with a database but no other
       // cross-thread memory.
       threadId: session.kind === "thread" ? sessionId : undefined,
+      // A routine run gets the report tool instead: it is the one kind of
+      // session with nobody on the other end to read what it found.
+      routineSlug: session.kind === "routine" ? session.routine_slug : undefined,
+      // The session's settled role picks the context files; the live one gates
+      // each tool call, so a group conversation follows whoever is speaking.
+      role: session.role,
+      roleNow: () => this.speakerRole(sessionId),
     });
 
     // pi writes the file lazily, so it usually does not exist yet at launch.
@@ -435,6 +451,30 @@ class SessionManager extends EventEmitter {
    * Whether a run is in flight. Checked before queueing an interrupt, which
    * would otherwise wait politely behind the very task it means to stop.
    */
+  setSpeaker(sessionId: string, person: PersonRow): void {
+    this.speaker.set(sessionId, person);
+  }
+
+  /**
+   * The role in force right now.
+   *
+   * Falls back to the conversation's own role, never to "primary". Only channel
+   * messages identify a speaker; a message sent through the portal's prompt
+   * endpoint identifies nobody, and defaulting to primary there handed a
+   * colleague's conversation full privileges — the conversation is still theirs,
+   * and they still read whatever comes back.
+   */
+  speakerRole(sessionId: string): Role {
+    const live = this.speaker.get(sessionId);
+    if (live) return live.role;
+    const row = getSession(sessionId);
+    return (row?.role as Role) ?? "guest";
+  }
+
+  currentSpeaker(sessionId: string): PersonRow | undefined {
+    return this.speaker.get(sessionId);
+  }
+
   isBusy(sessionId: string): boolean {
     if (this.asking.has(sessionId)) return true;
     return getSession(sessionId)?.status === "running";
@@ -476,6 +516,12 @@ class SessionManager extends EventEmitter {
     live.client.dispose();
     this.live.delete(sessionId);
     await live.executor.cleanup?.(sessionId).catch(() => {});
+  }
+
+  /** Drop the running process so the next turn rebuilds it — used when a
+   * session's role changes and its context files must be reloaded. */
+  async shutdownSession(sessionId: string): Promise<void> {
+    await this.stop(sessionId);
   }
 
   async shutdown(): Promise<void> {

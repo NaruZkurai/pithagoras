@@ -26,6 +26,10 @@ export CHANNELS_DIR="${CHANNELS_DIR:-$PWD/data/channels}"
 export PI_PROVIDER="${PI_PROVIDER:-local}"
 export PI_MODEL="${PI_MODEL:-gemma-4}"
 export LLAMA_BASE_URL="${LLAMA_BASE_URL:-http://127.0.0.1:8080}"
+# Where the portal keeps CLIs it wants on pi's PATH. The upstream image uses
+# /data/bin; on the host that is not writable, so use a dir under the repo.
+export BIN_DIR="${BIN_DIR:-$PWD/data/bin}"
+mkdir -p "$BIN_DIR"
 # npm puts the pi CLI shim (and friends) here; make them visible to the portal
 # so extension listing etc. can find them.
 export PATH="$PWD/node_modules/.bin:$PATH"

@@ -148,7 +148,25 @@ function Shell({
     };
   }, [sessionId, refreshSessions]);
 
-  const active = sessions.find((s) => s.id === sessionId) ?? null;
+  // The task list deliberately excludes agent and routine sessions, but their
+  // URLs still have to open — the Agent and Routines pages link straight to
+  // them, and without this those links landed on the empty state.
+  const [other, setOther] = useState<Session | null>(null);
+  const listed = sessions.find((s) => s.id === sessionId) ?? null;
+
+  useEffect(() => {
+    if (!sessionId || listed) return setOther(null);
+    let cancelled = false;
+    api
+      .session(sessionId)
+      .then((s) => !cancelled && setOther(s))
+      .catch(() => !cancelled && setOther(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, listed]);
+
+  const active = listed ?? (other?.id === sessionId ? other : null);
 
   return (
     <div className="flex h-screen bg-canvas">

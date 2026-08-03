@@ -43,6 +43,10 @@ export interface SessionRow {
    * channel — and the prefix keeps two channels using the same key apart.
    */
   channel_key: string | null;
+  /** Routine sessions only: the slug of the routine that owns this session. */
+  routine_slug: string | null;
+  /** Lowest role this conversation has served — see the migration for why. */
+  role: "primary" | "colleague" | "guest" | "unknown";
 }
 
 export interface EventRow {
@@ -140,6 +144,13 @@ export function getDb(): Database.Database {
       instructions TEXT NOT NULL DEFAULT '',
       -- Start each run in a clean session instead of the routine's own.
       fresh_session INTEGER NOT NULL DEFAULT 0,
+      -- Where a run's report goes. NULL inherits the portal default; '' means
+      -- this routine never reports, whatever the default is.
+      report_channel TEXT,
+      report_target TEXT,
+      -- When a run last reached a person. Distinguishes "nothing to say" from
+      -- "wrote it out and never sent it", which look identical otherwise.
+      last_report_at TEXT,
       last_run TEXT,
       last_status TEXT,
       last_output TEXT,
@@ -151,6 +162,60 @@ export function getDb(): Database.Database {
 
     -- Portal-wide defaults applied to every new session. Env vars are the
     -- fallback, so an untouched install still works out of the box.
+    -- Who the agent talks to. Identified by the platform's own stable id,
+    -- scoped by channel, because a display name is chosen by whoever types it.
+    CREATE TABLE IF NOT EXISTS people (
+      key TEXT PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      -- primary | colleague | guest | unknown
+      role TEXT NOT NULL DEFAULT 'unknown',
+      notes TEXT NOT NULL DEFAULT '',
+      first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen TEXT,
+      announced_at TEXT
+    );
+
+    -- Questions a colleague's session could not answer, waiting on the primary
+    -- user. The id is short because a human types it back in a chat.
+    CREATE TABLE IF NOT EXISTS questions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      person_key TEXT NOT NULL,
+      person_name TEXT NOT NULL DEFAULT '',
+      channel_slug TEXT NOT NULL,
+      channel_key TEXT NOT NULL,
+      question TEXT NOT NULL,
+      asked_at TEXT NOT NULL DEFAULT (datetime('now')),
+      answered_at TEXT,
+      answer TEXT
+    );
+
+    -- Things the portal said into a conversation while nobody was talking to
+    -- it: a routine's report, an answer relayed back. Held until that
+    -- conversation next runs, then folded into its context — otherwise the
+    -- agent is asked "why did you say that?" about a message it never saw.
+    CREATE TABLE IF NOT EXISTS notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      consumed_at TEXT
+    );
+
+    -- Exceptions to what a non-primary role may run. Without these the only
+    -- choice is read-only or full trust, and the useful middle — "colleagues may
+    -- list my inbox, nothing else" — has nowhere to live.
+    CREATE TABLE IF NOT EXISTS tool_rules (
+      id TEXT PRIMARY KEY,
+      -- colleague | guest | all (both)
+      role TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      -- Glob against the command for bash, the path for file tools.
+      pattern TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -258,6 +323,12 @@ function migrate(d: Database.Database): void {
   if (!names.includes("pi_session_file")) {
     d.exec("ALTER TABLE sessions ADD COLUMN pi_session_file TEXT");
   }
+  // The lowest role this session has ever served. Ratchets down and never up:
+  // once a guest has spoken in a conversation, the private context files stay
+  // out of it even if the next message is from the primary user.
+  if (!names.includes("role")) {
+    d.exec("ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'primary'");
+  }
 
   if (!names.includes("kind")) {
     d.exec("ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'");
@@ -313,7 +384,13 @@ function migrate(d: Database.Database): void {
   if (routineCols.length && !routineCols.includes("target_session_id")) {
     d.exec("ALTER TABLE routines ADD COLUMN target_session_id TEXT");
   }
+  for (const col of ["report_channel", "report_target", "last_report_at"]) {
+    if (routineCols.length && !routineCols.includes(col)) {
+      d.exec(`ALTER TABLE routines ADD COLUMN ${col} TEXT`);
+    }
+  }
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_routines_slug ON routines(slug)");
+  d.exec("CREATE INDEX IF NOT EXISTS idx_notes_pending ON notes(session_id, consumed_at)");
 }
 
 export function createSession(row: {
@@ -786,3 +863,67 @@ export function deleteModelServer(name: string): void {
   getDb().prepare("DELETE FROM model_servers WHERE name = ?").run(name);
 }
 
+/** Where reports go when a routine does not name a destination of its own. */
+export interface ReportTo {
+  channel: string;
+  target: string;
+}
+
+export function getDefaultReportTo(): ReportTo | null {
+  const stored = getStoredSettings() as Record<string, string>;
+  const channel = stored.report_channel;
+  const target = stored.report_target;
+  return channel && target ? { channel, target } : null;
+}
+
+export function setDefaultReportTo(to: ReportTo | null): void {
+  const upsert = getDb().prepare(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  );
+  const clear = getDb().prepare("DELETE FROM settings WHERE key = ?");
+  if (!to) {
+    clear.run("report_channel");
+    clear.run("report_target");
+    return;
+  }
+  upsert.run("report_channel", to.channel);
+  upsert.run("report_target", to.target);
+}
+
+/** Something the portal said into a conversation, waiting to join its context. */
+export function addNote(sessionId: string, text: string): void {
+  getDb().prepare("INSERT INTO notes (session_id, text) VALUES (?, ?)").run(sessionId, text);
+}
+
+/** Take the pending notes for a conversation. Reading them consumes them. */
+export function takeNotes(sessionId: string): string[] {
+  const rows = getDb()
+    .prepare("SELECT id, text FROM notes WHERE session_id = ? AND consumed_at IS NULL ORDER BY id ASC")
+    .all(sessionId) as { id: number; text: string }[];
+  if (!rows.length) return [];
+  const mark = getDb().prepare("UPDATE notes SET consumed_at = datetime('now') WHERE id = ?");
+  for (const r of rows) mark.run(r.id);
+  return rows.map((r) => r.text);
+}
+
+export interface ToolRule {
+  id: string;
+  role: string;
+  tool: string;
+  pattern: string;
+  note: string;
+  created_at: string;
+}
+
+export const listToolRules = (): ToolRule[] =>
+  getDb().prepare("SELECT * FROM tool_rules ORDER BY tool, pattern").all() as ToolRule[];
+
+export function addToolRule(rule: Omit<ToolRule, "created_at">): void {
+  getDb()
+    .prepare("INSERT INTO tool_rules (id, role, tool, pattern, note) VALUES (?, ?, ?, ?, ?)")
+    .run(rule.id, rule.role, rule.tool, rule.pattern, rule.note);
+}
+
+export const deleteToolRule = (id: string): void => {
+  getDb().prepare("DELETE FROM tool_rules WHERE id = ?").run(id);
+};

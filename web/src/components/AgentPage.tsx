@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { LuBot, LuCheck, LuFileText, LuFolder, LuMessageSquare, LuRadio, LuRefreshCw } from "react-icons/lu";
+import {
+  LuBot,
+  LuCheck,
+  LuFileText,
+  LuFolder,
+  LuMessageSquare,
+  LuMonitor,
+  LuPlus,
+  LuRadio,
+  LuRefreshCw,
+} from "react-icons/lu";
 import { api, type AgentSession, type AgentSetup as Setup, type SessionStatus } from "../api";
 import { AgentSetup } from "./AgentSetup";
 
@@ -28,11 +38,15 @@ const when = (iso: string) => {
  * That is what stops a group chat and a DM sharing a memory. They are ordinary
  * sessions, so they open in the ordinary chat view.
  */
+/** Conversations started here rather than arriving through a channel. */
+const BROWSER = "browser";
+
 export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [home, setHome] = useState("");
   const [setup, setSetup] = useState<Setup | null>(null);
   const [loading, setLoading] = useState(true);
+  const [starting, setStarting] = useState(false);
 
   const load = () =>
     api
@@ -61,9 +75,11 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
       const key = s.channel?.slug ?? "none";
       if (!out.has(key)) {
         out.set(key, {
-          name: s.channel?.name ?? "No channel",
+          name: key === BROWSER ? "Here, in the portal" : (s.channel?.name ?? "No channel"),
           kind: s.channel?.kind ?? null,
-          present: s.channel?.present ?? false,
+          // A browser conversation has no channel by design, so it must not be
+          // flagged as one whose channel went missing.
+          present: key === BROWSER ? true : (s.channel?.present ?? false),
           items: [],
         });
       }
@@ -100,6 +116,26 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
               </div>
             </div>
 
+            <button
+              onClick={async () => {
+                setStarting(true);
+                try {
+                  onSelect((await api.startAgentChat()).id);
+                } finally {
+                  setStarting(false);
+                }
+              }}
+              disabled={starting}
+              className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-2 text-sm text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40"
+            >
+              {starting ? (
+                <LuRefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <LuPlus className="h-4 w-4" />
+              )}
+              New conversation
+            </button>
+
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <div className="flex items-baseline gap-1.5 rounded-lg bg-raised/60 px-2.5 py-1">
                 <span className="text-sm tabular-nums text-fg">{sessions.length}</span>
@@ -126,9 +162,8 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
             <div className="mt-4 rounded-xl border border-dashed border-line px-4 py-10 text-center">
               <p className="text-sm text-fg-muted">Nothing has reached the agent yet.</p>
               <p className="mx-auto mt-2 max-w-md text-xs text-fg-faint">
-                Conversations appear here once a channel is running and someone messages it. No
-                transport is started yet, so nothing can arrive — configure a channel in Settings
-                and it will be waiting when the runtime lands.
+                Start one here, or message a channel — a Telegram chat, a webhook — and it
+                appears in this list. They all reach the same agent and share its memory.
               </p>
             </div>
           ) : (
@@ -136,9 +171,13 @@ export function AgentPage({ onSelect }: { onSelect: (id: string) => void }) {
               {groups.map(([id, group]) => (
                 <section key={id}>
                   <div className="flex items-center gap-2 px-1">
-                    <LuRadio className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
+                    {id === BROWSER ? (
+                      <LuMonitor className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
+                    ) : (
+                      <LuRadio className="h-3.5 w-3.5 shrink-0 text-fg-faint" />
+                    )}
                     <h3 className="truncate text-xs font-medium text-fg-muted">{group.name}</h3>
-                    {group.kind && (
+                    {group.kind && id !== BROWSER && (
                       <span className="shrink-0 rounded bg-fg/5 px-1.5 py-0.5 text-[10px] text-fg-subtle">
                         {group.kind}
                       </span>

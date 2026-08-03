@@ -273,3 +273,43 @@ see a change.
   outside them.
 - **`ask` waits for the agent.** It can take minutes on a real task; there is a
   15 minute ceiling after which it rejects.
+
+## Speaking first, and asking natively
+
+`start()` returns `{ stop }`, and may return two more:
+
+```js
+return {
+  async stop() { /* … */ },
+
+  // Optional. Send without being asked — a routine's report, an answer coming
+  // back later. A transport that can only fill in a response it already has
+  // open, like a webhook without a callback URL, omits this and is never
+  // offered as a destination.
+  async send(target, text) { /* … */ },
+
+  // Optional. Render a question the way this platform renders questions, and
+  // capture the answer.
+  async prompt(target, request) {
+    // request: { id, method: "select" | "confirm" | "input", question, options? }
+    // return { value } or { cancelled: true }
+    // return null if this is not something you can present
+  },
+};
+```
+
+`target` is the conversation key your package supplied to `ctx.ask` — the portal
+scopes it internally, but hands it back to you as you gave it.
+
+### Why prompt returns null
+
+Plain numbered text is the **default**, not the failure case. The portal asks in
+words whenever a channel has no `prompt`, and whenever `prompt` returns `null`
+for a particular question. A free-text question has no keyboard to draw, so
+returning `null` there is the correct answer, not a limitation.
+
+The Telegram package shows the shape: an inline keyboard for `select` and
+`confirm`, `null` for anything else. Because Telegram caps `callback_data` at 64
+bytes, the button carries an index rather than the option itself, and the
+message is edited afterwards to show what was chosen — so the chat reads as a
+record of the decision rather than a question nobody answered.

@@ -1,0 +1,104 @@
+import { getDb } from "./db.js";
+
+/**
+ * Questions a colleague's conversation could not answer on its own.
+ *
+ * A colleague can read and explain, and nothing else. Without this the agent's
+ * only honest response to anything further is "I'd have to ask" — and then
+ * nobody asks. This carries the question to the primary user and the answer
+ * back to the person who asked, so the refusal turns into a round trip instead
+ * of a dead end.
+ *
+ * The id is short and typed by a human in a chat, so it is four characters and
+ * only has to be unique among questions still waiting.
+ */
+
+export interface QuestionRow {
+  id: string;
+  session_id: string;
+  person_key: string;
+  person_name: string;
+  /** Where the answer goes back to — the asking conversation, not the asker. */
+  channel_slug: string;
+  channel_key: string;
+  question: string;
+  asked_at: string;
+  answered_at: string | null;
+  answer: string | null;
+}
+
+const ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789";
+
+/** Unique among unanswered questions; an answered id is free to be reused. */
+function freeId(): string {
+  const taken = new Set(
+    (
+      getDb().prepare("SELECT id FROM questions WHERE answered_at IS NULL").all() as {
+        id: string;
+      }[]
+    ).map((r) => r.id)
+  );
+  for (let attempt = 0; attempt < 500; attempt++) {
+    let id = "";
+    for (let i = 0; i < 4; i++) id += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
+    if (!taken.has(id)) return id;
+  }
+  throw new Error("No free question id");
+}
+
+export function askQuestion(input: {
+  sessionId: string;
+  personKey: string;
+  personName: string;
+  channelSlug: string;
+  channelKey: string;
+  question: string;
+}): QuestionRow {
+  const id = freeId();
+  getDb()
+    .prepare(
+      `INSERT INTO questions
+         (id, session_id, person_key, person_name, channel_slug, channel_key, question)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      id,
+      input.sessionId,
+      input.personKey,
+      input.personName,
+      input.channelSlug,
+      input.channelKey,
+      input.question
+    );
+  return getQuestion(id)!;
+}
+
+export const getQuestion = (id: string): QuestionRow | undefined =>
+  getDb().prepare("SELECT * FROM questions WHERE id = ?").get(id) as QuestionRow | undefined;
+
+export const pendingQuestions = (): QuestionRow[] =>
+  getDb()
+    .prepare("SELECT * FROM questions WHERE answered_at IS NULL ORDER BY asked_at ASC")
+    .all() as QuestionRow[];
+
+export function recordAnswer(id: string, answer: string): void {
+  getDb()
+    .prepare("UPDATE questions SET answered_at = ?, answer = ? WHERE id = ?")
+    .run(new Date().toISOString(), answer, id);
+}
+
+/**
+ * Is this message from the primary user an answer to a waiting question?
+ *
+ * Matched only at the start of a message and only against an id that is
+ * actually waiting, so "#tea break in 5" reaches the agent as a message rather
+ * than being swallowed as an answer to something.
+ */
+export function readAnswer(text: string): { question: QuestionRow; answer: string } | null {
+  const m = /^#([a-z2-9]{4})\b[\s:,-]*([\s\S]*)$/i.exec(text.trim());
+  if (!m) return null;
+  const question = getQuestion(m[1].toLowerCase());
+  if (!question || question.answered_at) return null;
+  const answer = m[2].trim();
+  return answer ? { question, answer } : null;
+}

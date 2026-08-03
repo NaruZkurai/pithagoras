@@ -19,6 +19,12 @@ export interface LaunchOptions {
   routineTools?: boolean;
   /** Set for thread sessions: adds the thread agent + confirmation tools. */
   threadId?: string;
+  /** The routine being run, when this is a routine session. Enables reporting. */
+  routineSlug?: string | null;
+  /** Lowest role the conversation serves; decides which context files load. */
+  role?: string;
+  /** Live role of whoever is speaking, read at each tool call. */
+  roleNow?: () => string;
 }
 
 export interface Executor {
@@ -64,6 +70,9 @@ export class HostExecutor implements Executor {
       routineTools: opts.routineTools,
       sessionId: opts.sessionId,
       threadId: opts.threadId,
+      routineSlug: opts.routineSlug,
+      role: opts.role,
+      roleNow: opts.roleNow,
       provider: opts.provider,
       modelId: opts.model,
       thinkingLevel: opts.thinkingLevel,

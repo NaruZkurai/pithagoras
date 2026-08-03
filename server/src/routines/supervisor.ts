@@ -3,6 +3,7 @@ import { createSession, findRoutineSession, getDb, type SessionRow } from "../db
 import { agentHome } from "../agent.js";
 import { sessions, EXECUTOR_KIND } from "../session-manager.js";
 import { isDue, nextRun, parseCron } from "./cron.js";
+import { reportFraming, reportToFor } from "../pi/report-tool.js";
 
 /**
  * Runs routines when they are due.
@@ -29,6 +30,13 @@ export interface RoutineRow {
   run_at: string | null;
   instructions: string;
   fresh_session: number;
+  /**
+   * Where this routine's reports go. null inherits the portal default; the
+   * empty string means it never reports, whatever the default is.
+   */
+  report_channel: string | null;
+  report_target: string | null;
+  last_report_at: string | null;
   last_run: string | null;
   last_status: string | null;
   last_output: string | null;
@@ -258,11 +266,13 @@ function prompt(
         : isOneOff(row)
           ? "at the time it was scheduled for"
           : `on its schedule (${row.schedule})`;
+  const reporting = reportFraming(reportToFor(row.slug));
   const lines = [
     `<routine name="${row.name}" trigger="${how}">`,
     "This is a scheduled task. Nobody is waiting on a reply — do the work, then",
     "finish with a short account of what you did and anything that needs a human.",
     "Do not ask questions; there is nobody to answer them.",
+    ...(reporting ? ["", reporting] : []),
     "</routine>",
   ];
   if (context?.text) {
