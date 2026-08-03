@@ -11,6 +11,7 @@ import {
   LuTrash2,
 } from "react-icons/lu";
 import { api, type Routine } from "../api";
+import { Tooltip } from "./Tooltip";
 
 const inputCls =
   "w-full rounded-lg border border-line bg-raised/60 px-3 py-2 text-sm outline-none transition placeholder:text-fg-faint focus:border-accent/60";
@@ -124,6 +125,60 @@ function Timing({
 }
 
 /**
+ * What wakes the routine: a clock, or the agent completing a message.
+ */
+function TriggerPicker({
+  trigger,
+  onChange,
+}: {
+  trigger: "schedule" | "message";
+  onChange: (t: "schedule" | "message") => void;
+}) {
+  return (
+    <div>
+      <span className="text-xs text-fg-muted">When it fires</span>
+      <div className="mt-1 flex flex-wrap gap-1">
+        <Tooltip label="On a clock — a cron schedule, or once at a chosen time." side="bottom">
+          <button
+            type="button"
+            onClick={() => onChange("schedule")}
+            className={`rounded-lg px-2.5 py-1 text-xs transition ${
+              trigger === "schedule"
+                ? "bg-accent/12 text-accent ring-1 ring-inset ring-accent/25"
+                : "bg-fg/5 text-fg-muted hover:bg-fg/10"
+            }`}
+          >
+            On a schedule
+          </button>
+        </Tooltip>
+        <Tooltip
+          label="Each time the agent finishes a message in any session — a task reply, a channel chat, anything. Runs at most once every 30s, and a routine's own runs never re-trigger it."
+          side="bottom"
+        >
+          <button
+            type="button"
+            onClick={() => onChange("message")}
+            className={`rounded-lg px-2.5 py-1 text-xs transition ${
+              trigger === "message"
+                ? "bg-accent/12 text-accent ring-1 ring-inset ring-accent/25"
+                : "bg-fg/5 text-fg-muted hover:bg-fg/10"
+            }`}
+          >
+            After an agent message
+          </button>
+        </Tooltip>
+      </div>
+      {trigger === "message" && (
+        <p className="mt-1.5 text-[11px] text-fg-faint">
+          Fires whenever an agent completes a reply, in any session. Use it to summarize, log, or
+          follow up on every finished response. The reply that woke it is passed along as context.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
  * Work that happens on a schedule rather than because somebody asked.
  *
  * A routine is a standing instruction and a cron expression: it fires, the
@@ -179,8 +234,8 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
             <div className="min-w-0">
               <h2 className="text-base font-semibold text-fg">Routines</h2>
               <p className="mt-0.5 max-w-xl text-sm text-fg-muted">
-                Work the agent does on a schedule instead of because you asked. It wakes up, follows
-                its instructions, and goes quiet again.
+                Work the agent does on its own — on a schedule, at a set time, or each time it
+                finishes a reply. It wakes up, follows its instructions, and goes quiet again.
               </p>
             </div>
           </div>
@@ -205,9 +260,7 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
         )}
 
         <div className="mt-4 flex items-center justify-between">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">
-            Scheduled
-          </h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">Routines</h3>
           <button onClick={() => setAdding(!adding)} className={adding ? btnCls : primaryCls}>
             <LuPlus className="h-4 w-4" /> {adding ? "Cancel" : "New routine"}
           </button>
@@ -232,7 +285,8 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
             <p className="text-sm text-fg-muted">No routines yet.</p>
             <p className="mx-auto mt-2 max-w-md text-xs text-fg-faint">
               A morning summary of what changed overnight, a nightly check that backups ran, a
-              weekly tidy of a directory — anything you would otherwise remember to ask for.
+              weekly tidy of a directory — or a reaction to every reply, like summarizing or logging
+              what the agent just did.
             </p>
           </div>
         ) : (
@@ -250,11 +304,19 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
                     <p className="truncate text-sm text-fg">{r.name}</p>
                     <p className="truncate text-[11px] text-fg-faint">
                       <span className="font-mono">
-                        {r.mode === "once"
-                          ? `once · ${r.runAt ? new Date(r.runAt).toLocaleString() : "no time set"}`
-                          : r.schedule}
+                        {r.trigger === "message"
+                          ? "after agent message"
+                          : r.mode === "once"
+                            ? `once · ${r.runAt ? new Date(r.runAt).toLocaleString() : "no time set"}`
+                            : r.schedule}
                       </span>
-                      {r.done ? " · done" : r.enabled ? ` · ${until(r.nextRun)}` : " · disabled"}
+                      {r.done
+                        ? " · done"
+                        : r.enabled
+                          ? r.trigger === "message"
+                            ? " · on next reply"
+                            : ` · ${until(r.nextRun)}`
+                          : " · disabled"}
                       {r.lastStatus && (
                         <>
                           {" · "}
@@ -275,7 +337,8 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
         <p className="mt-6 text-[11px] leading-relaxed text-fg-faint">
           Repeating schedules use the server's clock and five-field cron, or a shorthand like{" "}
           <code>@daily</code>; a one-off uses the time you pick in your own timezone. A routine
-          still running when its next slot comes round is skipped rather than stacked.
+          still running when its next slot comes round is skipped rather than stacked. A routine set
+          to fire after an agent message runs at most once every 30s, and never off its own output.
         </p>
       </div>
     </div>
@@ -356,6 +419,7 @@ function NewRoutine({
   onError: (e: string) => void;
 }) {
   const [name, setName] = useState("");
+  const [trigger, setTrigger] = useState<"schedule" | "message">("schedule");
   const [mode, setMode] = useState<"repeats" | "once">("repeats");
   const [schedule, setSchedule] = useState("0 9 * * *");
   const [runAt, setRunAt] = useState(toLocalInput(null));
@@ -365,13 +429,16 @@ function NewRoutine({
   const create = async () => {
     setBusy(true);
     try {
-      await onCreated(
-        await api.createRoutine(
-          mode === "repeats"
-            ? { name, schedule, instructions }
-            : { name, runAt: new Date(runAt).toISOString(), instructions }
-        )
-      );
+      const input: Parameters<typeof api.createRoutine>[0] = {
+        name,
+        trigger,
+        instructions,
+      };
+      if (trigger === "schedule") {
+        if (mode === "repeats") input.schedule = schedule;
+        else input.runAt = new Date(runAt).toISOString();
+      }
+      await onCreated(await api.createRoutine(input));
     } catch (e) {
       onError((e as Error).message);
     } finally {
@@ -392,14 +459,18 @@ function NewRoutine({
         />
       </label>
 
-      <Timing
-        mode={mode}
-        schedule={schedule}
-        runAt={runAt}
-        onMode={setMode}
-        onSchedule={setSchedule}
-        onRunAt={setRunAt}
-      />
+      <TriggerPicker trigger={trigger} onChange={setTrigger} />
+
+      {trigger === "schedule" && (
+        <Timing
+          mode={mode}
+          schedule={schedule}
+          runAt={runAt}
+          onMode={setMode}
+          onSchedule={setSchedule}
+          onRunAt={setRunAt}
+        />
+      )}
 
       <label className="block">
         <span className="text-xs text-fg-muted">Instructions</span>
@@ -439,6 +510,7 @@ function RoutineDetail({
   onOpenSession: (id: string) => void;
 }) {
   const [name, setName] = useState(r.name);
+  const [trigger, setTrigger] = useState<"schedule" | "message">(r.trigger);
   const [mode, setMode] = useState<"repeats" | "once">(r.mode);
   const [schedule, setSchedule] = useState(r.schedule || "0 9 * * *");
   const [runAt, setRunAt] = useState(toLocalInput(r.runAt));
@@ -450,6 +522,7 @@ function RoutineDetail({
 
   useEffect(() => {
     setName(r.name);
+    setTrigger(r.trigger);
     setMode(r.mode);
     setSchedule(r.schedule || "0 9 * * *");
     setRunAt(toLocalInput(r.runAt));
@@ -466,6 +539,7 @@ function RoutineDetail({
 
   const dirty =
     name !== r.name ||
+    trigger !== r.trigger ||
     mode !== r.mode ||
     (mode === "repeats" ? schedule !== r.schedule : toLocalInput(r.runAt) !== runAt) ||
     instructions !== r.instructions ||
@@ -507,8 +581,14 @@ function RoutineDetail({
             className="w-full bg-transparent text-sm font-medium text-fg outline-none"
           />
           <p className="truncate text-xs text-fg-subtle">
-            {r.done ? "already ran" : r.enabled ? until(r.nextRun) : "disabled"} ·{" "}
-            <span className="font-mono">{r.slug}</span>
+            {r.done
+              ? "already ran"
+              : r.enabled
+                ? r.trigger === "message"
+                  ? "on next agent reply"
+                  : until(r.nextRun)
+                : "disabled"}{" "}
+            · <span className="font-mono">{r.slug}</span>
           </p>
         </div>
         <button
@@ -528,14 +608,18 @@ function RoutineDetail({
       </div>
 
       <section className="mb-6 space-y-3">
-        <Timing
-          mode={mode}
-          schedule={schedule}
-          runAt={runAt}
-          onMode={setMode}
-          onSchedule={setSchedule}
-          onRunAt={setRunAt}
-        />
+        <TriggerPicker trigger={trigger} onChange={setTrigger} />
+
+        {trigger === "schedule" && (
+          <Timing
+            mode={mode}
+            schedule={schedule}
+            runAt={runAt}
+            onMode={setMode}
+            onSchedule={setSchedule}
+            onRunAt={setRunAt}
+          />
+        )}
 
         <label className="block">
           <span className="text-xs text-fg-muted">Instructions</span>
@@ -623,14 +707,17 @@ function RoutineDetail({
         <button
           onClick={() =>
             act("save", async () => {
-              await api.updateRoutine(r.id, {
+              const patch: Parameters<typeof api.updateRoutine>[1] = {
                 name,
-                ...(mode === "repeats"
-                  ? { schedule, runAt: "" }
-                  : { schedule: "", runAt: new Date(runAt).toISOString() }),
+                trigger,
                 instructions,
                 freshSession: fresh,
-              });
+              };
+              if (trigger === "schedule") {
+                if (mode === "repeats") patch.schedule = schedule;
+                else patch.runAt = new Date(runAt).toISOString();
+              }
+              await api.updateRoutine(r.id, patch);
               setSaved(true);
               setTimeout(() => setSaved(false), 2000);
             })

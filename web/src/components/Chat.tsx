@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { LuFolderOpen } from "react-icons/lu";
 import { api, type PiCommand, type PortalEvent, type Session } from "../api";
 import { buildTranscript } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
+import { FileExplorer } from "./FileExplorer";
 
 export function Chat({
   session,
@@ -21,6 +23,7 @@ export function Chat({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [panelRequest, setPanelRequest] = useState<"model" | "effort" | null>(null);
+  const [showFiles, setShowFiles] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
   const running = session.status === "running";
@@ -74,7 +77,8 @@ export function Chat({
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full">
+      <div className="flex min-w-0 flex-1 flex-col">
       <header className="border-b border-line px-4 py-3">
         <div className="mx-auto flex w-full max-w-3xl items-center gap-3">
         <div className="min-w-0">
@@ -82,6 +86,16 @@ export function Chat({
           <p className="truncate font-mono text-[11px] text-fg-faint">{session.workspace}</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => setShowFiles((v) => !v)}
+            title="Workspace file explorer — see what the agent has written so far"
+            className={`flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs transition hover:bg-fg/5 ${
+              showFiles ? "text-accent" : "text-fg-muted hover:text-fg"
+            }`}
+          >
+            <LuFolderOpen className="h-3.5 w-3.5" />
+            Files
+          </button>
           {session.status === "interrupted" && (
             <span className="rounded-md bg-warn/10 px-2 py-0.5 text-[11px] text-warn">
               interrupted — send a message to resume
@@ -102,9 +116,13 @@ export function Chat({
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto w-full max-w-3xl space-y-3">
         {items.length === 0 && (
-          <div className="pt-16 text-center">
+          <div className="pt-14 text-center">
             <p className="text-sm text-fg-muted">Give pi a task.</p>
-            <p className="mt-1 text-xs text-fg-faint">You can close this tab — it keeps working.</p>
+            <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-fg-faint">
+              Type a task in the box below — pi works on it on its own and replies here.
+              Runs are owned by the server, so you can close this tab and read what it did
+              when you come back. Every event is logged and replays, so nothing is missed.
+            </p>
           </div>
         )}
 
@@ -219,6 +237,7 @@ export function Chat({
           }}
           rows={2}
           placeholder={running ? "pi is working — send to queue a follow-up…" : "Describe the task…"}
+          title="Describe the task. pi works on it server-side — closing this tab doesn't stop it."
           className="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
         />
           <ComposerBar
@@ -230,6 +249,15 @@ export function Chat({
           />
         </div>
       </form>
+      </div>
+
+      {showFiles && (
+        <FileExplorer
+          sessionId={session.id}
+          workspace={session.workspace}
+          onClose={() => setShowFiles(false)}
+        />
+      )}
     </div>
   );
 }

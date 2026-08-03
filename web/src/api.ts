@@ -67,6 +67,8 @@ export interface Routine {
   slug: string;
   name: string;
   enabled: boolean;
+  /** "schedule" = cron/one-off timing; "message" = fires after an agent reply. */
+  trigger: "schedule" | "message";
   /** Five-field cron, or an @shorthand. Empty for a one-off. */
   schedule: string;
   /** ISO instant for a one-off, instead of a schedule. */
@@ -103,6 +105,24 @@ export interface Workspace {
   name: string;
   path: string;
   isGit: boolean;
+}
+
+/** One entry in a session workspace directory listing. */
+export interface WorkspaceEntry {
+  name: string;
+  /** Workspace-relative path (always /-separated). */
+  path: string;
+  isDir: boolean;
+  size: number | null;
+  mtime: string;
+}
+
+/** A file read for the explorer preview. */
+export interface FileContent {
+  path: string;
+  content?: string;
+  binary?: boolean;
+  size: number;
 }
 
 export interface PortalEvent {
@@ -147,6 +167,14 @@ export const api = {
       body: JSON.stringify({ id, ...payload }),
     }),
 
+  // Workspace file explorer — scoped to the session's workspace.
+  listFiles: (id: string, path?: string) =>
+    json<{ workspace: string; path: string; entries: WorkspaceEntry[] }>(
+      `/api/sessions/${id}/files${path ? `?path=${encodeURIComponent(path)}` : ""}`
+    ),
+  readFile: (id: string, path: string) =>
+    json<FileContent>(`/api/sessions/${id}/file?path=${encodeURIComponent(path)}`),
+
   skills: () =>
     json<{ root: string; skills: Skill[]; diagnostics: SkillDiagnostic[] }>("/api/skills"),
   previewSkillImport: (spec: string) =>
@@ -185,6 +213,7 @@ export const api = {
   routines: () => json<{ routines: Routine[] }>("/api/routines"),
   createRoutine: (input: {
     name: string;
+    trigger?: "schedule" | "message";
     schedule?: string;
     runAt?: string;
     instructions?: string;
@@ -195,6 +224,7 @@ export const api = {
     patch: {
       name?: string;
       slug?: string;
+      trigger?: "schedule" | "message";
       schedule?: string;
       runAt?: string;
       instructions?: string;

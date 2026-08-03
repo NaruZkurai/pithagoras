@@ -18,6 +18,8 @@ export interface RoutineRow {
   slug: string;
   name: string;
   enabled: number;
+  /** What fires it: 'schedule' (cron/one-off) or 'message' (agent completed a message). */
+  trigger: string;
   schedule: string;
   /** An ISO instant, for a routine that runs once instead of repeating. */
   run_at: string | null;
@@ -40,10 +42,21 @@ const MAX_OUTPUT = 4000;
 
 const TICK_MS = 20_000;
 
+/**
+ * A message-triggered routine fires at most this often, so one long agent turn
+ * (several messages: tool calls, then the answer) does not fire it repeatedly.
+ */
+const MESSAGE_COOLDOWN_MS = 30_000;
+
+/** What a message-triggered run is told about the message that woke it. */
+const MAX_CONTEXT = 800;
+
 class RoutineSupervisor {
   /** Routines with a run in flight — a slow one must not stack on itself. */
   private running = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
+  /** Last time each message-triggered routine fired, to enforce the cooldown. */
+  private lastFired = new Map<string, number>();
 
   private rows(): RoutineRow[] {
     return getDb().prepare("SELECT * FROM routines").all() as RoutineRow[];
@@ -54,12 +67,39 @@ class RoutineSupervisor {
     this.refreshSchedules();
     this.timer = setInterval(() => void this.tick(), TICK_MS);
     if (typeof this.timer.unref === "function") this.timer.unref();
+    // Message-triggered routines react to completed agent messages.
+    sessions.on("message_complete", this.handleMessageComplete);
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    sessions.off("message_complete", this.handleMessageComplete);
   }
+
+  /**
+   * An agent message just completed. Fires every enabled message-triggered
+   * routine, once per cooldown window.
+   *
+   * Routine sessions are skipped: a run's own messages must never re-trigger
+   * it, or a message routine would loop forever on its own output.
+   */
+  onMessageComplete(sessionId: string, kind: string, text: string): void {
+    if (kind === "routine") return;
+    const now = Date.now();
+    for (const row of this.rows()) {
+      if (!row.enabled || row.trigger !== "message") continue;
+      if (this.running.has(row.slug)) continue;
+      const last = this.lastFired.get(row.slug) ?? 0;
+      if (now - last < MESSAGE_COOLDOWN_MS) continue;
+      this.lastFired.set(row.slug, now);
+      void this.run(row, "message", { sessionId, text });
+    }
+  }
+
+  private handleMessageComplete = (sessionId: string, kind: string, text: string): void => {
+    this.onMessageComplete(sessionId, kind, text);
+  };
 
   /** Recompute when each routine fires next. Cheap, and keeps the UI honest. */
   refreshSchedules(): void {
@@ -76,6 +116,8 @@ class RoutineSupervisor {
     const now = new Date();
     for (const row of this.rows()) {
       if (!row.enabled || this.running.has(row.slug)) continue;
+      // Message-triggered routines fire on agent messages, not the clock.
+      if (row.trigger === "message") continue;
 
       if (isOneOff(row)) {
         // Deliberately catches up: a one-off whose moment passed while the
@@ -104,7 +146,11 @@ class RoutineSupervisor {
    * up every other one, and the next tick skips it because it is still marked
    * as running.
    */
-  async run(row: RoutineRow, trigger: "schedule" | "manual"): Promise<RoutineRow> {
+  async run(
+    row: RoutineRow,
+    trigger: "schedule" | "manual" | "message",
+    context?: { sessionId: string; text: string }
+  ): Promise<RoutineRow> {
     if (this.running.has(row.slug)) throw new Error(`"${row.name}" is already running`);
     this.running.add(row.slug);
 
@@ -117,7 +163,7 @@ class RoutineSupervisor {
 
     try {
       const session = this.sessionFor(row);
-      const output = await sessions.ask(session.id, prompt(row, trigger), {
+      const output = await sessions.ask(session.id, prompt(row, trigger, context), {
         timeoutMs: RUN_TIMEOUT_MS,
       });
       this.finish(row.id, "ok", output, Date.now() - started);
@@ -177,22 +223,35 @@ class RoutineSupervisor {
  * that does not know it was woken by a schedule tends to answer as if somebody
  * is waiting, and asks a follow-up question nobody will ever read.
  */
-function prompt(row: RoutineRow, trigger: "schedule" | "manual"): string {
+function prompt(
+  row: RoutineRow,
+  trigger: "schedule" | "manual" | "message",
+  context?: { sessionId: string; text: string }
+): string {
   const how =
     trigger === "manual"
       ? "run by hand"
-      : isOneOff(row)
-        ? "at the time it was scheduled for"
-        : `on its schedule (${row.schedule})`;
-  return [
+      : trigger === "message"
+        ? "because an agent just finished a message"
+        : isOneOff(row)
+          ? "at the time it was scheduled for"
+          : `on its schedule (${row.schedule})`;
+  const lines = [
     `<routine name="${row.name}" trigger="${how}">`,
     "This is a scheduled task. Nobody is waiting on a reply — do the work, then",
     "finish with a short account of what you did and anything that needs a human.",
     "Do not ask questions; there is nobody to answer them.",
     "</routine>",
-    "",
-    row.instructions.trim(),
-  ].join("\n");
+  ];
+  if (context?.text) {
+    lines.push(
+      "",
+      "The routine fired because this agent reply just completed:",
+      context.text.slice(0, MAX_CONTEXT),
+    );
+  }
+  lines.push("", row.instructions.trim());
+  return lines.join("\n");
 }
 
 /** A routine with a moment rather than a pattern. */
@@ -202,6 +261,9 @@ export const isOneOff = (row: { run_at: string | null; schedule: string }) =>
 /** When it fires next, or null if it never will again. */
 export function whenNext(row: RoutineRow): string | null {
   if (!row.enabled) return null;
+  // Message-triggered routines have no clock slot — they fire on the next
+  // completed agent message instead.
+  if (row.trigger === "message") return null;
   if (isOneOff(row)) return row.last_run ? null : row.run_at;
   try {
     return nextRun(parseCron(row.schedule))?.toISOString() ?? null;

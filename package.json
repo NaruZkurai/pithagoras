@@ -14,5 +14,13 @@
     "start": "node server/dist/index.js",
     "docs": "npm run dev -w docs",
     "docs:build": "npm run build -w docs"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true,
+    "esbuild@0.28.1": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.21.5": true,
+    "protobufjs@7.6.5": true,
+    "@google/genai@1.52.0": true
   }
 }

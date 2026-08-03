@@ -15,9 +15,11 @@ const toApi = (row: RoutineRow) => ({
   slug: row.slug,
   name: row.name,
   enabled: Boolean(row.enabled),
+  /** "schedule" (cron/one-off) or "message" (after an agent reply). */
+  trigger: row.trigger === "message" ? ("message" as const) : ("schedule" as const),
   schedule: row.schedule,
   runAt: row.run_at,
-  /** "once" or "repeats" — the two are mutually exclusive. */
+  /** "once" or "repeats" — only meaningful for schedule-triggered routines. */
   mode: isOneOff(row) ? ("once" as const) : ("repeats" as const),
   /** A one-off that has already run. Kept so its result stays readable. */
   done: isOneOff(row) && Boolean(row.last_run),
@@ -33,12 +35,16 @@ const toApi = (row: RoutineRow) => ({
 });
 
 /**
- * A routine either repeats on a schedule or happens once at a moment. Both or
- * neither is not a thing, and saying so beats guessing which was meant.
+ * A routine either repeats on a schedule, happens once at a moment, or — for a
+ * message-triggered routine — needs no timing at all. Both schedule and runAt
+ * at once is not a thing, and saying so beats guessing which was meant.
  */
-function readTiming(input: { schedule?: unknown; runAt?: unknown }):
-  | { schedule: string; runAt: string | null }
-  | { error: string } {
+function readTiming(
+  input: { schedule?: unknown; runAt?: unknown },
+  trigger: string
+): { schedule: string; runAt: string | null } | { error: string } {
+  if (trigger === "message") return { schedule: "", runAt: null };
+
   const schedule = typeof input.schedule === "string" ? input.schedule.trim() : "";
   const runAt = typeof input.runAt === "string" ? input.runAt.trim() : "";
 
@@ -82,30 +88,38 @@ export function routinesRouter(): Router {
   });
 
   router.post("/routines", (req, res) => {
-    const { name, schedule, runAt, instructions, freshSession } = req.body ?? {};
+    const { name, schedule, runAt, instructions, freshSession, trigger } = req.body ?? {};
     if (typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ error: "name required" });
     }
 
-    const timing = readTiming({ schedule, runAt });
+    const kind = trigger === "message" ? "message" : "schedule";
+    const timing = readTiming({ schedule, runAt }, kind);
     if ("error" in timing) return res.status(400).json({ error: timing.error });
 
     const id = nanoid(10);
     const slug = freeSlug(typeof req.body?.slug === "string" && req.body.slug ? req.body.slug : name);
+    const next =
+      kind === "message"
+        ? null
+        : timing.schedule
+          ? (nextRun(parseCron(timing.schedule))?.toISOString() ?? null)
+          : timing.runAt;
     getDb()
       .prepare(
-        `INSERT INTO routines (id, slug, name, schedule, run_at, instructions, fresh_session, next_run)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO routines (id, slug, name, trigger, schedule, run_at, instructions, fresh_session, next_run)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
         slug,
         name.trim(),
+        kind,
         timing.schedule,
         timing.runAt,
         typeof instructions === "string" ? instructions.trim() : "",
         freshSession ? 1 : 0,
-        timing.schedule ? (nextRun(parseCron(timing.schedule))?.toISOString() ?? null) : timing.runAt
+        next
       );
     res.json(toApi(rowById(id)!));
   });
@@ -114,7 +128,8 @@ export function routinesRouter(): Router {
     const row = rowById(req.params.id);
     if (!row) return res.status(404).json({ error: "Not found" });
 
-    const { name, slug, schedule, runAt, instructions, enabled, freshSession } = req.body ?? {};
+    const { name, slug, schedule, runAt, instructions, enabled, freshSession, trigger } =
+      req.body ?? {};
     const sets: string[] = [];
     const values: unknown[] = [];
 
@@ -132,9 +147,36 @@ export function routinesRouter(): Router {
       sets.push("name = ?");
       values.push(name.trim());
     }
-    // Setting one clears the other: a routine either repeats or happens once.
-    if (typeof schedule === "string" || typeof runAt === "string") {
-      const timing = readTiming({ schedule, runAt });
+
+    // The effective trigger after this patch: switching modes revalidates timing.
+    const effective =
+      typeof trigger === "string" ? (trigger === "message" ? "message" : "schedule") : row.trigger;
+    if (typeof trigger === "string" && effective !== row.trigger) {
+      sets.push("trigger = ?");
+      values.push(effective);
+      if (effective === "message") {
+        // Switching to a message trigger: no clock needed.
+        sets.push("schedule = ?", "run_at = ?");
+        values.push("", null);
+      } else {
+        // Switching back to a schedule: reuse the routine's timing if it had
+        // one, else require a valid one now.
+        const timing = readTiming(
+          {
+            schedule: typeof schedule === "string" ? schedule : row.schedule || "0 9 * * *",
+            runAt: typeof runAt === "string" ? runAt : (row.run_at ?? undefined),
+          },
+          "schedule"
+        );
+        if ("error" in timing) return res.status(400).json({ error: timing.error });
+        sets.push("schedule = ?", "run_at = ?");
+        values.push(timing.schedule, timing.runAt);
+      }
+    }
+
+    // Timing edits only apply to schedule-triggered routines.
+    if (effective !== "message" && (typeof schedule === "string" || typeof runAt === "string")) {
+      const timing = readTiming({ schedule, runAt }, "schedule");
       if ("error" in timing) return res.status(400).json({ error: timing.error });
       sets.push("schedule = ?", "run_at = ?");
       values.push(timing.schedule, timing.runAt);

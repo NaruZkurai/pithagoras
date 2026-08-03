@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { ThemeSwitcher } from "./ThemeSwitcher";
+import { Tooltip } from "./Tooltip";
 import {
   LuBot,
   LuClock,
@@ -129,34 +130,50 @@ export function Sidebar({
           draggable={false}
         />
         <h1 className="text-sm font-semibold tracking-tight text-fg">Pithagoras</h1>
-        <span
-          className="ml-auto text-[10px] uppercase tracking-wider text-fg-faint"
-          title="How sessions are executed"
+        <Tooltip
+          side="bottom"
+          className="ml-auto"
+          label={
+            executor === "host"
+              ? "host — pi runs inside the portal, working directly on your workspaces"
+              : "container — every task runs in its own isolated container"
+          }
         >
-          {executor}
-        </span>
+          <span className="text-[10px] uppercase tracking-wider text-fg-faint">
+            {executor}
+          </span>
+        </Tooltip>
       </div>
 
       {/* Destinations, above the session lists. */}
       <nav className="px-2 pb-2">
-        <NavItem icon={<LuPlus />} label="New" onClick={() => setCreating((v) => !v)} active={creating} />
+        <NavItem
+          icon={<LuPlus />}
+          label="New"
+          onClick={() => setCreating((v) => !v)}
+          active={creating}
+          tip="New session — name a workspace and give pi a task. It runs on the server, so you can close the tab and read the log when you come back."
+        />
         <NavItem
           icon={<LuMessagesSquare />}
           label="Sessions"
           onClick={() => onNavigate("sessions")}
           active={view === "sessions"}
+          tip="Every task you've handed to pi. Open one to continue the conversation — the full event log replays, then continues live."
         />
         <NavItem
           icon={<LuBot />}
           label="Agent"
           onClick={() => onNavigate("agent")}
           active={view === "agent"}
+          tip="The agent's identity and channels — talk to it from Discord, Slack, Telegram or a webhook. Each chat gets its own session, so a group and a DM never share a memory."
         />
         <NavItem
           icon={<LuClock />}
           label="Routines"
           onClick={() => onNavigate("routines")}
           active={view === "routines"}
+          tip="Scheduled tasks — tell pi what to do and on what cron schedule, then leave it alone."
         />
 
         {creating && (
@@ -247,6 +264,7 @@ export function Sidebar({
               label="Settings"
               onClick={onOpenSettings}
               active={false}
+              tip="Global defaults — provider, default model and thinking level for every new session, plus pi's own advanced settings."
             />
           </div>
           <ThemeSwitcher />
@@ -269,13 +287,16 @@ function NavItem({
   label,
   active,
   onClick,
+  tip,
 }: {
   icon: ReactNode;
   label: string;
   active: boolean;
   onClick: () => void;
+  /** Hover tooltip explaining what this destination is for. */
+  tip?: string;
 }) {
-  return (
+  const button = (
     <button
       onClick={onClick}
       className={`group relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition ${
@@ -292,6 +313,13 @@ function NavItem({
       </span>
       {label}
     </button>
+  );
+  return tip ? (
+    <Tooltip label={tip} side="right" className="w-full">
+      {button}
+    </Tooltip>
+  ) : (
+    button
   );
 }
 

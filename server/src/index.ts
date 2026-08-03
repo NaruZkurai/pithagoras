@@ -27,6 +27,7 @@ import { extensionsRouter } from "./api/extensions.js";
 import { channelsRouter } from "./api/channels.js";
 import { routinesRouter } from "./api/routines.js";
 import { skillsRouter } from "./api/skills.js";
+import { filesRouter } from "./api/files.js";
 import { routineSupervisor } from "./routines/supervisor.js";
 import { channelSupervisor } from "./channels/supervisor.js";
 import { piSettingsPath } from "./pi-settings.js";
@@ -450,6 +451,7 @@ app.use("/api", extensionsRouter());
 app.use("/api", channelsRouter());
 app.use("/api", routinesRouter());
 app.use("/api", skillsRouter());
+app.use("/api", filesRouter());
 
 // --- event stream ---
 

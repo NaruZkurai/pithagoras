@@ -26,6 +26,15 @@ function summarizeToolInput(p: any): string | undefined {
   return undefined;
 }
 
+/** The plain text of a pi message, used to wake message-triggered routines. */
+function extractMessageText(message: any): string {
+  if (!Array.isArray(message?.content)) return "";
+  return message.content
+    .map((c: any) => (typeof c?.text === "string" ? c.text : ""))
+    .join("")
+    .trim();
+}
+
 const SESSION_ROOT = path.resolve(process.env.SESSION_DIR || "./data/sessions");
 const EXECUTOR_KIND = (process.env.EXECUTOR || "host") as ExecutorKind;
 
@@ -132,6 +141,13 @@ class SessionManager extends EventEmitter {
     client.on("event", (msg) => {
       rememberSessionFile();
       this.record(sessionId, msg.type, msg);
+      // A completed agent message wakes message-triggered routines. Routine
+      // sessions are skipped inside the supervisor, so a run can never loop on
+      // its own output.
+      if (msg.type === "message_end" && msg.message?.role === "assistant") {
+        const text = extractMessageText(msg.message);
+        if (text) this.emit("message_complete", sessionId, session.kind, text);
+      }
       // agent_end marks the end of a run — the task is done whether or not
       // anyone was watching.
       if (msg.type === "agent_end") {

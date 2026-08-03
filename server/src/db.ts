@@ -128,6 +128,9 @@ export function getDb(): Database.Database {
       slug TEXT NOT NULL,
       name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
+      -- What fires it: 'schedule' (cron / one-off) or 'message' (after an
+      -- agent completes a message).
+      trigger TEXT NOT NULL DEFAULT 'schedule',
       -- Five-field cron, or one of the @shorthands. Empty for a one-off.
       schedule TEXT NOT NULL DEFAULT '',
       -- Set instead of a schedule: an ISO instant to run at, once.
@@ -221,6 +224,9 @@ function migrate(d: Database.Database): void {
   );
   if (routineCols.length && !routineCols.includes("run_at")) {
     d.exec("ALTER TABLE routines ADD COLUMN run_at TEXT");
+  }
+  if (routineCols.length && !routineCols.includes("trigger")) {
+    d.exec("ALTER TABLE routines ADD COLUMN trigger TEXT NOT NULL DEFAULT 'schedule'");
   }
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_routines_slug ON routines(slug)");
 }

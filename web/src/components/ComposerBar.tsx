@@ -200,7 +200,7 @@ export function ComposerBar({
           className={`max-w-[220px] truncate rounded-lg px-2 py-1 transition disabled:opacity-50 ${
             open === "model" ? "bg-fg/10 text-fg" : "text-fg-subtle hover:bg-fg/5 hover:text-fg-muted"
           }`}
-          title={cfg.state.model.id}
+          title={`${cfg.state.model.id} — click to change the model`}
         >
           {shortName(cfg.state.model)}
         </button>
@@ -211,7 +211,7 @@ export function ComposerBar({
           className={`rounded-lg px-2 py-1 capitalize transition disabled:opacity-50 ${
             open === "effort" ? "bg-fg/10 text-fg" : "text-fg-subtle hover:bg-fg/5 hover:text-fg-muted"
           }`}
-          title="Effort / thinking level"
+          title="Effort / thinking level — click to change how long pi thinks before answering"
         >
           {cfg.state.thinkingLevel}
         </button>
