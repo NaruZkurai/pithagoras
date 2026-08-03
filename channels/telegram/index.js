@@ -139,6 +139,12 @@ export async function start(ctx) {
         session: `chat:${chatId}`,
         title: chatTitle(message.chat),
         chatId,
+        // The conversation is the chat; the sender is the person. In a group
+        // those differ every message, and only the id is theirs to prove — a
+        // display name is whatever they set it to this morning.
+        from: message.from
+          ? { id: String(message.from.id), name: personName(message.from) }
+          : null,
         onReply: say,
       });
       // Non-empty only when the portal was not relaying as it went.
@@ -148,6 +154,12 @@ export async function start(ctx) {
       await say(`Something went wrong: ${e.message}`).catch(() => {});
     }
   }
+}
+
+/** Their name if they have one, their handle if not. */
+function personName(user) {
+  const name = [user.first_name, user.last_name].filter(Boolean).join(" ");
+  return name || (user.username ? `@${user.username}` : `Telegram ${user.id}`);
 }
 
 /** Something recognisable in the session list rather than a bare number. */

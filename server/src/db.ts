@@ -44,6 +44,8 @@ export interface SessionRow {
   channel_key: string | null;
   /** Routine sessions only: the slug of the routine that owns this session. */
   routine_slug: string | null;
+  /** Lowest role this conversation has served — see the migration for why. */
+  role: "primary" | "colleague" | "guest" | "unknown";
 }
 
 export interface EventRow {
@@ -156,6 +158,19 @@ export function getDb(): Database.Database {
 
     -- Portal-wide defaults applied to every new session. Env vars are the
     -- fallback, so an untouched install still works out of the box.
+    -- Who the agent talks to. Identified by the platform's own stable id,
+    -- scoped by channel, because a display name is chosen by whoever types it.
+    CREATE TABLE IF NOT EXISTS people (
+      key TEXT PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      -- primary | colleague | guest | unknown
+      role TEXT NOT NULL DEFAULT 'unknown',
+      notes TEXT NOT NULL DEFAULT '',
+      first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen TEXT,
+      announced_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -186,6 +201,12 @@ function migrate(d: Database.Database): void {
   }
   if (!names.includes("pi_session_file")) {
     d.exec("ALTER TABLE sessions ADD COLUMN pi_session_file TEXT");
+  }
+  // The lowest role this session has ever served. Ratchets down and never up:
+  // once a guest has spoken in a conversation, the private context files stay
+  // out of it even if the next message is from the primary user.
+  if (!names.includes("role")) {
+    d.exec("ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'primary'");
   }
 
   if (!names.includes("kind")) {

@@ -181,6 +181,12 @@ export async function start(ctx) {
         // Relayed between tool calls, so a long task is visibly working.
         await ctx.ask(text, {
           session: `channel:${message.channel_id}`,
+          from: message.author?.id
+            ? {
+                id: String(message.author.id),
+                name: message.author.global_name || message.author.username || String(message.author.id),
+              }
+            : null,
           title: message.guild_id
             ? `Discord ${message.channel_id}`
             : `DM ${message.author?.username ?? message.channel_id}`,

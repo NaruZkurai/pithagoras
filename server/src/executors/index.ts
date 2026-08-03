@@ -19,6 +19,10 @@ export interface LaunchOptions {
   routineTools?: boolean;
   /** The routine being run, when this is a routine session. Enables reporting. */
   routineSlug?: string | null;
+  /** Lowest role the conversation serves; decides which context files load. */
+  role?: string;
+  /** Live role of whoever is speaking, read at each tool call. */
+  roleNow?: () => string;
 }
 
 export interface Executor {
@@ -63,6 +67,8 @@ export class HostExecutor implements Executor {
       sessionFile: opts.sessionFile,
       routineTools: opts.routineTools,
       routineSlug: opts.routineSlug,
+      role: opts.role,
+      roleNow: opts.roleNow,
       provider: opts.provider,
       modelId: opts.model,
       thinkingLevel: opts.thinkingLevel,

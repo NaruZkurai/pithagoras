@@ -208,6 +208,20 @@ export const api = {
   deleteSkill: (name: string) =>
     json<{ ok: true }>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),
 
+  people: () => json<{ people: Person[] }>("/api/people"),
+  setPersonRole: (key: string, role: Role) =>
+    json<{ person: Person }>(`/api/people/${encodeURIComponent(key)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    }),
+  setPersonNotes: (key: string, notes: string) =>
+    json<{ person: Person }>(`/api/people/${encodeURIComponent(key)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ notes }),
+    }),
+  forgetPerson: (key: string) =>
+    json<{ ok: true }>(`/api/people/${encodeURIComponent(key)}`, { method: "DELETE" }),
+
   routines: () => json<{ routines: Routine[] }>("/api/routines"),
   reportTargets: () =>
     json<{ targets: ReportTarget[]; default: ReportTo | null }>("/api/routines/report-targets"),
@@ -565,4 +579,17 @@ export interface ReportTarget {
 export interface ReportTo {
   channel: string;
   target: string;
+}
+
+/** Descending capability. "unknown" never reaches the agent at all. */
+export type Role = "primary" | "colleague" | "guest" | "unknown";
+
+export interface Person {
+  key: string;
+  name: string;
+  role: Role;
+  notes: string;
+  first_seen: string;
+  last_seen: string | null;
+  announced_at: string | null;
 }

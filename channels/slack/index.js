@@ -136,6 +136,8 @@ export async function start(ctx) {
           session: `channel:${event.channel}`,
           title: channelTitle(event),
           channel: event.channel,
+          // Slack's user id is stable and theirs; the display name is not.
+          from: event.user ? { id: String(event.user), name: String(event.user) } : null,
           thread,
           user: event.user,
           onReply: say,

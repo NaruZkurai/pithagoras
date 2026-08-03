@@ -16,14 +16,16 @@ import {
   LuSlidersHorizontal,
   LuTrash2,
   LuTriangleAlert,
+  LuUsers,
 } from "react-icons/lu";
 import { api, type ExtensionInfo, type GlobalSettings, type ReportTarget, type ReportTo } from "../api";
 import { ChannelsPanel } from "./ChannelsPanel";
 import { SkillsPanel } from "./SkillsPanel";
 import { McpPanel } from "./McpPanel";
+import { PeoplePanel } from "./PeoplePanel";
 import { Modal } from "./Modal";
 
-export type Tab = "general" | "channels" | "skills" | "mcp" | "extensions" | "advanced";
+export type Tab = "general" | "channels" | "people" | "skills" | "mcp" | "extensions" | "advanced";
 
 /** Either a fixed tab or one extension's own configuration page. */
 type Nav = { kind: "tab"; id: Tab } | { kind: "ext"; spec: string };
@@ -40,6 +42,12 @@ const TABS: { id: Tab; label: string; icon: ReactNode; hint: string }[] = [
     label: "Channels",
     icon: <LuRadio />,
     hint: "Two-way links into the agent",
+  },
+  {
+    id: "people",
+    label: "People",
+    icon: <LuUsers />,
+    hint: "Who the agent will talk to",
   },
   {
     id: "skills",
@@ -145,6 +153,7 @@ export function ConfigModal({
 
       {nav.kind === "tab" && nav.id === "general" && <GeneralPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "channels" && <ChannelsPanel onError={setError} />}
+      {nav.kind === "tab" && nav.id === "people" && <PeoplePanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "skills" && <SkillsPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "mcp" && <McpPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "extensions" && (

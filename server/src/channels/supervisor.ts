@@ -1,6 +1,16 @@
-import { getDb } from "../db.js";
+import { getDb, getDefaultReportTo } from "../db.js";
 import { resolveChannelSession } from "../agent.js";
 import { sessions, EXECUTOR_KIND } from "../session-manager.js";
+import {
+  hasPrimary,
+  lower,
+  markAnnounced,
+  personKey,
+  primaryName,
+  seen,
+  senderFraming,
+  type PersonRow,
+} from "../people.js";
 import { loadChannels, type LoadedChannel } from "./loader.js";
 
 /**
@@ -187,6 +197,24 @@ class ChannelSupervisor {
     await live.send(target, text);
   }
 
+  /** Tell the primary user that somebody new turned up — once per person. */
+  private async announce(person: PersonRow, slug: string): Promise<void> {
+    if (person.announced_at) return;
+    markAnnounced(person.key);
+    const to = getDefaultReportTo();
+    if (!to) return;
+    try {
+      await this.send(
+        to.channel,
+        to.target,
+        `${person.name} messaged me on ${slug} and I do not know them, so I said no. ` +
+          `Add them in Settings → People if they should get through.`
+      );
+    } catch {
+      // Nothing to do about it here; they are recorded either way.
+    }
+  }
+
   private liveBySlug(slug: string): Running | undefined {
     for (const live of this.running.values()) {
       if (live.slug === slug && live.state === "running") return live;
@@ -223,6 +251,24 @@ class ChannelSupervisor {
       | undefined;
     if (!row) throw new Error("This channel has been removed");
 
+    // Who is speaking, as opposed to which conversation this is. A package that
+    // cannot tell says so, and an anonymous sender is a stranger by definition.
+    const from = (meta.from ?? null) as { id?: unknown; name?: unknown } | null;
+    const senderId = from && typeof from.id === "string" && from.id ? from.id : null;
+    const person = senderId
+      ? seen(personKey(row.slug, senderId), typeof from?.name === "string" ? from.name : "")
+      : null;
+
+    if (person && person.role === "unknown" && hasPrimary()) {
+      // Refused before a session exists: an unclassified sender never reaches
+      // the agent at all, so there is nothing for them to talk it into.
+      await this.announce(person, row.slug);
+      return (
+        "I only talk to people I have been introduced to. I have let my primary user know you " +
+        "got in touch — if they add you, try again."
+      );
+    }
+
     const key = typeof meta.session === "string" ? meta.session : "";
     if (!key) {
       // Loud on purpose: silently lumping every chat into one session is the
@@ -238,6 +284,23 @@ class ChannelSupervisor {
       title: typeof meta.title === "string" ? meta.title : undefined,
       executor: EXECUTOR_KIND,
     });
+
+    // A conversation is only ever as trusted as its least trusted participant,
+    // and it does not recover: a group where a guest has spoken keeps serving
+    // guest-level context even when the next message is from the primary user.
+    // Before a primary is named nobody is a stranger, so nothing is downgraded
+    // either — otherwise the upgrade itself would quietly strip context from
+    // every existing conversation.
+    if (person && hasPrimary()) {
+      const settled = lower(session.role, person.role);
+      if (settled !== session.role) {
+        getDb().prepare("UPDATE sessions SET role = ? WHERE id = ?").run(settled, session.id);
+        // The running pi process loaded context for the old role, so it has to
+        // go before the next turn rather than after.
+        await sessions.shutdownSession(session.id);
+      }
+      sessions.setSpeaker(session.id, person);
+    }
 
     // Everything below jumps the queue on purpose. ask() serialises per
     // session, so anything meant to affect the run in progress has to be
@@ -282,7 +345,7 @@ class ChannelSupervisor {
     const wantsTools = Boolean(row.relay_tools);
     const relaying = packageReply && (wantsProgress || wantsTools);
 
-    return sessions.ask(session.id, withInstructions(text, row.instructions), {
+    return sessions.ask(session.id, withInstructions(text, row.instructions, person), {
       onReply: relaying ? packageReply : undefined,
       streamText: wantsProgress,
       // Dialogs are relayed whatever the toggles say. They are not progress
@@ -399,10 +462,24 @@ function interpretAnswer(
  * systemPrompt as a getter with no setter, and editing the instructions should
  * take effect on the next message rather than the next restart.
  */
-function withInstructions(text: string, instructions: string): string {
+/**
+ * The message, plus what the agent needs to know to answer it properly.
+ *
+ * Who is speaking is attached to every message rather than stated once at
+ * session start, because in a group the sender changes between turns and an
+ * agent working from the first one answers the wrong person.
+ */
+function withInstructions(
+  text: string,
+  instructions: string,
+  person?: PersonRow | null
+): string {
+  const parts = [text];
+  const who = person ? senderFraming(person, primaryName()) : "";
+  if (who) parts.push(`<speaker>\n${who}\n</speaker>`);
   const extra = (instructions ?? "").trim();
-  if (!extra) return text;
-  return `${text}\n\n<channel-instructions>\n${extra}\n</channel-instructions>`;
+  if (extra) parts.push(`<channel-instructions>\n${extra}\n</channel-instructions>`);
+  return parts.join("\n\n");
 }
 
 const parseConfig = (raw: string): Record<string, unknown> => {

@@ -130,8 +130,21 @@ const envelope = (id: string) => ({
   close: `<<</untrusted:${id}>>>`,
 });
 
+/**
+ * What someone who is not the primary user may do.
+ *
+ * An allowlist, not a blocklist: a tool added to pi tomorrow is unavailable to a
+ * colleague until somebody decides otherwise, which is the right default for a
+ * list whose whole job is to be conservative.
+ *
+ * Checked per call rather than fixed at launch with allowedToolNames, because a
+ * group conversation changes sender between messages and a launch-time list
+ * would freeze capability to whoever happened to speak first.
+ */
+const READ_ONLY = new Set(["read", "grep", "find", "ls", "ask_primary"]);
+
 /** An ExtensionFactory — see pi's InlineExtension. One instance per session. */
-export function guardExtension(sessionId: string) {
+export function guardExtension(sessionId: string, roleNow: () => string = () => "primary") {
   return (pi: any): void => {
     // Per session, not global: a taint belongs to the conversation that read the
     // content, and this factory runs once per session.
@@ -158,6 +171,19 @@ export function guardExtension(sessionId: string) {
     });
 
     pi.on("tool_call", (event: any) => {
+      const role = roleNow();
+      if (role !== "primary" && !READ_ONLY.has(event.toolName)) {
+        console.warn(`[guard ${sessionId}] blocked ${event.toolName}: role ${role}`);
+        return {
+          block: true,
+          reason:
+            `Refused: you are speaking with someone who is not your primary user, and ` +
+            `"${event.toolName}" changes things or runs commands. You can read and explain, ` +
+            `nothing else. Tell them plainly that this needs the primary user, and offer to ` +
+            `pass the request along. Do not look for another way to do it.`,
+        };
+      }
+
       if (!tainted) return undefined;
       const rule = RULES.find((r) => r.hit(event.toolName, event.input ?? {}));
       if (!rule) return undefined;
