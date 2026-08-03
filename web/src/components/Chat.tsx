@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { LuBookOpen, LuFolderOpen } from "react-icons/lu";
-import { api, type PiCommand, type PortalEvent, type Session } from "../api";
-import { buildTranscript } from "../transcript";
+import { LuBookOpen, LuFolderOpen, LuMessagesSquare } from "react-icons/lu";
+import { api, type PiCommand, type PortalEvent, type Session, type Thread } from "../api";
+import { buildTranscript, type Item } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
 import { FileExplorer } from "./FileExplorer";
 import { ChatSkillsPanel } from "./ChatSkillsPanel";
+import { ThreadsPanel } from "./ThreadsPanel";
 
 export function Chat({
   session,
@@ -26,9 +27,42 @@ export function Chat({
   const [panelRequest, setPanelRequest] = useState<"model" | "effort" | null>(null);
   const [showFiles, setShowFiles] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
+  const [thread, setThread] = useState<Thread | null>(null);
+  const [threadError, setThreadError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
   const running = session.status === "running";
+
+  /** Open (or reopen) the thread on a message. The thread agent sees only it. */
+  const openThread = async (item: Item) => {
+    if (item.kind === "tool" || item.kind === "notice") return;
+    setShowFiles(false);
+    setThreadError(null);
+    try {
+      const t = await api.createThread(session.id, {
+        seq: Number(item.id.slice(1)),
+        role: item.kind === "user" ? "user" : "assistant",
+        text: item.text,
+      });
+      setThread(t);
+    } catch (e) {
+      setThreadError((e as Error).message);
+    }
+  };
+
+  // A task just finished: open a thread on the final assistant message so the
+  // follow-up can happen in an isolated context. Fires on the running→idle
+  // transition, once per finished run.
+  const wasRunningRef = useRef(running);
+  useEffect(() => {
+    const was = wasRunningRef.current;
+    wasRunningRef.current = running;
+    if (was && !running) {
+      const last = [...items].reverse().find((i) => i.kind === "assistant" && i.done && i.text);
+      if (last) void openThread(last);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
 
   // Commands come from pi at runtime, so anything a newly installed package
   // registers shows up here without the portal knowing about it in advance.
@@ -79,7 +113,7 @@ export function Chat({
   };
 
   return (
-    <div className="flex h-full">
+    <div className="relative flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
       <header className="border-b border-line px-4 py-3">
         <div className="mx-auto flex w-full max-w-3xl items-center gap-3">
@@ -89,7 +123,10 @@ export function Chat({
         </div>
         <div className="ml-auto flex items-center gap-2">
           <button
-            onClick={() => setShowFiles((v) => !v)}
+            onClick={() => {
+              setShowFiles((v) => !v);
+              setThread(null);
+            }}
             title="Workspace file explorer — see what the agent has written so far"
             className={`flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs transition hover:bg-fg/5 ${
               showFiles ? "text-accent" : "text-fg-muted hover:text-fg"
@@ -141,7 +178,14 @@ export function Chat({
         {items.map((item) => {
           if (item.kind === "user") {
             return (
-              <div key={item.id} className="flex justify-end">
+              <div key={item.id} className="group flex justify-end gap-2">
+                <button
+                  onClick={() => openThread(item)}
+                  title="Thread on this message — an isolated agent that sees only it"
+                  className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                >
+                  <LuMessagesSquare className="h-3.5 w-3.5" />
+                </button>
                 <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-accent/10 px-3.5 py-2 text-sm text-fg ring-1 ring-inset ring-accent/15">
                   {item.text}
                 </div>
@@ -150,7 +194,7 @@ export function Chat({
           }
           if (item.kind === "assistant") {
             return (
-              <div key={item.id} className="max-w-[90%]">
+              <div key={item.id} className="group max-w-[90%]">
                 {item.thinking && (
                   <details className="mb-1 text-xs text-fg-subtle">
                     <summary className="cursor-pointer hover:text-fg-muted">thinking</summary>
@@ -164,6 +208,13 @@ export function Chat({
                     <ReactMarkdown>{item.text}</ReactMarkdown>
                   </div>
                 )}
+                <button
+                  onClick={() => openThread(item)}
+                  title="Thread on this message — an isolated agent that sees only it"
+                  className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                >
+                  <LuMessagesSquare className="h-3 w-3" /> Thread
+                </button>
               </div>
             );
           }
@@ -273,6 +324,17 @@ export function Chat({
 
       {showSkills && (
         <ChatSkillsPanel sessionId={session.id} onClose={() => setShowSkills(false)} />
+      )}
+
+      {threadError && (
+        <div className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-lg bg-danger/10 px-3 py-1.5 text-xs text-danger ring-1 ring-inset ring-danger/20">
+          Couldn't open thread: {threadError}{" "}
+          <button onClick={() => setThreadError(null)} className="ml-1 opacity-70 hover:opacity-100">✕</button>
+        </div>
+      )}
+
+      {thread && (
+        <ThreadsPanel thread={thread} onClose={() => setThread(null)} />
       )}
     </div>
   );

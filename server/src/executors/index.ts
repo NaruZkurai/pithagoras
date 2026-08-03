@@ -17,6 +17,8 @@ export interface LaunchOptions {
   sessionFile?: string;
   /** Give this session the routine tools. Channel sessions only. */
   routineTools?: boolean;
+  /** Set for thread sessions: adds the thread agent + confirmation tools. */
+  threadId?: string;
 }
 
 export interface Executor {
@@ -61,6 +63,7 @@ export class HostExecutor implements Executor {
       sessionFile: opts.sessionFile,
       routineTools: opts.routineTools,
       sessionId: opts.sessionId,
+      threadId: opts.threadId,
       provider: opts.provider,
       modelId: opts.model,
       thinkingLevel: opts.thinkingLevel,

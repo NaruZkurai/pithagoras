@@ -24,9 +24,10 @@ export interface SessionRow {
   pi_session_file: string | null;
   /**
    * "task" for the ones you create here, "agent" for one reached through a
-   * channel, "routine" for one a schedule owns.
+   * channel, "routine" for one a schedule owns, "thread" for a side-chat on a
+   * message.
    */
-  kind: "task" | "agent" | "routine";
+  kind: "task" | "agent" | "routine" | "thread";
   /**
    * Agent sessions only: the slug of the channel it arrived through.
    *
@@ -174,6 +175,42 @@ export function getDb(): Database.Database {
       used_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_skill_usage_session ON skill_usage(session_id);
+
+    -- A side-chat attached to one message, like a Discord thread. Isolated
+    -- from the rest of the conversation: the thread agent sees only the parent
+    -- message and the thread's own history.
+    CREATE TABLE IF NOT EXISTS threads (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      parent_seq INTEGER NOT NULL,
+      parent_role TEXT NOT NULL,
+      parent_text TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_threads_session ON threads(session_id);
+
+    -- A thread's own conversation. Nothing outside the thread lives here.
+    CREATE TABLE IF NOT EXISTS thread_messages (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_thread_messages_thread ON thread_messages(thread_id);
+
+    -- Messages the thread agent has confirmed, across every thread. Queryable
+    -- by the agent, and the only thing it remembers between threads.
+    CREATE TABLE IF NOT EXISTS confirmations (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      source_session_id TEXT NOT NULL,
+      source_seq INTEGER,
+      text TEXT NOT NULL,
+      confirmed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_confirmations_time ON confirmations(confirmed_at);
   `);
   migrate(db);
   return db;
@@ -248,6 +285,14 @@ function migrate(d: Database.Database): void {
   if (routineCols.length && !routineCols.includes("trigger")) {
     d.exec("ALTER TABLE routines ADD COLUMN trigger TEXT NOT NULL DEFAULT 'schedule'");
   }
+  // A routine can be bound to one chat ('session' + its id) or left to fire
+  // anywhere ('any' — every chat for message triggers, its own session otherwise).
+  if (routineCols.length && !routineCols.includes("target")) {
+    d.exec("ALTER TABLE routines ADD COLUMN target TEXT NOT NULL DEFAULT 'any'");
+  }
+  if (routineCols.length && !routineCols.includes("target_session_id")) {
+    d.exec("ALTER TABLE routines ADD COLUMN target_session_id TEXT");
+  }
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_routines_slug ON routines(slug)");
 }
 
@@ -256,7 +301,7 @@ export function createSession(row: {
   title: string;
   workspace: string;
   executor: string;
-  kind?: "task" | "agent" | "routine";
+  kind?: "task" | "agent" | "routine" | "thread";
   channel_slug?: string | null;
   channel_key?: string | null;
   routine_slug?: string | null;
@@ -353,8 +398,123 @@ export function updateSession(
 
 export function deleteSession(id: string): void {
   const d = getDb();
+  // Threads belong to a session; take their messages and confirmations with it.
+  const threadIds = (d.prepare("SELECT id FROM threads WHERE session_id = ?").all(id) as { id: string }[]).map(
+    (r) => r.id
+  );
+  for (const t of threadIds) deleteThreadAndMessages(t);
   d.prepare("DELETE FROM events WHERE session_id = ?").run(id);
   d.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+}
+
+// --- message threads ---
+
+export interface ThreadRow {
+  id: string;
+  session_id: string;
+  parent_seq: number;
+  parent_role: string;
+  parent_text: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ThreadMessageRow {
+  id: string;
+  thread_id: string;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export interface ConfirmationRow {
+  id: string;
+  thread_id: string;
+  source_session_id: string;
+  source_seq: number | null;
+  text: string;
+  confirmed_at: string;
+}
+
+export function listThreads(sessionId: string): ThreadRow[] {
+  return getDb()
+    .prepare("SELECT * FROM threads WHERE session_id = ? ORDER BY created_at ASC")
+    .all(sessionId) as ThreadRow[];
+}
+
+export function getThread(id: string): ThreadRow | undefined {
+  return getDb().prepare("SELECT * FROM threads WHERE id = ?").get(id) as ThreadRow | undefined;
+}
+
+export function createThread(row: {
+  id: string;
+  session_id: string;
+  parent_seq: number;
+  parent_role: string;
+  parent_text: string;
+}): void {
+  getDb()
+    .prepare(
+      "INSERT INTO threads (id, session_id, parent_seq, parent_role, parent_text) VALUES (@id, @session_id, @parent_seq, @parent_role, @parent_text)"
+    )
+    .run(row);
+}
+
+export function listThreadMessages(threadId: string): ThreadMessageRow[] {
+  return getDb()
+    .prepare(
+      "SELECT * FROM thread_messages WHERE thread_id = ? ORDER BY created_at ASC, rowid ASC"
+    )
+    .all(threadId) as ThreadMessageRow[];
+}
+
+export function appendThreadMessage(row: {
+  id: string;
+  thread_id: string;
+  role: string;
+  content: string;
+}): void {
+  getDb()
+    .prepare(
+      "INSERT INTO thread_messages (id, thread_id, role, content) VALUES (@id, @thread_id, @role, @content)"
+    )
+    .run(row);
+  getDb().prepare("UPDATE threads SET updated_at = datetime('now') WHERE id = ?").run(row.thread_id);
+}
+
+export function addConfirmation(row: {
+  id: string;
+  thread_id: string;
+  source_session_id: string;
+  source_seq: number | null;
+  text: string;
+}): void {
+  getDb()
+    .prepare(
+      "INSERT INTO confirmations (id, thread_id, source_session_id, source_seq, text) VALUES (@id, @thread_id, @source_session_id, @source_seq, @text)"
+    )
+    .run(row);
+}
+
+export function searchConfirmations(needle?: string | null, limit = 20): ConfirmationRow[] {
+  // The model may send the literal string "null"; treat it like no filter.
+  const q = needle ? String(needle).trim() : "";
+  const has = Boolean(q && q !== "null" && q !== "undefined");
+  if (has) {
+    return getDb()
+      .prepare("SELECT * FROM confirmations WHERE text LIKE ? ORDER BY confirmed_at DESC LIMIT ?")
+      .all(`%${q}%`, limit) as ConfirmationRow[];
+  }
+  return getDb()
+    .prepare("SELECT * FROM confirmations ORDER BY confirmed_at DESC LIMIT ?")
+    .all(limit) as ConfirmationRow[];
+}
+
+export function deleteThreadAndMessages(id: string): void {
+  const d = getDb();
+  d.prepare("DELETE FROM thread_messages WHERE thread_id = ?").run(id);
+  d.prepare("DELETE FROM confirmations WHERE thread_id = ?").run(id);
+  d.prepare("DELETE FROM threads WHERE id = ?").run(id);
 }
 
 export function appendEvent(sessionId: string, type: string, payload: unknown): EventRow {

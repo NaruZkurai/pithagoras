@@ -10,7 +10,7 @@ import {
   LuRefreshCw,
   LuTrash2,
 } from "react-icons/lu";
-import { api, type Routine } from "../api";
+import { api, type Routine, type Session } from "../api";
 import { Tooltip } from "./Tooltip";
 
 const inputCls =
@@ -19,6 +19,8 @@ const primaryCls =
   "inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-2 text-sm text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40";
 const btnCls =
   "inline-flex items-center gap-1.5 rounded-lg bg-fg/5 px-3 py-2 text-sm text-fg transition hover:bg-fg/10 disabled:opacity-40";
+const chipCls = (active: boolean) =>
+  `rounded-lg px-2.5 py-1 text-xs transition ${active ? "bg-accent/12 text-accent ring-1 ring-inset ring-accent/25" : "bg-fg/5 text-fg-muted hover:bg-fg/10"}`;
 
 const STATUS_STYLE: Record<string, string> = {
   ok: "text-ok",
@@ -179,6 +181,82 @@ function TriggerPicker({
 }
 
 /**
+ * Where the routine is assigned: every chat, or one specific chat.
+ */
+function WherePicker({
+  trigger,
+  target,
+  targetSessionId,
+  onTarget,
+}: {
+  trigger: "schedule" | "message";
+  target: "any" | "session";
+  targetSessionId: string | null;
+  onTarget: (target: "any" | "session", targetSessionId: string | null) => void;
+}) {
+  const [sessions, setSessions] = useState<Session[]>([]);
+
+  useEffect(() => {
+    api
+      .sessions()
+      .then((s) => setSessions(s.sessions.filter((x) => x.kind !== "routine")))
+      .catch(() => {});
+  }, []);
+
+  const everyLabel = trigger === "message" ? "Every chat" : "Its own session";
+  const everyHint =
+    trigger === "message"
+      ? "Reacts to a finished reply in any chat."
+      : "Runs in a session it keeps for itself, so a run can see what the last one did.";
+  const specificHint =
+    trigger === "message"
+      ? "Only reacts to this chat's replies; the work itself still runs in the routine's own session."
+      : "Does the work in a specific chat — the files it touches land in that chat's workspace, and its activity shows up there.";
+
+  return (
+    <div>
+      <span className="text-xs text-fg-muted">Where it works</span>
+      <div className="mt-1 flex flex-wrap gap-1">
+        <Tooltip label={everyHint} side="bottom">
+          <button
+            type="button"
+            onClick={() => onTarget("any", null)}
+            className={chipCls(target === "any")}
+          >
+            {everyLabel}
+          </button>
+        </Tooltip>
+        <Tooltip label={specificHint} side="bottom">
+          <button
+            type="button"
+            onClick={() => onTarget("session", targetSessionId ?? sessions[0]?.id ?? null)}
+            className={chipCls(target === "session")}
+          >
+            A specific chat
+          </button>
+        </Tooltip>
+      </div>
+      {target === "session" && (
+        <select
+          value={targetSessionId ?? ""}
+          onChange={(e) => onTarget("session", e.target.value || null)}
+          className={`${inputCls} mt-1`}
+        >
+          <option value="" disabled>
+            Pick a chat…
+          </option>
+          {sessions.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.title || s.id}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
+/**
  * Work that happens on a schedule rather than because somebody asked.
  *
  * A routine is a standing instruction and a cron expression: it fires, the
@@ -191,6 +269,8 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
   const [adding, setAdding] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** Which subset of the list the stat chips filter to. */
+  const [filter, setFilter] = useState<"all" | "enabled" | "disabled" | "failing">("all");
 
   const load = () =>
     api
@@ -206,6 +286,16 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
   }, []);
 
   const open = routines.find((r) => r.id === openId);
+
+  const filtered = routines.filter((r) =>
+    filter === "enabled"
+      ? r.enabled
+      : filter === "disabled"
+        ? !r.enabled
+        : filter === "failing"
+          ? r.lastStatus === "error"
+          : true
+  );
 
   if (open) {
     return (
@@ -241,12 +331,32 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Stat value={routines.length} label="routines" />
-            <Stat value={routines.filter((r) => r.enabled).length} label="enabled" tone="text-accent" />
+            <Stat
+              value={routines.length}
+              label="routines"
+              active={filter === "all"}
+              onClick={() => setFilter("all")}
+            />
+            <Stat
+              value={routines.filter((r) => r.enabled).length}
+              label="enabled"
+              tone="text-accent"
+              active={filter === "enabled"}
+              onClick={() => setFilter("enabled")}
+            />
+            <Stat
+              value={routines.filter((r) => !r.enabled).length}
+              label="disabled"
+              tone="text-fg-faint"
+              active={filter === "disabled"}
+              onClick={() => setFilter("disabled")}
+            />
             <Stat
               value={routines.filter((r) => r.lastStatus === "error").length}
               label="failing"
               tone="text-danger"
+              active={filter === "failing"}
+              onClick={() => setFilter("failing")}
             />
           </div>
         </header>
@@ -260,7 +370,16 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
         )}
 
         <div className="mt-4 flex items-center justify-between">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">Routines</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">
+            {filter === "all"
+              ? "Routines"
+              : filter === "enabled"
+                ? "Enabled"
+                : filter === "disabled"
+                  ? "Disabled"
+                  : "Failing"}{" "}
+            ({filtered.length})
+          </h3>
           <button onClick={() => setAdding(!adding)} className={adding ? btnCls : primaryCls}>
             <LuPlus className="h-4 w-4" /> {adding ? "Cancel" : "New routine"}
           </button>
@@ -289,9 +408,22 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
               what the agent just did.
             </p>
           </div>
+        ) : filtered.length === 0 ? (
+          <div className="mt-3 rounded-xl border border-dashed border-line px-4 py-10 text-center">
+            <p className="text-sm text-fg-muted">
+              {filter === "enabled"
+                ? "No enabled routines."
+                : filter === "disabled"
+                  ? "No disabled routines."
+                  : "No failing routines."}
+            </p>
+            <button onClick={() => setFilter("all")} className={`${btnCls} mt-3`}>
+              Show all
+            </button>
+          </div>
         ) : (
           <ul className="mt-3 space-y-1.5">
-            {routines.map((r) => (
+            {filtered.map((r) => (
               <li key={r.id}>
                 <button
                   onClick={() => setOpenId(r.id)}
@@ -325,6 +457,7 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
                           {when(r.lastRun)}
                         </>
                       )}
+                      {r.target === "session" && r.targetTitle && <> · in {r.targetTitle}</>}
                     </p>
                   </div>
                   <LuChevronRight className="h-4 w-4 shrink-0 text-fg-faint" />
@@ -345,12 +478,33 @@ export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) =>
   );
 }
 
-function Stat({ value, label, tone }: { value: number; label: string; tone?: string }) {
+function Stat({
+  value,
+  label,
+  tone,
+  active,
+  onClick,
+}: {
+  value: number;
+  label: string;
+  tone?: string;
+  /** Active = the list is filtered to this stat. */
+  active?: boolean;
+  onClick?: () => void;
+}) {
   return (
-    <div className="flex items-baseline gap-1.5 rounded-lg bg-raised/60 px-2.5 py-1">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={`Show ${label} routines`}
+      className={`flex items-baseline gap-1.5 rounded-lg px-2.5 py-1 transition ${
+        active ? "bg-accent/12 ring-1 ring-inset ring-accent/25" : "bg-raised/60 hover:bg-fg/5"
+      }`}
+    >
       <span className={`text-sm tabular-nums ${tone ?? "text-fg"}`}>{value}</span>
-      <span className="text-[11px] text-fg-subtle">{label}</span>
-    </div>
+      <span className={`text-[11px] ${active ? "text-accent" : "text-fg-subtle"}`}>{label}</span>
+    </button>
   );
 }
 
@@ -424,6 +578,8 @@ function NewRoutine({
   const [schedule, setSchedule] = useState("0 9 * * *");
   const [runAt, setRunAt] = useState(toLocalInput(null));
   const [instructions, setInstructions] = useState("");
+  const [target, setTarget] = useState<"any" | "session">("any");
+  const [targetSessionId, setTargetSessionId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const create = async () => {
@@ -433,6 +589,8 @@ function NewRoutine({
         name,
         trigger,
         instructions,
+        target,
+        targetSessionId: target === "session" ? targetSessionId : null,
       };
       if (trigger === "schedule") {
         if (mode === "repeats") input.schedule = schedule;
@@ -460,6 +618,16 @@ function NewRoutine({
       </label>
 
       <TriggerPicker trigger={trigger} onChange={setTrigger} />
+
+      <WherePicker
+        trigger={trigger}
+        target={target}
+        targetSessionId={targetSessionId}
+        onTarget={(t, id) => {
+          setTarget(t);
+          setTargetSessionId(id);
+        }}
+      />
 
       {trigger === "schedule" && (
         <Timing
@@ -516,6 +684,8 @@ function RoutineDetail({
   const [runAt, setRunAt] = useState(toLocalInput(r.runAt));
   const [instructions, setInstructions] = useState(r.instructions);
   const [fresh, setFresh] = useState(r.freshSession);
+  const [target, setTarget] = useState<"any" | "session">(r.target);
+  const [targetSessionId, setTargetSessionId] = useState<string | null>(r.targetSessionId);
   const [busy, setBusy] = useState<null | "save" | "run">(null);
   const [saved, setSaved] = useState(false);
   const [runs, setRuns] = useState<{ id: string; title: string }[]>([]);
@@ -528,6 +698,8 @@ function RoutineDetail({
     setRunAt(toLocalInput(r.runAt));
     setInstructions(r.instructions);
     setFresh(r.freshSession);
+    setTarget(r.target);
+    setTargetSessionId(r.targetSessionId);
   }, [r.id, r.updatedAt]);
 
   useEffect(() => {
@@ -543,7 +715,9 @@ function RoutineDetail({
     mode !== r.mode ||
     (mode === "repeats" ? schedule !== r.schedule : toLocalInput(r.runAt) !== runAt) ||
     instructions !== r.instructions ||
-    fresh !== r.freshSession;
+    fresh !== r.freshSession ||
+    target !== r.target ||
+    targetSessionId !== r.targetSessionId;
 
   const act = async (which: "save" | "run", fn: () => Promise<unknown>) => {
     setBusy(which);
@@ -589,6 +763,7 @@ function RoutineDetail({
                   : until(r.nextRun)
                 : "disabled"}{" "}
             · <span className="font-mono">{r.slug}</span>
+            {r.target === "session" && r.targetTitle ? ` · in ${r.targetTitle}` : ""}
           </p>
         </div>
         <button
@@ -609,6 +784,16 @@ function RoutineDetail({
 
       <section className="mb-6 space-y-3">
         <TriggerPicker trigger={trigger} onChange={setTrigger} />
+
+        <WherePicker
+          trigger={trigger}
+          target={target}
+          targetSessionId={targetSessionId}
+          onTarget={(t, id) => {
+            setTarget(t);
+            setTargetSessionId(id);
+          }}
+        />
 
         {trigger === "schedule" && (
           <Timing
@@ -712,6 +897,8 @@ function RoutineDetail({
                 trigger,
                 instructions,
                 freshSession: fresh,
+                target,
+                targetSessionId: target === "session" ? targetSessionId : null,
               };
               if (trigger === "schedule") {
                 if (mode === "repeats") patch.schedule = schedule;

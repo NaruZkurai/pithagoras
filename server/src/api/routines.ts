@@ -10,14 +10,28 @@ import { isOneOff, routineSupervisor, whenNext, type RoutineRow } from "../routi
  * how the last run went.
  */
 
-const toApi = (row: RoutineRow) => ({
-  id: row.id,
-  slug: row.slug,
-  name: row.name,
-  enabled: Boolean(row.enabled),
-  /** "schedule" (cron/one-off) or "message" (after an agent reply). */
-  trigger: row.trigger === "message" ? ("message" as const) : ("schedule" as const),
-  schedule: row.schedule,
+const toApi = (row: RoutineRow) => {
+  const target = row.target === "session" ? ("session" as const) : ("any" as const);
+  const targetSessionId = row.target_session_id ?? null;
+  const targetTitle = targetSessionId
+    ? ((getDb().prepare("SELECT title FROM sessions WHERE id = ?").get(targetSessionId) as
+        | { title: string }
+        | undefined)?.title ?? null)
+    : null;
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    enabled: Boolean(row.enabled),
+    /** "schedule" (cron/one-off) or "message" (after an agent reply). */
+    trigger: row.trigger === "message" ? ("message" as const) : ("schedule" as const),
+    /** "any" (every chat / its own session) or "session" (a chosen chat). */
+    target,
+    /** The chat a targeted routine is bound to. */
+    targetSessionId,
+    /** The chat's title, for display. */
+    targetTitle,
+    schedule: row.schedule,
   runAt: row.run_at,
   /** "once" or "repeats" — only meaningful for schedule-triggered routines. */
   mode: isOneOff(row) ? ("once" as const) : ("repeats" as const),
@@ -32,7 +46,8 @@ const toApi = (row: RoutineRow) => ({
   nextRun: row.next_run,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
-});
+  };
+};
 
 /**
  * A routine either repeats on a schedule, happens once at a moment, or — for a
@@ -88,7 +103,8 @@ export function routinesRouter(): Router {
   });
 
   router.post("/routines", (req, res) => {
-    const { name, schedule, runAt, instructions, freshSession, trigger } = req.body ?? {};
+    const { name, schedule, runAt, instructions, freshSession, trigger, target, targetSessionId } =
+      req.body ?? {};
     if (typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ error: "name required" });
     }
@@ -96,6 +112,19 @@ export function routinesRouter(): Router {
     const kind = trigger === "message" ? "message" : "schedule";
     const timing = readTiming({ schedule, runAt }, kind);
     if ("error" in timing) return res.status(400).json({ error: timing.error });
+
+    // Where the routine is assigned: every chat, or one specific chat.
+    let targetCol = "any";
+    let targetSessionCol: string | null = null;
+    if (target === "session") {
+      if (typeof targetSessionId !== "string" || !targetSessionId) {
+        return res.status(400).json({ error: "Pick a chat for a targeted routine" });
+      }
+      const session = getDb().prepare("SELECT id FROM sessions WHERE id = ?").get(targetSessionId);
+      if (!session) return res.status(400).json({ error: "That chat no longer exists" });
+      targetCol = "session";
+      targetSessionCol = targetSessionId;
+    }
 
     const id = nanoid(10);
     const slug = freeSlug(typeof req.body?.slug === "string" && req.body.slug ? req.body.slug : name);
@@ -107,8 +136,8 @@ export function routinesRouter(): Router {
           : timing.runAt;
     getDb()
       .prepare(
-        `INSERT INTO routines (id, slug, name, trigger, schedule, run_at, instructions, fresh_session, next_run)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO routines (id, slug, name, trigger, schedule, run_at, instructions, fresh_session, next_run, target, target_session_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -119,7 +148,9 @@ export function routinesRouter(): Router {
         timing.runAt,
         typeof instructions === "string" ? instructions.trim() : "",
         freshSession ? 1 : 0,
-        next
+        next,
+        targetCol,
+        targetSessionCol
       );
     res.json(toApi(rowById(id)!));
   });
@@ -128,7 +159,7 @@ export function routinesRouter(): Router {
     const row = rowById(req.params.id);
     if (!row) return res.status(404).json({ error: "Not found" });
 
-    const { name, slug, schedule, runAt, instructions, enabled, freshSession, trigger } =
+    const { name, slug, schedule, runAt, instructions, enabled, freshSession, trigger, target, targetSessionId } =
       req.body ?? {};
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -197,6 +228,27 @@ export function routinesRouter(): Router {
     if (typeof freshSession === "boolean") {
       sets.push("fresh_session = ?");
       values.push(freshSession ? 1 : 0);
+    }
+    // Where it is assigned: 'any' (every chat / its own session) or 'session'.
+    if (typeof target === "string" && (target === "any" || target === "session")) {
+      if (target === "session") {
+        if (typeof targetSessionId !== "string" || !targetSessionId) {
+          return res.status(400).json({ error: "Pick a chat for a targeted routine" });
+        }
+        const session = getDb().prepare("SELECT id FROM sessions WHERE id = ?").get(targetSessionId);
+        if (!session) return res.status(400).json({ error: "That chat no longer exists" });
+        sets.push("target = ?", "target_session_id = ?");
+        values.push("session", targetSessionId);
+      } else {
+        sets.push("target = ?", "target_session_id = ?");
+        values.push("any", null);
+      }
+    } else if (row.target === "session" && typeof targetSessionId === "string" && targetSessionId) {
+      // Re-point a targeted routine at another chat without changing its mode.
+      const session = getDb().prepare("SELECT id FROM sessions WHERE id = ?").get(targetSessionId);
+      if (!session) return res.status(400).json({ error: "That chat no longer exists" });
+      sets.push("target_session_id = ?");
+      values.push(targetSessionId);
     }
 
     if (sets.length) {

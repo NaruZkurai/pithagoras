@@ -123,6 +123,10 @@ class SessionManager extends EventEmitter {
       // has no business rescheduling anything; a routine run is excluded too,
       // since a routine that can create routines can build a chain unwatched.
       routineTools: session.kind === "agent",
+      // A thread is its own session; give it the thread agent + confirmation
+      // tools so it stays a focused sub-agent with a database but no other
+      // cross-thread memory.
+      threadId: session.kind === "thread" ? sessionId : undefined,
     });
 
     // pi writes the file lazily, so it usually does not exist yet at launch.
@@ -411,6 +415,11 @@ class SessionManager extends EventEmitter {
         settle = resolve;
         fail = reject;
       });
+      // A failure is delivered twice: as a portal_status event (rejecting
+      // `finished` here) and as a throw from prompt(). If prompt() throws
+      // first, `finished` is never awaited — so attach a handler now, or that
+      // orphaned rejection takes down the whole process.
+      finished.catch(() => {});
       await this.prompt(sessionId, message);
       await finished;
       // Already relayed piece by piece; handing it back would post it twice.

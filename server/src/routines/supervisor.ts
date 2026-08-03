@@ -20,6 +20,10 @@ export interface RoutineRow {
   enabled: number;
   /** What fires it: 'schedule' (cron/one-off) or 'message' (agent completed a message). */
   trigger: string;
+  /** Where it is assigned: 'any' (every chat) or 'session' (one specific chat). */
+  target: string;
+  /** The chat a targeted routine is bound to. */
+  target_session_id: string | null;
   schedule: string;
   /** An ISO instant, for a routine that runs once instead of repeating. */
   run_at: string | null;
@@ -85,10 +89,16 @@ class RoutineSupervisor {
    * it, or a message routine would loop forever on its own output.
    */
   onMessageComplete(sessionId: string, kind: string, text: string): void {
-    if (kind === "routine") return;
+    // Routine sessions are skipped: a run's own messages must never re-trigger
+    // it, or a message routine would loop forever on its own output. Threads
+    // are skipped too: they are side-conversations, not the main chat.
+    if (kind === "routine" || kind === "thread") return;
     const now = Date.now();
     for (const row of this.rows()) {
       if (!row.enabled || row.trigger !== "message") continue;
+      // A routine assigned to one chat only reacts to that chat's replies.
+      if (row.target === "session" && row.target_session_id && row.target_session_id !== sessionId)
+        continue;
       if (this.running.has(row.slug)) continue;
       const last = this.lastFired.get(row.slug) ?? 0;
       if (now - last < MESSAGE_COOLDOWN_MS) continue;
@@ -196,6 +206,18 @@ class RoutineSupervisor {
    * run a clean one instead, for work where history is only noise.
    */
   private sessionFor(row: RoutineRow): SessionRow {
+    // A routine assigned to a chat does its work in that chat, so the files it
+    // touches land in that chat's workspace. Except a message-triggered one: it
+    // is woken BY a message in that chat, which is still in flight — asking the
+    // same chat mid-turn collides with it, so it reacts to the chat but runs in
+    // its own session instead.
+    if (row.trigger !== "message" && row.target === "session" && row.target_session_id) {
+      const target = getDb()
+        .prepare("SELECT * FROM sessions WHERE id = ?")
+        .get(row.target_session_id) as SessionRow | undefined;
+      if (target) return target;
+    }
+
     if (!row.fresh_session) {
       const existing = findRoutineSession(row.slug);
       if (existing) return existing;

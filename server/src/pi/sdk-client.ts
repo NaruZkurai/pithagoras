@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
 import { routineTools } from "./routine-tools.js";
 import { skillTools, skillHint } from "./skill-tools.js";
+import { threadTools, threadFraming } from "./thread-tools.js";
 
 function asArray(v: any): any[] {
   const resolved = typeof v === "function" ? v() : v;
@@ -122,6 +123,11 @@ export class SdkPiClient extends EventEmitter implements PiClient {
     routineTools?: boolean;
     /** The portal session this client belongs to (for usage tracking). */
     sessionId?: string;
+    /**
+     * Set for a thread session. Registers the confirmation-database tools and
+     * appends the thread-agent persona to the system prompt.
+     */
+    threadId?: string;
   }): Promise<SdkPiClient> {
     // Imported lazily so the server still boots (and the container executor
     // still works) if the SDK cannot initialise in this environment.
@@ -139,12 +145,18 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       const builtinSkills = builtinSkillsDir();
       // Inline rather than an installed package: the portal owns the data they
       // reach, so a package would have to call back over HTTP. The skill
-      // library is searchable by every session; the routine tools stay channel
-      // only.
+      // library is searchable by every session; routines are channel only; the
+      // confirmation tools are for thread sessions.
       const factories: { name: string; factory: (pi: any) => void }[] = [
         { name: "skills", factory: (pi: any) => skillTools(pi, { sessionId: opts.sessionId! }) },
       ];
       if (opts.routineTools) factories.push({ name: "routines", factory: routineTools });
+      if (opts.threadId) {
+        factories.push({
+          name: "threads",
+          factory: (pi: any) => threadTools(pi, { threadId: opts.threadId! }),
+        });
+      }
       resourceLoader = new pi.DefaultResourceLoader({
         cwd: opts.cwd,
         agentDir: pi.getAgentDir(),
@@ -170,8 +182,13 @@ export class SdkPiClient extends EventEmitter implements PiClient {
         // you" from its own base identity — verified: it read a fact out of
         // MEMORY.md correctly while insisting it was Pi, made by Baidu. This
         // says what the files are for. The skill hint points at the search
-        // tool instead of a wall of skill names.
-        appendSystemPrompt: [...framing(opts.cwd), skillHint()],
+        // tool instead of a wall of skill names; a thread also gets the thread
+        // persona. appendSystemPrompt must be an array — pi maps over it.
+        appendSystemPrompt: [
+          ...framing(opts.cwd),
+          skillHint(),
+          ...(opts.threadId ? [threadFraming()] : []),
+        ],
       });
       await resourceLoader.reload();
     } catch (e) {

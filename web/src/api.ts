@@ -77,6 +77,12 @@ export interface Routine {
   enabled: boolean;
   /** "schedule" = cron/one-off timing; "message" = fires after an agent reply. */
   trigger: "schedule" | "message";
+  /** "any" = every chat (or its own session); "session" = a chosen chat. */
+  target: "any" | "session";
+  /** The chat a targeted routine is bound to. */
+  targetSessionId: string | null;
+  /** The target chat's title, resolved for display. */
+  targetTitle: string | null;
   /** Five-field cron, or an @shorthand. Empty for a one-off. */
   schedule: string;
   /** ISO instant for a one-off, instead of a schedule. */
@@ -91,6 +97,39 @@ export interface Routine {
   lastOutput: string | null;
   lastMs: number | null;
   nextRun: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One exchange inside a message thread. */
+export interface ThreadMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+}
+
+/** A side-chat attached to one message — the thread agent's whole context. */
+export interface Thread {
+  id: string;
+  sessionId: string;
+  parentSeq: number;
+  parentRole: string;
+  parentText: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ThreadMessage[];
+}
+
+/** A thread as it appears in a session's thread list. */
+export interface ThreadMeta {
+  id: string;
+  parentSeq: number;
+  parentRole: string;
+  parentText: string;
+  messageCount: number;
+  lastMessage: string | null;
+  lastRole: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -228,6 +267,8 @@ export const api = {
     schedule?: string;
     runAt?: string;
     instructions?: string;
+    target?: "any" | "session";
+    targetSessionId?: string | null;
   }) =>
     json<Routine>("/api/routines", { method: "POST", body: JSON.stringify(input) }),
   updateRoutine: (
@@ -241,6 +282,8 @@ export const api = {
       instructions?: string;
       enabled?: boolean;
       freshSession?: boolean;
+      target?: "any" | "session";
+      targetSessionId?: string | null;
     }
   ) => json<Routine>(`/api/routines/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteRoutine: (id: string) => json<{ ok: true }>(`/api/routines/${id}`, { method: "DELETE" }),
@@ -252,6 +295,22 @@ export const api = {
     }),
   routineSessions: (id: string) =>
     json<{ sessions: Session[] }>(`/api/routines/${id}/sessions`),
+
+  // Message threads — a side-chat on one message with an isolated agent.
+  threads: (sessionId: string) =>
+    json<{ threads: ThreadMeta[] }>(`/api/sessions/${sessionId}/threads`),
+  createThread: (sessionId: string, input: { seq: number; role: string; text: string }) =>
+    json<Thread>(`/api/sessions/${sessionId}/threads`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  getThread: (id: string) => json<Thread>(`/api/threads/${id}`),
+  sendThreadMessage: (id: string, text: string) =>
+    json<Thread>(`/api/threads/${id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
+  deleteThread: (id: string) => json<{ ok: true }>(`/api/threads/${id}`, { method: "DELETE" }),
 
   agentSetup: () => json<AgentSetup>("/api/agent/setup"),
   runAgentWizard: (input: {
