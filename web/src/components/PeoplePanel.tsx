@@ -13,8 +13,6 @@ import { api, type Person, type Role, type ToolRule } from "../api";
 
 const inputCls =
   "w-full rounded-lg border border-line bg-raised/60 px-3 py-2 text-sm outline-none transition placeholder:text-fg-faint focus:border-accent/60";
-const btnCls =
-  "inline-flex items-center gap-1.5 rounded-lg bg-fg/5 px-3 py-2 text-sm text-fg transition hover:bg-fg/10 disabled:opacity-40";
 const primaryCls =
   "inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-2 text-sm text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40";
 
@@ -170,21 +168,21 @@ function RuleRow({
   onDelete: () => void;
 }) {
   return (
-    <li className="flex items-center gap-2 rounded-xl border border-line bg-raised/40 px-3 py-2">
+    <li className="flex items-center gap-2 rounded-lg border border-line bg-raised/40 py-1 pl-2.5 pr-1">
       {scope && (
         <span className="shrink-0 rounded bg-fg/5 px-1.5 py-0.5 text-[11px] text-fg-muted">
           {scope}
         </span>
       )}
-      <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg-muted">
+      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-muted">
         {rule.tool}: {rule.pattern}
       </span>
       <button
         onClick={onDelete}
         title="Revoke"
-        className="shrink-0 rounded-lg p-1.5 text-fg-faint transition hover:bg-danger/10 hover:text-danger"
+        className="shrink-0 rounded-lg p-1 text-fg-faint transition hover:bg-danger/10 hover:text-danger"
       >
-        <LuTrash2 className="h-4 w-4" />
+        <LuTrash2 className="h-3.5 w-3.5" />
       </button>
     </li>
   );
@@ -233,69 +231,74 @@ function PersonDetail({
 
   return (
     <>
-      <button
-        onClick={onBack}
-        className="mb-4 inline-flex items-center gap-1.5 text-xs text-fg-subtle transition hover:text-fg-muted"
-      >
-        <LuChevronLeft className="h-3.5 w-3.5" /> People
-      </button>
-
-      <div className="mb-5 flex items-center gap-3">
-        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-fg/5 text-fg-subtle">
-          <LuCircleUser className="h-4 w-4" />
-        </div>
-        <div className="min-w-0">
-          <p className="truncate text-sm text-fg">{person.name}</p>
-          <p className="truncate font-mono text-[11px] text-fg-faint">{person.key}</p>
-        </div>
+      <div className="mb-3 flex items-center gap-2">
+        <button
+          onClick={onBack}
+          className="inline-flex items-center gap-1 text-xs text-fg-subtle transition hover:text-fg-muted"
+        >
+          <LuChevronLeft className="h-3.5 w-3.5" /> People
+        </button>
+        <span className="ml-auto truncate font-mono text-[11px] text-fg-faint">{person.key}</span>
+        <button
+          disabled={busy}
+          title="Forget — the next message from them arrives as a stranger again"
+          onClick={() =>
+            act(async () => {
+              await api.forgetPerson(person.key);
+              onBack();
+            })
+          }
+          className="rounded-lg p-1 text-fg-faint transition hover:bg-danger/10 hover:text-danger"
+        >
+          <LuTrash2 className="h-3.5 w-3.5" />
+        </button>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         <label className="block">
           <span className="mb-1 block text-xs text-fg-subtle">Name</span>
           <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
         </label>
 
         <div>
-          <span className="mb-1.5 block text-xs text-fg-subtle">Role</span>
-          <div className="space-y-1">
+          <span className="mb-1 block text-xs text-fg-subtle">Role</span>
+          <div className="grid grid-cols-4 gap-1">
             {ROLES.map((r) => (
               <button
                 key={r.id}
                 onClick={() => setRole(r.id)}
-                className={`flex w-full items-start gap-2.5 rounded-xl border px-3 py-2 text-left transition ${
+                className={`rounded-lg px-2 py-1.5 text-xs transition ${
                   role === r.id
-                    ? "border-accent/40 bg-accent/10"
-                    : "border-line bg-raised/40 hover:bg-fg/5"
+                    ? "bg-accent/12 text-accent ring-1 ring-inset ring-accent/25"
+                    : "bg-fg/5 text-fg-muted hover:bg-fg/10"
                 }`}
               >
-                <span className="min-w-0 flex-1">
-                  <span className={`block text-sm ${role === r.id ? "text-accent" : "text-fg"}`}>
-                    {r.label}
-                  </span>
-                  <span className="block text-[11px] text-fg-faint">{r.hint}</span>
-                </span>
-                {role === r.id && <LuCheck className="mt-0.5 h-4 w-4 shrink-0 text-accent" />}
+                {r.label}
               </button>
             ))}
           </div>
+          {/* One line for the choice in front of you, rather than four
+              descriptions competing for the same attention. */}
+          <p className="mt-1 text-[11px] text-fg-faint">
+            {ROLES.find((r) => r.id === role)?.hint}
+          </p>
         </div>
 
         <label className="block">
           <span className="mb-1 block text-xs text-fg-subtle">What the agent should know</span>
           <textarea
             className={inputCls}
-            rows={3}
+            rows={2}
             value={notes}
-            placeholder="Their role, what they work on — the agent is told this every time they write."
+            placeholder="Their role, what they work on — repeated to the agent every time they write."
             onChange={(e) => setNotes(e.target.value)}
           />
         </label>
 
-        <div className="flex gap-2">
+        {dirty && (
           <button
             className={primaryCls}
-            disabled={busy || !dirty}
+            disabled={busy}
             onClick={() =>
               act(async () => {
                 await api.updatePerson(person.key, { name, role, notes });
@@ -309,75 +312,54 @@ function PersonDetail({
             ) : saved ? (
               <LuCheck className="h-4 w-4" />
             ) : null}
-            {saved ? "Saved" : "Save"}
+            Save
           </button>
-          <button
-            className={btnCls}
-            disabled={busy}
-            title="The next message from them arrives as a stranger again"
-            onClick={() =>
-              act(async () => {
-                await api.forgetPerson(person.key);
-                onBack();
-              })
-            }
-          >
-            <LuTrash2 className="h-4 w-4" /> Forget
-          </button>
-        </div>
+        )}
       </div>
 
-      <section className="mt-8">
-        <h3 className="text-sm font-medium text-fg">Allowed anyway</h3>
-        <p className="mb-3 mt-1 text-xs text-fg-faint">
-          What {person.name} may do despite their role. Choosing <em>Always allow</em> on one of
-          their requests writes a rule here, and deleting it takes the permission back.{" "}
-          <span className="font-mono">*</span> stands for the parts that vary. A shell rule matches
-          a single command only — anything carrying a pipe, a semicolon or a redirect is refused
-          however well it matches.
+      <section className="mt-6">
+        <div className="mb-1.5 flex items-baseline gap-2">
+          <h3 className="text-sm font-medium text-fg">Allowed anyway</h3>
+          <span className="text-xs text-fg-faint">{rules.length}</span>
+        </div>
+        <p className="mb-2 text-[11px] text-fg-faint">
+          What {person.name} may do despite their role — written by <em>Always allow</em>, revoked
+          by deleting. <span className="font-mono">*</span> covers the parts that vary; a shell rule
+          matches one command, never a pipeline.
         </p>
 
-        {rules.length > 0 ? (
-          <ul className="mb-3 space-y-1">
+        {rules.length > 0 && (
+          <ul className="mb-2 space-y-1">
             {rules.map((r) => (
               <RuleRow key={r.id} rule={r} onDelete={() => act(() => api.deleteToolRule(r.id))} />
             ))}
           </ul>
-        ) : (
-          <p className="mb-3 rounded-xl border border-dashed border-line px-3 py-4 text-center text-xs text-fg-faint">
-            Nothing yet — they can read, and anything else needs asking.
-          </p>
         )}
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex gap-1">
           <input
             value={tool}
             onChange={(e) => setTool(e.target.value)}
             placeholder="bash"
-            className="w-24 rounded-lg border border-line bg-raised/60 px-2 py-2 font-mono text-xs outline-none focus:border-accent/60"
+            className="w-20 rounded-lg border border-line bg-raised/60 px-2 py-1.5 font-mono text-[11px] outline-none focus:border-accent/60"
           />
           <input
             value={pattern}
             onChange={(e) => setPattern(e.target.value)}
             placeholder="himalaya envelope list*"
-            className="min-w-[12rem] flex-1 rounded-lg border border-line bg-raised/60 px-2 py-2 font-mono text-xs outline-none placeholder:text-fg-faint focus:border-accent/60"
+            className="min-w-0 flex-1 rounded-lg border border-line bg-raised/60 px-2 py-1.5 font-mono text-[11px] outline-none placeholder:text-fg-faint focus:border-accent/60"
           />
           <button
             disabled={busy || !pattern.trim()}
             onClick={() =>
               act(async () => {
-                await api.addToolRule({
-                  role: person.role,
-                  tool,
-                  pattern,
-                  personKey: person.key,
-                });
+                await api.addToolRule({ role: person.role, tool, pattern, personKey: person.key });
                 setPattern("");
               })
             }
-            className="inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-2 text-xs text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40"
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-accent/12 px-2.5 py-1.5 text-[11px] text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40"
           >
-            <LuPlus className="h-3.5 w-3.5" /> Allow
+            <LuPlus className="h-3 w-3" /> Allow
           </button>
         </div>
       </section>

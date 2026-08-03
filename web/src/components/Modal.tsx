@@ -41,7 +41,10 @@ export function Modal({
           bare title bar and snapped to full height a moment later. */}
       <div
         className={`flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-pop ${
-          wide ? "max-w-3xl" : "max-w-2xl"
+          // Grows with the viewport rather than to it: the rail plus a settings
+          // form has a comfortable width, and a 34-inch screen should not
+          // stretch a two-column form across all of it.
+          wide ? "max-w-3xl xl:max-w-5xl" : "max-w-2xl"
         } ${rail ? "min-h-[min(34rem,88vh)]" : ""}`}
       >
         <header className="flex items-center gap-3 border-b border-line px-5 py-3.5">
