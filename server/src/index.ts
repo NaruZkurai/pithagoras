@@ -13,7 +13,7 @@ import {
   listSessions,
   updateSession,
 } from "./db.js";
-import { agentHome } from "./agent.js";
+import { agentHome, resolveChannelSession } from "./agent.js";
 import {
   agentFileStatus,
   runWizard,
@@ -179,6 +179,29 @@ app.get("/api/agent/sessions", (_req, res) => {
         : null,
     })),
   });
+});
+
+/**
+ * A new agent conversation started from the browser.
+ *
+ * Not a channel: the portal's own UI is a better client than any channel could
+ * be — it streams the transcript, shows tool calls and answers extension
+ * dialogs — so it talks to the agent directly rather than relaying text.
+ * "browser" is a reserved slug so these group together on the Agent tab.
+ */
+app.post("/api/agent/sessions", (req, res) => {
+  const title = typeof req.body?.title === "string" && req.body.title.trim() ? req.body.title.trim() : "";
+  try {
+    const { session } = resolveChannelSession({
+      channelSlug: "browser",
+      key: nanoid(8),
+      title: title || `Chat ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
+      executor: EXECUTOR_KIND,
+    });
+    res.json(toApi(session));
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
 });
 
 // --- the agent's home directory ---

@@ -226,6 +226,11 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
 
+  /** Any session by id, including agent and routine ones the task list omits. */
+  session: (id: string) => json<Session>(`/api/sessions/${id}`),
+  startAgentChat: (title?: string) =>
+    json<Session>("/api/agent/sessions", { method: "POST", body: JSON.stringify({ title }) }),
+
   agentSessions: () =>
     json<{ sessions: AgentSession[]; agentHome: string }>("/api/agent/sessions"),
 
