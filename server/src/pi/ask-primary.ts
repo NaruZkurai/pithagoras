@@ -4,6 +4,7 @@ import { unscopeKey } from "../agent.js";
 import { askQuestion } from "../questions.js";
 import { channelSupervisor } from "../channels/supervisor.js";
 import { sessions } from "../session-manager.js";
+import { getPerson } from "../people.js";
 
 /**
  * Reaching the primary user from a conversation that is not theirs.
@@ -75,7 +76,9 @@ export function askPrimaryTool(sessionId: string) {
         // promise changes — only the timing does.
         const immediate = channelSupervisor.canSend(session.channel_slug);
 
-        const who = sessions.currentSpeaker(sessionId);
+        const who =
+          sessions.currentSpeaker(sessionId) ??
+          (session.last_person_key ? getPerson(session.last_person_key) : undefined);
         const row = askQuestion({
           sessionId,
           personKey: who?.key ?? "unknown",

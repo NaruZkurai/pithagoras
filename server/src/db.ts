@@ -46,6 +46,8 @@ export interface SessionRow {
   routine_slug: string | null;
   /** Lowest role this conversation has served — see the migration for why. */
   role: "primary" | "colleague" | "guest" | "unknown";
+  /** Who last spoke here, surviving a restart that empties the in-memory map. */
+  last_person_key: string | null;
 }
 
 export interface EventRow {
@@ -266,6 +268,9 @@ function migrate(d: Database.Database): void {
   // The lowest role this session has ever served. Ratchets down and never up:
   // once a guest has spoken in a conversation, the private context files stay
   // out of it even if the next message is from the primary user.
+  if (!names.includes("last_person_key")) {
+    d.exec("ALTER TABLE sessions ADD COLUMN last_person_key TEXT");
+  }
   if (!names.includes("role")) {
     d.exec("ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'primary'");
   }

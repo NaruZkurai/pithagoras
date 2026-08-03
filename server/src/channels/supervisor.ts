@@ -271,11 +271,17 @@ class ChannelSupervisor {
             `attempt it. Do not ask again.`,
       `Reply to ${question.person_name}, not to ${who} — this is their conversation.`,
       "</answer-from-primary>",
-      ...takeNotes(sessionId),
     ].join("\n");
 
+    // Wrapped, not appended. Loose in the prompt they read as the other person
+    // speaking, and the agent answered its own last message back to them.
+    const pending = takeNotes(sessionId);
+    const full = pending.length
+      ? `${prompt}\n\n<sent-since-you-last-spoke>\n${pending.join("\n\n---\n\n")}\n</sent-since-you-last-spoke>`
+      : prompt;
+
     try {
-      const reply = await sessions.ask(sessionId, prompt);
+      const reply = await sessions.ask(sessionId, full);
       if (reply?.trim()) {
         await this.send(question.channel_slug, question.channel_key, reply.trim());
       }
@@ -435,6 +441,11 @@ class ChannelSupervisor {
         await sessions.shutdownSession(session.id);
       }
       sessions.setSpeaker(session.id, person);
+      // Persisted as well as held in memory: the in-memory speaker is empty
+      // after a restart, and a question raised then was attributed to "Someone".
+      getDb()
+        .prepare("UPDATE sessions SET last_person_key = ? WHERE id = ?")
+        .run(person.key, session.id);
     }
 
     // Everything below jumps the queue on purpose. ask() serialises per

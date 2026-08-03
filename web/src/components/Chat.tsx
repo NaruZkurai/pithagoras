@@ -13,9 +13,11 @@ import { ComposerBar } from "./ComposerBar";
  * noise. Folded away rather than dropped: it is still what the model saw, and
  * when a reply looks strange this is usually why.
  */
+/** Keep in step with what the server attaches — see channels/supervisor.ts. */
 const CONTEXT_BLOCKS: { tag: string; label: string }[] = [
   { tag: "speaker", label: "Speaker" },
   { tag: "sent-since-you-last-spoke", label: "Sent while idle" },
+  { tag: "answer-from-primary", label: "Answer" },
   { tag: "channel-instructions", label: "Channel instructions" },
   { tag: "routine", label: "Routine" },
 ];
