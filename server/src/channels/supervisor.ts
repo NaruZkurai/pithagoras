@@ -4,6 +4,7 @@ import {
   getDb,
   getDefaultReportTo,
   listToolRules,
+  takeDeliveries,
   takeNotes,
 } from "../db.js";
 import { resolveChannelSession, scopeKey } from "../agent.js";
@@ -203,18 +204,33 @@ class ChannelSupervisor {
    * the agent mid-conversation, and pushing it through the channel's session
    * would leave a message in the transcript that nobody sent.
    */
-  async send(slug: string, target: string, text: string): Promise<void> {
+  async send(slug: string, target: string, text: string): Promise<"sent" | "queued"> {
+    if (!text.trim()) return "sent";
     const live = this.liveBySlug(slug);
-    if (!live) throw new Error(`Channel "${slug}" is not running`);
-    if (!live.send) throw new Error(`"${slug}" cannot start a conversation, only answer one`);
-    if (!text.trim()) return;
-    await live.send(target, text);
+    const session = findChannelSession(scopeKey(slug, target));
 
+    // A transport that cannot be spoken to is not a dead end, only a slower
+    // one: the message waits and goes out with the reply to whatever they say
+    // next. The alternative — refusing to carry it — loses the message
+    // entirely, which is worse than delivering it late.
+    if (!live?.send) {
+      if (!session) {
+        throw new Error(
+          live
+            ? `"${slug}" cannot be spoken to, and there is no conversation to hold this for`
+            : `Channel "${slug}" is not running`
+        );
+      }
+      addNote(session.id, text, true);
+      return "queued";
+    }
+
+    await live.send(target, text);
     // The agent said this, so its conversation has to know it said it. Without
     // this, a routine reports into a chat and the follow-up question — "what did
     // you mean by that?" — reaches an agent with no idea what "that" is.
-    const session = findChannelSession(scopeKey(slug, target));
     if (session) addNote(session.id, text);
+    return "sent";
   }
 
   /** Tell the primary user that somebody new turned up — once per person. */
@@ -297,8 +313,9 @@ class ChannelSupervisor {
       const pending = readAnswer(text);
       if (pending) {
         const { question, answer } = pending;
+        let how: "sent" | "queued";
         try {
-          await this.send(
+          how = await this.send(
             question.channel_slug,
             question.channel_key,
             `${primaryName()} says: ${answer}`
@@ -307,7 +324,9 @@ class ChannelSupervisor {
           return `Could not get that back to ${question.person_name}: ${(e as Error).message}`;
         }
         recordAnswer(question.id, answer);
-        return `Passed on to ${question.person_name}.`;
+        return how === "sent"
+          ? `Passed on to ${question.person_name}.`
+          : `Saved for ${question.person_name} — they will see it the next time they write.`;
       }
     }
 
@@ -387,7 +406,12 @@ class ChannelSupervisor {
     const wantsTools = Boolean(row.relay_tools);
     const relaying = packageReply && (wantsProgress || wantsTools);
 
-    return sessions.ask(session.id, withInstructions(text, row.instructions, person, takeNotes(session.id)), {
+    // Anything that could not be delivered when it was written goes out now,
+    // ahead of the answer to whatever they have just said.
+    const owed = takeDeliveries(session.id);
+    if (owed.length && packageReply) void packageReply(owed.join("\n\n"));
+
+    const reply = await sessions.ask(session.id, withInstructions(text, row.instructions, person, takeNotes(session.id)), {
       onReply: relaying ? packageReply : undefined,
       streamText: wantsProgress,
       // Dialogs are relayed whatever the toggles say. They are not progress
@@ -456,6 +480,10 @@ class ChannelSupervisor {
         void packageReply?.(question);
       },
     });
+
+    // A channel with no way to relay mid-run had nowhere to put these, so they
+    // ride out with the answer instead.
+    return owed.length && !packageReply ? [...owed, reply].join("\n\n") : reply;
   }
 
   /** One line for the boot log. */

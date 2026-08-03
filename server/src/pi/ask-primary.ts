@@ -58,7 +58,10 @@ export function askPrimaryTool(sessionId: string) {
         // question is worth asking. Refusing to ask at all because the return
         // leg is missing throws away the part that matters — the question
         // reaching a human — so it only changes what everyone is told.
-        const canReply = channelSupervisor.canSend(session.channel_slug);
+        // Whether it arrives the moment it is written, or waits for them to
+        // speak again. Either way it arrives, so neither the question nor the
+        // promise changes — only the timing does.
+        const immediate = channelSupervisor.canSend(session.channel_slug);
 
         const who = sessions.currentSpeaker(sessionId);
         const row = askQuestion({
@@ -75,22 +78,17 @@ export function askPrimaryTool(sessionId: string) {
             to.channel,
             to.target,
             `${row.person_name} is asking (via ${session.channel_slug}):\n\n${question}\n\n` +
-              (canReply
-                ? `Reply with "#${row.id} <your answer>" and I will pass it back to them.`
-                : `I cannot pass an answer back into that conversation — it can only reply to ` +
-                  `messages sent to it. Reach ${row.person_name} directly.`)
+              `Reply with "#${row.id} <your answer>" and I will pass it back to them.` +
+              (immediate ? "" : ` That channel cannot be messaged out of the blue, so they will see it the next time they write.`)
           );
         } catch (e) {
           return { output: `Could not reach them: ${(e as Error).message}`, isError: true };
         }
 
         return {
-          output: canReply
-            ? `Asked. Tell ${row.person_name} you have passed it on and that you will come back ` +
-              `to them — do not guess at the answer in the meantime.`
-            : `Asked. This conversation cannot receive a reply through me, so tell ` +
-              `${row.person_name} it has been passed on and that they will be contacted ` +
-              `directly — do not promise them an answer here, and do not guess at one.`,
+          output:
+            `Asked. Tell ${row.person_name} you have passed it on and that you will come back ` +
+            `to them — do not guess at the answer in the meantime.`,
           isError: false,
         };
       },
