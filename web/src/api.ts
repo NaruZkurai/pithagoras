@@ -105,6 +105,19 @@ export interface Workspace {
   isGit: boolean;
 }
 
+export interface FileEntry {
+  name: string;
+  type: "dir" | "file";
+  size: number;
+  mtime: number;
+}
+
+export interface FileContent {
+  binary: boolean;
+  size: number;
+  content?: string;
+}
+
 export interface PortalEvent {
   seq: number;
   type: string;
@@ -337,6 +350,24 @@ export const api = {
     }),
   updatePackages: () =>
     json<{ ok: true; output: string }>("/api/packages/update", { method: "POST" }),
+
+  listFiles: (workspace: string, dirPath: string) =>
+    json<{ path: string; entries: FileEntry[] }>(
+      `/api/workspaces/${encodeURIComponent(workspace)}/files?path=${encodeURIComponent(dirPath)}`
+    ),
+  readFile: (workspace: string, filePath: string) =>
+    json<FileContent>(
+      `/api/workspaces/${encodeURIComponent(workspace)}/file?path=${encodeURIComponent(filePath)}`
+    ),
+  saveFile: (workspace: string, filePath: string, content: string) =>
+    json<{ ok: true; size: number; mtime: number }>(
+      `/api/workspaces/${encodeURIComponent(workspace)}/file?path=${encodeURIComponent(filePath)}`,
+      { method: "PUT", body: JSON.stringify({ content }) }
+    ),
+  fileDownloadUrl: (workspace: string, filePath: string) =>
+    `/api/workspaces/${encodeURIComponent(workspace)}/file?path=${encodeURIComponent(filePath)}&download=1`,
+  archiveDownloadUrl: (workspace: string) =>
+    `/api/workspaces/${encodeURIComponent(workspace)}/archive`,
 };
 
 export interface PiModel {
