@@ -97,7 +97,15 @@ export function askPrimaryTool(sessionId: string) {
                   `Approving runs that and nothing else.\n\n`
                 : "") +
               `Reply with "#${row.id} <your answer>" and I will pass it back to them.` +
-              (immediate ? "" : ` That channel cannot be messaged out of the blue, so they will see it the next time they write.`)
+              (immediate ? "" : ` That channel cannot be messaged out of the blue, so they will see it the next time they write.`),
+            // Only where there is something to approve. A question wanting an
+            // opinion needs words, and two buttons would be pretending it does not.
+            row.action
+              ? [
+                  { label: "Approve", reply: `#${row.id} approve` },
+                  { label: "Deny", reply: `#${row.id} no` },
+                ]
+              : undefined
           );
         } catch (e) {
           return { output: `Could not reach them: ${(e as Error).message}`, isError: true };

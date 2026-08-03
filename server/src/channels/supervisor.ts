@@ -57,7 +57,11 @@ interface Running {
   controller: AbortController;
   stop?: () => Promise<void> | void;
   /** Optional: not every transport can speak first. A webhook cannot. */
-  send?: (target: string, text: string) => Promise<void> | void;
+  send?: (
+    target: string,
+    text: string,
+    options?: { label: string; reply: string }[]
+  ) => Promise<void> | void;
   /** Optional: platform-native question rendering, with a text fallback. */
   prompt?: (
     target: string,
@@ -206,7 +210,12 @@ class ChannelSupervisor {
    * the agent mid-conversation, and pushing it through the channel's session
    * would leave a message in the transcript that nobody sent.
    */
-  async send(slug: string, target: string, text: string): Promise<"sent" | "queued"> {
+  async send(
+    slug: string,
+    target: string,
+    text: string,
+    options?: { label: string; reply: string }[]
+  ): Promise<"sent" | "queued"> {
     if (!text.trim()) return "sent";
     const live = this.liveBySlug(slug);
     const session = findChannelSession(scopeKey(slug, target));
@@ -227,7 +236,7 @@ class ChannelSupervisor {
       return "queued";
     }
 
-    await live.send(target, text);
+    await live.send(target, text, options);
     // The agent said this, so its conversation has to know it said it. Without
     // this, a routine reports into a chat and the follow-up question — "what did
     // you mean by that?" — reaches an agent with no idea what "that" is.

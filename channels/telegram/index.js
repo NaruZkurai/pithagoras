@@ -86,7 +86,26 @@ export async function start(ctx) {
         // it is not waiting for one.
         if (update.callback_query) {
           const q = update.callback_query;
-          const [promptId, index] = String(q.data || "").split(":");
+          const data = String(q.data || "");
+
+          // A one-tap reply. Fed back in as if it were typed, so the button and
+          // the text it stands for take exactly the same path.
+          if (data.startsWith("say:")) {
+            const said = data.slice(4);
+            await call(token, "answerCallbackQuery", { callback_query_id: q.id }, ctx.signal).catch(
+              () => {}
+            );
+            await call(
+              token,
+              "editMessageReplyMarkup",
+              { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: {} },
+              ctx.signal
+            ).catch(() => {});
+            void handle({ ...q.message, from: q.from }, said, String(q.message.chat.id));
+            continue;
+          }
+
+          const [promptId, index] = data.split(":");
           const pending = waiting.get(promptId);
           await call(token, "answerCallbackQuery", { callback_query_id: q.id }, ctx.signal).catch(
             () => {}
@@ -194,10 +213,35 @@ export async function start(ctx) {
      * destination is picked from conversations that already exist rather than
      * by finding a chat id somewhere.
      */
-    async send(target, text) {
+    async send(target, text, options) {
       const chatId = String(target).replace(/^chat:/, "");
-      for (const chunk of split(text, 4000)) {
-        await call(token, "sendMessage", { chat_id: chatId, text: chunk }, ctx.signal);
+      const chunks = split(text, 4000);
+      for (const [i, chunk] of chunks.entries()) {
+        const last = i === chunks.length - 1;
+        await call(
+          token,
+          "sendMessage",
+          {
+            chat_id: chatId,
+            text: chunk,
+            // Buttons go on the last chunk, where the question ends.
+            ...(last && options?.length
+              ? {
+                  reply_markup: {
+                    inline_keyboard: [
+                      options
+                        // callback_data is capped at 64 bytes, so anything
+                        // longer stays a typed reply rather than silently
+                        // becoming a button that fails on tap.
+                        .filter((o) => Buffer.byteLength(`say:${o.reply}`) <= 64)
+                        .map((o) => ({ text: o.label, callback_data: `say:${o.reply}` })),
+                    ],
+                  },
+                }
+              : {}),
+          },
+          ctx.signal
+        );
       }
     },
   };
