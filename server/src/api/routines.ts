@@ -27,6 +27,7 @@ const toApi = (row: RoutineRow) => ({
   /** null inherits the portal default; "" is an explicit "never report". */
   reportChannel: row.report_channel,
   reportTarget: row.report_target,
+  lastReportAt: row.last_report_at,
   lastRun: row.last_run,
   lastStatus: routineSupervisor.isRunning(row.slug) ? "running" : row.last_status,
   lastOutput: row.last_output,

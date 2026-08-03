@@ -35,14 +35,25 @@ export function reportToFor(slug: string | null | undefined): ReportTo | null {
   return getDefaultReportTo();
 }
 
-/** What the routine prompt says about reporting, or nothing when it cannot. */
+/**
+ * What the routine prompt says about reporting, or nothing when it cannot.
+ *
+ * The first version of this sat next to "finish with a short account of what you
+ * did", and the model kept satisfying that by writing the account as text and
+ * never calling the tool — it had no way to know that text is stored and read by
+ * nobody. Saying so explicitly is the difference between the tool being used and
+ * being ignored.
+ */
 export function reportFraming(to: ReportTo | null): string {
   if (!to) return "";
   return [
-    `You can reach a human through the "${to.channel}" channel with the report tool.`,
-    "Use it when there is something worth knowing — what you found, what you changed,",
-    "anything that needs a decision. Skip it when the run was uneventful; a report",
-    "that says nothing happened trains people to ignore the next one.",
+    "That account is filed and read by nobody. Calling the report tool is the only",
+    `way anything reaches a person — it sends to the "${to.channel}" channel.`,
+    "So: if this run turned up something worth knowing — what you found, what you",
+    "changed, anything that needs a decision — end by calling report. Writing it out",
+    "instead is the same as saying nothing.",
+    "Skip the call when the run really was uneventful: a report that says nothing",
+    "happened trains people to ignore the next one.",
   ].join("\n");
 }
 
@@ -67,6 +78,11 @@ export function reportTool(routineSlug: string | null) {
         if (!message) return { output: "Nothing to send.", isError: true };
         try {
           await channelSupervisor.send(to.channel, to.target, message);
+          if (routineSlug) {
+            getDb()
+              .prepare("UPDATE routines SET last_report_at = ? WHERE slug = ?")
+              .run(new Date().toISOString(), routineSlug);
+          }
           return { output: `Sent to ${to.channel}.`, isError: false };
         } catch (e) {
           return { output: `Could not send: ${(e as Error).message}`, isError: true };

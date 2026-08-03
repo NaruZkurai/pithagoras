@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
 import { routineTools } from "./routine-tools.js";
 import { reportTool, reportToFor } from "./report-tool.js";
+import { guardExtension } from "./guard.js";
 
 function asArray(v: any): any[] {
   const resolved = typeof v === "function" ? v() : v;
@@ -140,7 +141,11 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       // Both are required: the constructor resolves each and throws on
       // undefined, which previously left every session with no extensions.
       const builtinSkills = builtinSkillsDir();
-      const factories: { name: string; factory: (pi: any) => void }[] = [];
+      // Every session, unconditionally: the point is to limit what a turn can do
+      // after it reads something untrusted, and any session can read something.
+      const factories: { name: string; factory: (pi: any) => void }[] = [
+        { name: "guard", factory: guardExtension(opts.sessionDir) },
+      ];
       if (opts.routineTools) factories.push({ name: "routines", factory: routineTools });
       // Only when there is somewhere for it to go — a tool that always fails is
       // worse than no tool, and the model will keep trying it.

@@ -142,6 +142,9 @@ export function getDb(): Database.Database {
       -- this routine never reports, whatever the default is.
       report_channel TEXT,
       report_target TEXT,
+      -- When a run last reached a person. Distinguishes "nothing to say" from
+      -- "wrote it out and never sent it", which look identical otherwise.
+      last_report_at TEXT,
       last_run TEXT,
       last_status TEXT,
       last_output TEXT,
@@ -228,7 +231,7 @@ function migrate(d: Database.Database): void {
   if (routineCols.length && !routineCols.includes("run_at")) {
     d.exec("ALTER TABLE routines ADD COLUMN run_at TEXT");
   }
-  for (const col of ["report_channel", "report_target"]) {
+  for (const col of ["report_channel", "report_target", "last_report_at"]) {
     if (routineCols.length && !routineCols.includes(col)) {
       d.exec(`ALTER TABLE routines ADD COLUMN ${col} TEXT`);
     }

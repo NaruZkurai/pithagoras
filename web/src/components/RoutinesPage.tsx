@@ -145,6 +145,10 @@ function reportPatch(value: string): { reportChannel: string | null; reportTarge
   return { reportChannel: channel, reportTarget: target };
 }
 
+/** Did the last run reach anyone? Only meaningful once a run has finished. */
+const reported = (r: Routine) =>
+  Boolean(r.lastReportAt && r.lastRun && r.lastReportAt >= r.lastRun);
+
 const labelFor = (targets: ReportTarget[], to: ReportTo) =>
   targets.find((t) => t.channel === to.channel && t.target === to.target)?.label;
 
@@ -649,6 +653,13 @@ function RoutineDetail({
                 · {when(r.lastRun)}
                 {r.lastMs ? ` · took ${Math.round(r.lastMs / 1000)}s` : ""}
               </span>
+              {/* Writing the account out and never sending it looks identical to
+                  having nothing to say, unless this says which happened. */}
+              {reported(r) ? (
+                <span className="text-ok"> · reported</span>
+              ) : (
+                <span className="text-fg-faint"> · nothing sent</span>
+              )}
             </p>
             {r.lastOutput && (
               <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-fg-muted">

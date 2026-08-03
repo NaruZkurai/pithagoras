@@ -79,6 +79,8 @@ export interface Routine {
   /** null inherits the portal default; "" means this one never reports. */
   reportChannel: string | null;
   reportTarget: string | null;
+  /** When a run last reached a person through the report tool. */
+  lastReportAt: string | null;
   lastRun: string | null;
   lastStatus: string | null;
   lastOutput: string | null;

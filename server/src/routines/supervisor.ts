@@ -30,6 +30,7 @@ export interface RoutineRow {
    */
   report_channel: string | null;
   report_target: string | null;
+  last_report_at: string | null;
   last_run: string | null;
   last_status: string | null;
   last_output: string | null;
