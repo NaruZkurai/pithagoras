@@ -498,7 +498,7 @@ function withInstructions(
   person?: PersonRow | null
 ): string {
   const parts = [text];
-  const who = person ? senderFraming(person, primaryName()) : "";
+  const who = person ? senderFraming(person, primaryName(), Boolean(getDefaultReportTo())) : "";
   if (who) parts.push(`<speaker>\n${who}\n</speaker>`);
   const extra = (instructions ?? "").trim();
   if (extra) parts.push(`<channel-instructions>\n${extra}\n</channel-instructions>`);
