@@ -54,18 +54,11 @@ export function askPrimaryTool(sessionId: string) {
         if (!session?.channel_slug || !session.channel_key) {
           return { output: "This conversation has nowhere to send an answer back to.", isError: true };
         }
-        // Checked before the question is recorded, not when the answer bounces.
-        // Otherwise the failure surfaces to the primary user hours later, about
-        // a conversation they were never in.
-        if (!channelSupervisor.canSend(session.channel_slug)) {
-          return {
-            output:
-              "This conversation cannot receive anything sent later, so an answer could never " +
-              "reach them. Tell them to ask through a channel that can, or to contact the " +
-              "primary user directly.",
-            isError: true,
-          };
-        }
+        // Whether an answer can be routed back, which is not whether the
+        // question is worth asking. Refusing to ask at all because the return
+        // leg is missing throws away the part that matters — the question
+        // reaching a human — so it only changes what everyone is told.
+        const canReply = channelSupervisor.canSend(session.channel_slug);
 
         const who = sessions.currentSpeaker(sessionId);
         const row = askQuestion({
@@ -82,16 +75,22 @@ export function askPrimaryTool(sessionId: string) {
             to.channel,
             to.target,
             `${row.person_name} is asking (via ${session.channel_slug}):\n\n${question}\n\n` +
-              `Reply with "#${row.id} <your answer>" and I will pass it back to them.`
+              (canReply
+                ? `Reply with "#${row.id} <your answer>" and I will pass it back to them.`
+                : `I cannot pass an answer back into that conversation — it can only reply to ` +
+                  `messages sent to it. Reach ${row.person_name} directly.`)
           );
         } catch (e) {
           return { output: `Could not reach them: ${(e as Error).message}`, isError: true };
         }
 
         return {
-          output:
-            `Asked. Tell ${row.person_name} you have passed it on and that you will come back ` +
-            `to them — do not guess at the answer in the meantime.`,
+          output: canReply
+            ? `Asked. Tell ${row.person_name} you have passed it on and that you will come back ` +
+              `to them — do not guess at the answer in the meantime.`
+            : `Asked. This conversation cannot receive a reply through me, so tell ` +
+              `${row.person_name} it has been passed on and that they will be contacted ` +
+              `directly — do not promise them an answer here, and do not guess at one.`,
           isError: false,
         };
       },
