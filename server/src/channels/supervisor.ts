@@ -10,7 +10,7 @@ import {
 } from "../db.js";
 import { resolveChannelSession, scopeKey } from "../agent.js";
 import { sessions, EXECUTOR_KIND } from "../session-manager.js";
-import { readAnswer, recordAnswer } from "../questions.js";
+import { readAnswer, recordAnswer, type QuestionRow } from "../questions.js";
 import { nanoid } from "nanoid";
 import {
   hasPrimary,
@@ -244,6 +244,46 @@ class ChannelSupervisor {
     return "sent";
   }
 
+  /**
+   * Pick a conversation back up after its question was answered.
+   *
+   * Runs as that conversation, so a colleague's session is still a colleague's
+   * session: the grant permits the one action that was approved and nothing
+   * else. Not awaited by the answer path — the person who answered should not
+   * be left holding a chat window while somebody else's work runs.
+   */
+  private async resume(
+    sessionId: string,
+    question: QuestionRow,
+    answer: string,
+    approves: boolean
+  ): Promise<void> {
+    const who = primaryName();
+    const prompt = [
+      "<answer-from-primary>",
+      `${who} has answered the question you put to them: ${answer}`,
+      approves && question.action
+        ? `That is an approval. You may run \`${question.action}\` once, now — exactly as ` +
+          `written. Do it, then tell ${question.person_name} what came of it.`
+        : approves
+          ? `Carry on with what you were asked, then tell ${question.person_name}.`
+          : `That is not an approval. Tell ${question.person_name} what ${who} said and do not ` +
+            `attempt it. Do not ask again.`,
+      `Reply to ${question.person_name}, not to ${who} — this is their conversation.`,
+      "</answer-from-primary>",
+      ...takeNotes(sessionId),
+    ].join("\n");
+
+    try {
+      const reply = await sessions.ask(sessionId, prompt);
+      if (reply?.trim()) {
+        await this.send(question.channel_slug, question.channel_key, reply.trim());
+      }
+    } catch (e) {
+      console.error(`[portal] could not resume ${sessionId}: ${(e as Error).message}`);
+    }
+  }
+
   /** Tell the primary user that somebody new turned up — once per person. */
   private async announce(person: PersonRow, slug: string): Promise<void> {
     if (person.announced_at) return;
@@ -346,6 +386,13 @@ class ChannelSupervisor {
           return `Could not get that back to ${question.person_name}: ${(e as Error).message}`;
         }
         recordAnswer(question.id, answer);
+
+        // Carry on where it left off. Without this the answer lands in a
+        // conversation nobody is looking at and the work waits for the person
+        // who asked to say something again — having already been told it would
+        // be handled.
+        if (asking) void this.resume(asking.id, question, answer, approves);
+
         if (approves && question.action) {
           return how === "sent"
             ? `Approved — passed to ${question.person_name}, and it may run that once.`
