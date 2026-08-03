@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
-import { api, type PortalEvent, type Session, type Workspace } from "./api";
+import { api, type PortalEvent, type ServerState, type Session, type Workspace } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Login } from "./components/Login";
@@ -75,6 +75,7 @@ function Shell({
   const [events, setEvents] = useState<PortalEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [uiQueue, setUiQueue] = useState<UiRequest[]>([]);
+  const [modelState, setModelState] = useState<ServerState>("down");
   const esRef = useRef<EventSource | null>(null);
 
   const refreshSessions = useCallback(async () => {
@@ -102,6 +103,29 @@ function Shell({
     const t = setInterval(() => refreshSessions().catch(() => {}), 5000);
     return () => clearInterval(t);
   }, [refreshSessions, sessionId, settings, view, navigate]);
+
+  // Sidebar dot: main llama.cpp server state, polled so it stays current on
+  // every page (grey down / yellow starting / green idle / blue busy).
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const r = await api.modelServers();
+        if (cancelled) return;
+        const main =
+          r.servers.find((s) => s.main) ?? r.servers.find((s) => s.enabled) ?? r.servers[0];
+        setModelState(main?.status.state ?? "down");
+      } catch {
+        /* keep last known state */
+      }
+    };
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
 
   // Replay-then-tail for whichever session is in the URL.
   useEffect(() => {
@@ -176,6 +200,7 @@ function Shell({
         executor={executor}
         activeId={sessionId ?? null}
         view={view}
+        modelState={modelState}
         onNavigate={(to) => navigate(`/${to}`)}
         onSelect={(id) => navigate(`/s/${id}`)}
         onCreate={async (workspacePath) => {
@@ -198,6 +223,9 @@ function Shell({
         }}
         onOpenSettings={() =>
           navigate(sessionId ? `/s/${sessionId}/settings/general` : "/settings/general")
+        }
+        onOpenModels={() =>
+          navigate(sessionId ? `/s/${sessionId}/settings/models` : "/settings/models")
         }
         onCreateWorkspace={async (name) => {
           const created = await api.createWorkspace(name);

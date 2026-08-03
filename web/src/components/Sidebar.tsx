@@ -11,7 +11,7 @@ import {
   LuSettings,
   LuTrash2,
 } from "react-icons/lu";
-import type { Session, SessionStatus, Workspace } from "../api";
+import type { ServerState, Session, SessionStatus, Workspace } from "../api";
 
 const STATUS_STYLE: Record<SessionStatus, string> = {
   running: "bg-accent animate-pulse",
@@ -51,6 +51,7 @@ export function Sidebar({
   executor,
   activeId,
   view,
+  modelState,
   onSelect,
   onCreate,
   onDelete,
@@ -58,6 +59,7 @@ export function Sidebar({
   onPin,
   onCreateWorkspace,
   onOpenSettings,
+  onOpenModels,
   onNavigate,
 }: {
   sessions: Session[];
@@ -66,6 +68,7 @@ export function Sidebar({
   activeId: string | null;
   /** Which top-level destination is showing, so the nav can mark it. */
   view: "chat" | "sessions" | "agent" | "routines";
+  modelState: ServerState;
   onSelect: (id: string) => void;
   onCreate: (workspacePath: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
@@ -73,6 +76,7 @@ export function Sidebar({
   onPin: (id: string, pinned: boolean) => Promise<void>;
   onCreateWorkspace: (name: string) => Promise<Workspace>;
   onOpenSettings: () => void;
+  onOpenModels: () => void;
   onNavigate: (to: "sessions" | "agent" | "routines") => void;
 }) {
   const [creating, setCreating] = useState(false);
@@ -267,6 +271,7 @@ export function Sidebar({
               tip="Global defaults — provider, default model and thinking level for every new session, plus pi's own advanced settings."
             />
           </div>
+          <ModelStatusDot state={modelState} onClick={onOpenModels} />
           <ThemeSwitcher />
         </div>
       </div>
@@ -320,6 +325,31 @@ function NavItem({
     </Tooltip>
   ) : (
     button
+  );
+}
+
+const MODEL_STATE_META: Record<ServerState, { cls: string; label: string }> = {
+  down: { cls: "bg-fg/30", label: "not launched" },
+  starting: { cls: "bg-warn", label: "launched — no model loaded yet" },
+  idle: { cls: "bg-ok", label: "model loaded, idle" },
+  busy: { cls: "bg-accent", label: "processing requests" },
+};
+
+/** Persistent llama.cpp status dot, next to Settings, visible on every page. */
+function ModelStatusDot({ state, onClick }: { state: ServerState; onClick: () => void }) {
+  const meta = MODEL_STATE_META[state];
+  return (
+    <Tooltip label={`llama.cpp server — ${meta.label} (click for Settings → Models)`} side="top">
+      <button
+        onClick={onClick}
+        aria-label={`llama.cpp server: ${meta.label}`}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-fg/5"
+      >
+        <span
+          className={`h-2.5 w-2.5 rounded-full ${meta.cls} ${state === "busy" ? "animate-pulse" : ""}`}
+        />
+      </button>
+    </Tooltip>
   );
 }
 

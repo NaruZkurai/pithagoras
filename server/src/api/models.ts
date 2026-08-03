@@ -11,8 +11,15 @@ export function modelsRouter(): Router {
   const router = express.Router();
 
   router.get("/models/servers", async (_req, res) => {
+    const mainPort = Number(
+      new URL(process.env.LLAMA_BASE_URL || "http://127.0.0.1:41001").port || 41001
+    );
     const servers = await Promise.all(
-      listModelServers().map(async (s) => ({ ...s, status: await status(s) }))
+      listModelServers().map(async (s) => ({
+        ...s,
+        main: s.port === mainPort,
+        status: await status(s),
+      }))
     );
     res.json({ servers });
   });

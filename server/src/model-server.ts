@@ -91,6 +91,27 @@ export async function ensureModelServer(port: number): Promise<boolean> {
   }
 }
 
+export type ServerState = "down" | "starting" | "idle" | "busy";
+
+/**
+ * Read /slots — answers "is the server up with a model loaded" and "is it
+ * mid-request right now" in one probe, for the sidebar status dot.
+ */
+async function slotsInfo(port: number): Promise<{ alive: boolean; busy: boolean }> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/slots`, { signal: AbortSignal.timeout(1500) });
+    if (!res.ok) return { alive: false, busy: false };
+    const slots = (await res.json()) as Array<{ is_processing?: boolean; processing_prompt?: boolean }>;
+    if (!Array.isArray(slots)) return { alive: false, busy: false };
+    return {
+      alive: true,
+      busy: slots.some((s) => s.is_processing === true || s.processing_prompt === true),
+    };
+  } catch {
+    return { alive: false, busy: false };
+  }
+}
+
 export async function status(s: ModelServerRow): Promise<{
   name: string;
   port: number;
@@ -98,10 +119,17 @@ export async function status(s: ModelServerRow): Promise<{
   healthy: boolean;
   managed: boolean;
   pid: number | null;
+  /** Sidebar dot: down / starting (no model yet) / idle (model loaded) / busy (processing). */
+  state: ServerState;
 }> {
   const r = running.get(s.name);
   const managed = !!r && r.proc.exitCode === null;
   const healthy = await health(s.port);
+  const slots = await slotsInfo(s.port);
+  const alive = managed || healthy || slots.alive;
+  const loaded = healthy || slots.alive;
+  let state: ServerState = "down";
+  if (alive) state = loaded ? (slots.busy ? "busy" : "idle") : "starting";
   return {
     name: s.name,
     port: s.port,
@@ -109,6 +137,7 @@ export async function status(s: ModelServerRow): Promise<{
     healthy,
     managed,
     pid: managed && r ? (r.proc.pid ?? null) : null,
+    state,
   };
 }
 

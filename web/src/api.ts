@@ -69,6 +69,9 @@ export interface UsedSkill {
   usedAt: string;
 }
 
+/** llama.cpp server lifecycle, for the sidebar status dot. */
+export type ServerState = "down" | "starting" | "idle" | "busy";
+
 /** A llama.cpp server the portal can launch / stop from the UI. */
 export interface ModelServer {
   name: string;
@@ -83,6 +86,8 @@ export interface ModelServer {
   no_kv_offload: number;
   extra_args: string;
   enabled: number;
+  /** True for the server pi talks to (the one LLAMA_BASE_URL points at). */
+  main?: boolean;
   status: {
     name: string;
     port: number;
@@ -90,6 +95,7 @@ export interface ModelServer {
     healthy: boolean;
     managed: boolean;
     pid: number | null;
+    state: ServerState;
   };
 }
 

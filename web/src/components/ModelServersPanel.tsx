@@ -80,11 +80,17 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
     }
   };
 
-  const run = async (name: string, action: "start" | "stop") => {
+  const run = async (name: string, action: "start" | "stop" | "restart") => {
     setBusy(`${name}:${action}`);
     try {
       if (action === "start") await api.startModelServer(name);
-      else await api.stopModelServer(name);
+      else if (action === "stop") await api.stopModelServer(name);
+      else {
+        await api.stopModelServer(name);
+        // Give the OS a moment to release the listen socket before relaunching.
+        await new Promise((r) => setTimeout(r, 400));
+        await api.startModelServer(name);
+      }
       await load();
     } catch (e) {
       onError((e as Error).message);
@@ -211,16 +217,20 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-fg">{s.name}</span>
-                  <span
-                    className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${
-                      up
-                        ? healthy
-                          ? "bg-accent/15 text-accent"
-                          : "bg-warn/15 text-warn"
-                        : "bg-fg/10 text-fg-faint"
-                    }`}
-                  >
-                    {up ? (healthy ? (managed ? "running" : "running (external)") : "starting…") : "stopped"}
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        up ? (healthy ? "bg-ok" : "bg-warn") : "bg-fg/30"
+                      }`}
+                      title={up ? (healthy ? "Server is up" : "Server is still starting") : "Server is down"}
+                    />
+                    <span
+                      className={`text-[11px] font-medium ${
+                        up ? (healthy ? "text-ok" : "text-warn") : "text-fg-faint"
+                      }`}
+                    >
+                      {up ? (healthy ? (managed ? "up" : "up · external") : "starting…") : "down"}
+                    </span>
                   </span>
                   {managed && s.status.pid && (
                     <span className="font-mono text-[10px] text-fg-faint">pid {s.status.pid}</span>
@@ -236,18 +246,28 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 {up ? (
-                  <button
-                    onClick={() => run(s.name, "stop")}
-                    disabled={busy === `${s.name}:stop` || !managed}
-                    title={managed ? "Stop server" : "Started outside the portal — stop it in its own terminal"}
-                    className="flex items-center gap-1 rounded-lg border border-danger/40 px-2 py-1 text-xs text-danger hover:bg-danger/10 disabled:opacity-50"
-                  >
-                    <LuSquare className="h-3 w-3" /> Stop
-                  </button>
+                  <>
+                    <button
+                      onClick={() => run(s.name, "stop")}
+                      disabled={busy === `${s.name}:stop` || busy === `${s.name}:restart` || !managed}
+                      title={managed ? "Stop server" : "Started outside the portal — stop it in its own terminal"}
+                      className="flex items-center gap-1 rounded-lg border border-danger/40 px-2 py-1 text-xs text-danger hover:bg-danger/10 disabled:opacity-50"
+                    >
+                      <LuSquare className="h-3 w-3" /> Stop
+                    </button>
+                    <button
+                      onClick={() => run(s.name, "restart")}
+                      disabled={busy === `${s.name}:restart` || busy === `${s.name}:stop` || !managed}
+                      title={managed ? "Restart server (stop, then start)" : "Started outside the portal — restart it in its own terminal"}
+                      className="flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-fg-muted hover:text-fg disabled:opacity-50"
+                    >
+                      <LuRefreshCw className="h-3 w-3" /> Restart
+                    </button>
+                  </>
                 ) : (
                   <button
                     onClick={() => run(s.name, "start")}
-                    disabled={busy === `${s.name}:start`}
+                    disabled={busy === `${s.name}:start` || busy === `${s.name}:restart`}
                     title="Start server"
                     className="flex items-center gap-1 rounded-lg bg-accent px-2 py-1 text-xs text-white disabled:opacity-50"
                   >
