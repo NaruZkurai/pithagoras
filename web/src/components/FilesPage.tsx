@@ -7,6 +7,7 @@ import {
   LuFolder,
   LuRefreshCw,
   LuSave,
+  LuTrash2,
 } from "react-icons/lu";
 import { api, type FileEntry, type Workspace } from "../api";
 
@@ -28,6 +29,13 @@ function formatSize(bytes: number): string {
  */
 export function FilesPage({ workspaces }: { workspaces: Workspace[] }) {
   const [workspace, setWorkspace] = useState(workspaces[0]?.name ?? "");
+
+  // `workspaces` arrives asynchronously from the parent. On a fresh page load
+  // (not just an in-app navigation) this component can mount before it does,
+  // seeding `workspace` empty with nothing to ever correct it afterwards.
+  useEffect(() => {
+    if (!workspace && workspaces.length) setWorkspace(workspaces[0].name);
+  }, [workspaces]);
   const [dirPath, setDirPath] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -40,15 +48,19 @@ export function FilesPage({ workspaces }: { workspaces: Workspace[] }) {
   const [saving, setSaving] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const refreshList = () => {
     if (!workspace) return;
     setLoading(true);
     setError(null);
-    api
+    return api
       .listFiles(workspace, dirPath)
       .then((r) => setEntries(r.entries))
       .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    refreshList();
   }, [workspace, dirPath]);
 
   const openEntry = (name: string) => {
@@ -76,6 +88,21 @@ export function FilesPage({ workspaces }: { workspaces: Workspace[] }) {
       setFileError((e as Error).message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const deleteEntry = async (e: FileEntry) => {
+    const rel = dirPath ? `${dirPath}/${e.name}` : e.name;
+    const kind = e.type === "dir" ? "folder (and everything in it)" : "file";
+    if (!confirm(`Delete the ${kind} "${e.name}"? This cannot be undone.`)) return;
+    try {
+      await api.deleteFile(workspace, rel);
+      if (openFile === rel || (e.type === "dir" && openFile?.startsWith(`${rel}/`))) {
+        setOpenFile(null);
+      }
+      await refreshList();
+    } catch (err) {
+      setError((err as Error).message);
     }
   };
 
@@ -149,23 +176,36 @@ export function FilesPage({ workspaces }: { workspaces: Workspace[] }) {
               const rel = dirPath ? `${dirPath}/${e.name}` : e.name;
               const active = e.type === "file" && openFile === rel;
               return (
-                <button
+                <div
                   key={e.name}
-                  onClick={() => (e.type === "dir" ? setDirPath(rel) : openEntry(e.name))}
-                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-fg/5 ${
+                  className={`group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition hover:bg-fg/5 ${
                     active ? "bg-accent/10 text-accent" : "text-fg"
                   }`}
                 >
-                  {e.type === "dir" ? (
-                    <LuFolder className="h-4 w-4 shrink-0 text-fg-faint" />
-                  ) : (
-                    <LuFileText className="h-4 w-4 shrink-0 text-fg-faint" />
-                  )}
-                  <span className="min-w-0 flex-1 truncate">{e.name}</span>
-                  {e.type === "file" && (
-                    <span className="shrink-0 text-[10px] text-fg-faint">{formatSize(e.size)}</span>
-                  )}
-                </button>
+                  <button
+                    onClick={() => (e.type === "dir" ? setDirPath(rel) : openEntry(e.name))}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  >
+                    {e.type === "dir" ? (
+                      <LuFolder className="h-4 w-4 shrink-0 text-fg-faint" />
+                    ) : (
+                      <LuFileText className="h-4 w-4 shrink-0 text-fg-faint" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{e.name}</span>
+                    {e.type === "file" && (
+                      <span className="shrink-0 text-[10px] text-fg-faint">
+                        {formatSize(e.size)}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => deleteEntry(e)}
+                    title={`Delete ${e.name}`}
+                    className="shrink-0 rounded p-1 text-fg-faint opacity-0 transition hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+                  >
+                    <LuTrash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -192,6 +232,19 @@ export function FilesPage({ workspaces }: { workspaces: Workspace[] }) {
                   <LuDownload className="h-3.5 w-3.5" />
                   Download
                 </a>
+                <button
+                  className="rounded-lg p-2 text-fg-subtle transition hover:bg-danger/10 hover:text-danger"
+                  title="Delete this file"
+                  onClick={async () => {
+                    const name = openFile.split("/").pop()!;
+                    if (!confirm(`Delete the file "${name}"? This cannot be undone.`)) return;
+                    await api.deleteFile(workspace, openFile);
+                    setOpenFile(null);
+                    await refreshList();
+                  }}
+                >
+                  <LuTrash2 className="h-3.5 w-3.5" />
+                </button>
               </div>
               <div className="min-h-0 flex-1 overflow-auto p-3">
                 {fileError ? (

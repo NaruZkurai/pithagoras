@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import express, { type Router } from "express";
 
@@ -109,6 +109,23 @@ export function filesRouter(): Router {
       writeFileSync(target, content, "utf8");
       const stat = statSync(target);
       res.json({ ok: true, size: stat.size, mtime: stat.mtimeMs });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  });
+
+  /**
+   * Removes a file or a whole folder (recursively). The workspace root itself
+   * is refused — that would be deleting the workspace, not something in it.
+   */
+  router.delete("/workspaces/:name/file", (req, res) => {
+    try {
+      const dir = workspaceDir(req.params.name);
+      const target = resolveSafe(dir, String(req.query.path ?? ""));
+      if (target === dir) return res.status(400).json({ error: "Cannot delete the workspace root" });
+      if (!existsSync(target)) return res.status(404).json({ error: "Not found" });
+      rmSync(target, { recursive: true });
+      res.json({ ok: true });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
     }

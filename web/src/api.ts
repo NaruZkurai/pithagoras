@@ -364,6 +364,11 @@ export const api = {
       `/api/workspaces/${encodeURIComponent(workspace)}/file?path=${encodeURIComponent(filePath)}`,
       { method: "PUT", body: JSON.stringify({ content }) }
     ),
+  deleteFile: (workspace: string, filePath: string) =>
+    json<{ ok: true }>(
+      `/api/workspaces/${encodeURIComponent(workspace)}/file?path=${encodeURIComponent(filePath)}`,
+      { method: "DELETE" }
+    ),
   fileDownloadUrl: (workspace: string, filePath: string) =>
     `/api/workspaces/${encodeURIComponent(workspace)}/file?path=${encodeURIComponent(filePath)}&download=1`,
   archiveDownloadUrl: (workspace: string) =>
