@@ -9,7 +9,7 @@ import {
   takeNotes,
 } from "../db.js";
 import { resolveChannelSession, scopeKey } from "../agent.js";
-import { sessions, EXECUTOR_KIND } from "../session-manager.js";
+import { sessions, EXECUTOR_KIND, stripThinkingMarkers } from "../session-manager.js";
 import { readAnswer, recordAnswer, type QuestionRow } from "../questions.js";
 import { nanoid } from "nanoid";
 import {
@@ -281,10 +281,8 @@ class ChannelSupervisor {
       : prompt;
 
     try {
-      const reply = await sessions.ask(sessionId, full);
-      if (reply?.trim()) {
-        await this.send(question.channel_slug, question.channel_key, reply.trim());
-      }
+      const reply = stripThinkingMarkers((await sessions.ask(sessionId, full)) ?? "");
+      if (reply) await this.send(question.channel_slug, question.channel_key, reply);
     } catch (e) {
       console.error(`[portal] could not resume ${sessionId}: ${(e as Error).message}`);
     }
@@ -497,7 +495,10 @@ class ChannelSupervisor {
     if (owed.length && packageReply) void packageReply(owed.join("\n\n"));
 
     const reply = await sessions.ask(session.id, withInstructions(text, row.instructions, person, takeNotes(session.id)), {
-      onReply: relaying ? packageReply : undefined,
+      onReply:
+        relaying && packageReply
+          ? (chunk: string) => packageReply(stripThinkingMarkers(chunk))
+          : undefined,
       streamText: wantsProgress,
       // Dialogs are relayed whatever the toggles say. They are not progress
       // chatter — the run is stopped until somebody answers, and silence here
@@ -568,7 +569,8 @@ class ChannelSupervisor {
 
     // A channel with no way to relay mid-run had nowhere to put these, so they
     // ride out with the answer instead.
-    return owed.length && !packageReply ? [...owed, reply].join("\n\n") : reply;
+    const clean = stripThinkingMarkers(reply ?? "");
+    return owed.length && !packageReply ? [...owed, clean].join("\n\n") : clean;
   }
 
   /** One line for the boot log. */

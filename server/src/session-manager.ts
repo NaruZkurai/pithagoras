@@ -13,6 +13,18 @@ import {
   updateSession,
 } from "./db.js";
 
+/**
+ * Thinking markers that escape into the answer.
+ *
+ * A reasoning model sometimes closes a thought inside the text it means to say,
+ * and a stray </think> then travels to whoever is reading — a chat window, a
+ * Telegram message. Stripped where the text leaves the portal rather than in
+ * the stored events, so the record of what the model actually produced stays
+ * intact.
+ */
+export const stripThinkingMarkers = (text: string): string =>
+  text.replace(/<\/?think(ing)?>/gi, "").trim();
+
 /** Mirrors what the web transcript shows, so a chat and the UI agree. */
 function summarizeToolInput(p: any): string | undefined {
   const input = p.input ?? p.args ?? p.parameters;

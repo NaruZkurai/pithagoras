@@ -171,6 +171,17 @@ export function Chat({
         {items.map((item) => {
           if (item.kind === "user") {
             const { text, blocks } = splitContext(item.text);
+            // Nothing but framing: the portal spoke, not a person. Drawing it as
+            // a message bubble with no message in it reads as something broken.
+            if (!text) {
+              return (
+                <div key={item.id} className="flex flex-wrap justify-end gap-1">
+                  {blocks.map((b, i) => (
+                    <ContextChip key={i} label={b.label} body={b.body} />
+                  ))}
+                </div>
+              );
+            }
             return (
               <div key={item.id} className="flex justify-end">
                 <div className="max-w-[80%] rounded-2xl rounded-br-md bg-accent/10 px-3.5 py-2 text-sm text-fg ring-1 ring-inset ring-accent/15">
@@ -199,7 +210,9 @@ export function Chat({
                 )}
                 {item.text && (
                   <div className="md text-sm leading-relaxed text-fg">
-                    <ReactMarkdown>{item.text}</ReactMarkdown>
+                    {/* A reasoning model sometimes closes a thought inside the
+                        answer; the stray tag is noise to whoever is reading. */}
+                    <ReactMarkdown>{item.text.replace(/<\/?think(ing)?>/gi, "")}</ReactMarkdown>
                   </div>
                 )}
               </div>
