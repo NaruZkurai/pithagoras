@@ -430,9 +430,20 @@ class SessionManager extends EventEmitter {
     this.speaker.set(sessionId, person);
   }
 
-  /** The role in force right now — primary when nobody has been identified. */
+  /**
+   * The role in force right now.
+   *
+   * Falls back to the conversation's own role, never to "primary". Only channel
+   * messages identify a speaker; a message sent through the portal's prompt
+   * endpoint identifies nobody, and defaulting to primary there handed a
+   * colleague's conversation full privileges — the conversation is still theirs,
+   * and they still read whatever comes back.
+   */
   speakerRole(sessionId: string): Role {
-    return this.speaker.get(sessionId)?.role ?? "primary";
+    const live = this.speaker.get(sessionId);
+    if (live) return live.role;
+    const row = getSession(sessionId);
+    return (row?.role as Role) ?? "guest";
   }
 
   currentSpeaker(sessionId: string): PersonRow | undefined {

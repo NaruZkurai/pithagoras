@@ -1,6 +1,7 @@
 import express, { type Router } from "express";
 import { forgetPerson, getPerson, listPeople, setRole, type Role } from "../people.js";
-import { getDb } from "../db.js";
+import { addToolRule, deleteToolRule, getDb, listToolRules } from "../db.js";
+import { nanoid } from "nanoid";
 
 /**
  * The roster.
@@ -40,6 +41,43 @@ export function peopleRouter(): Router {
       getDb().prepare("UPDATE people SET name = ? WHERE key = ?").run(name.trim(), key);
     }
     res.json({ person: getPerson(key) });
+  });
+
+  /** Exceptions: what a non-primary role is allowed to run despite the default. */
+  router.get("/tool-rules", (_req, res) => {
+    res.json({ rules: listToolRules() });
+  });
+
+  router.post("/tool-rules", (req, res) => {
+    const { role, tool, pattern, note } = req.body ?? {};
+    if (!["colleague", "guest", "all"].includes(role)) {
+      return res.status(400).json({ error: "Role must be colleague, guest or all" });
+    }
+    if (typeof tool !== "string" || !/^[a-z_][a-z0-9_]*$/i.test(tool)) {
+      return res.status(400).json({ error: "Tool must be a tool name, e.g. bash" });
+    }
+    if (typeof pattern !== "string" || !pattern.trim()) {
+      return res.status(400).json({ error: "A pattern is required" });
+    }
+    // A bare "*" is not a rule, it is switching the whole thing off by accident.
+    if (pattern.trim() === "*") {
+      return res.status(400).json({
+        error: "That allows everything — write the command you mean, with * only where it varies",
+      });
+    }
+    addToolRule({
+      id: nanoid(10),
+      role,
+      tool,
+      pattern: pattern.trim(),
+      note: typeof note === "string" ? note.trim() : "",
+    });
+    res.json({ rules: listToolRules() });
+  });
+
+  router.delete("/tool-rules/:id", (req, res) => {
+    deleteToolRule(req.params.id);
+    res.json({ rules: listToolRules() });
   });
 
   /**

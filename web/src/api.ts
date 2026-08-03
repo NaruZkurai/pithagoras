@@ -209,6 +209,14 @@ export const api = {
     json<{ ok: true }>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),
 
   people: () => json<{ people: Person[] }>("/api/people"),
+  toolRules: () => json<{ rules: ToolRule[] }>("/api/tool-rules"),
+  addToolRule: (rule: { role: string; tool: string; pattern: string; note?: string }) =>
+    json<{ rules: ToolRule[] }>("/api/tool-rules", {
+      method: "POST",
+      body: JSON.stringify(rule),
+    }),
+  deleteToolRule: (id: string) =>
+    json<{ rules: ToolRule[] }>(`/api/tool-rules/${id}`, { method: "DELETE" }),
   setPersonRole: (key: string, role: Role) =>
     json<{ person: Person }>(`/api/people/${encodeURIComponent(key)}`, {
       method: "PATCH",
@@ -592,4 +600,14 @@ export interface Person {
   first_seen: string;
   last_seen: string | null;
   announced_at: string | null;
+}
+
+/** An exception to what a non-primary role may run. */
+export interface ToolRule {
+  id: string;
+  role: string;
+  tool: string;
+  pattern: string;
+  note: string;
+  created_at: string;
 }

@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
-import { LuCircleUser, LuRefreshCw, LuTrash2, LuTriangleAlert } from "react-icons/lu";
-import { api, type Person, type Role } from "../api";
+import {
+  LuCircleUser,
+  LuPlus,
+  LuRefreshCw,
+  LuTrash2,
+  LuTriangleAlert,
+} from "react-icons/lu";
+import { api, type Person, type Role, type ToolRule } from "../api";
 
 const ROLES: { id: Role; label: string; hint: string }[] = [
   { id: "primary", label: "Primary", hint: "You. Everything." },
@@ -119,6 +125,118 @@ export function PeoplePanel({ onError }: { onError: (e: string) => void }) {
           ))}
         </ul>
       )}
+
+      <ToolRules onError={onError} />
     </>
+  );
+}
+
+/**
+ * Exceptions to the read-only default.
+ *
+ * Without these the only settings are "reads files" and "trusted like you", and
+ * the useful middle has nowhere to live: a colleague who may list your inbox and
+ * do nothing else needs one command, not a shell.
+ */
+function ToolRules({ onError }: { onError: (e: string) => void }) {
+  const [rules, setRules] = useState<ToolRule[]>([]);
+  const [role, setRole] = useState("colleague");
+  const [tool, setTool] = useState("bash");
+  const [pattern, setPattern] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = () =>
+    api
+      .toolRules()
+      .then((r) => setRules(r.rules))
+      .catch((e) => onError((e as Error).message));
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const add = async () => {
+    setBusy(true);
+    try {
+      setRules((await api.addToolRule({ role, tool, pattern })).rules);
+      setPattern("");
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mt-8">
+      <h3 className="text-sm font-medium text-fg">Allowed anyway</h3>
+      <p className="mb-3 mt-1 text-xs text-fg-faint">
+        Colleagues and guests can read files and nothing else. A rule here lets one specific thing
+        through — <span className="font-mono">*</span> stands for the parts that vary. A shell rule
+        only ever matches a single command: anything with a pipe, a semicolon or a redirect is
+        refused however well it matches, or the pattern would just be a prefix to bolt onto.
+      </p>
+
+      {rules.length > 0 && (
+        <ul className="mb-3 space-y-1.5">
+          {rules.map((r) => (
+            <li
+              key={r.id}
+              className="flex items-center gap-2 rounded-xl border border-line bg-raised/40 px-3 py-2"
+            >
+              <span className="shrink-0 rounded bg-fg/5 px-1.5 py-0.5 text-[11px] text-fg-muted">
+                {r.role}
+              </span>
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg-muted">
+                {r.tool}: {r.pattern}
+              </span>
+              <button
+                onClick={async () => {
+                  try {
+                    setRules((await api.deleteToolRule(r.id)).rules);
+                  } catch (e) {
+                    onError((e as Error).message);
+                  }
+                }}
+                className="shrink-0 rounded-lg p-1.5 text-fg-faint transition hover:bg-danger/10 hover:text-danger"
+              >
+                <LuTrash2 className="h-4 w-4" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <select
+          value={role}
+          onChange={(e) => setRole(e.target.value)}
+          className="rounded-lg border border-line bg-raised/60 px-2 py-2 text-xs outline-none focus:border-accent/60"
+        >
+          <option value="colleague">Colleagues</option>
+          <option value="guest">Guests</option>
+          <option value="all">Both</option>
+        </select>
+        <input
+          value={tool}
+          onChange={(e) => setTool(e.target.value)}
+          placeholder="bash"
+          className="w-24 rounded-lg border border-line bg-raised/60 px-2 py-2 font-mono text-xs outline-none focus:border-accent/60"
+        />
+        <input
+          value={pattern}
+          onChange={(e) => setPattern(e.target.value)}
+          placeholder="himalaya envelope list*"
+          className="min-w-[12rem] flex-1 rounded-lg border border-line bg-raised/60 px-2 py-2 font-mono text-xs outline-none placeholder:text-fg-faint focus:border-accent/60"
+        />
+        <button
+          onClick={add}
+          disabled={busy || !pattern.trim()}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-accent/12 px-3 py-2 text-xs text-accent ring-1 ring-inset ring-accent/25 transition hover:bg-accent/20 disabled:opacity-40"
+        >
+          <LuPlus className="h-3.5 w-3.5" /> Allow
+        </button>
+      </div>
+    </section>
   );
 }

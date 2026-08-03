@@ -198,6 +198,20 @@ export function getDb(): Database.Database {
       consumed_at TEXT
     );
 
+    -- Exceptions to what a non-primary role may run. Without these the only
+    -- choice is read-only or full trust, and the useful middle — "colleagues may
+    -- list my inbox, nothing else" — has nowhere to live.
+    CREATE TABLE IF NOT EXISTS tool_rules (
+      id TEXT PRIMARY KEY,
+      -- colleague | guest | all (both)
+      role TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      -- Glob against the command for bash, the path for file tools.
+      pattern TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -536,3 +550,25 @@ export function takeNotes(sessionId: string): string[] {
   for (const r of rows) mark.run(r.id);
   return rows.map((r) => r.text);
 }
+
+export interface ToolRule {
+  id: string;
+  role: string;
+  tool: string;
+  pattern: string;
+  note: string;
+  created_at: string;
+}
+
+export const listToolRules = (): ToolRule[] =>
+  getDb().prepare("SELECT * FROM tool_rules ORDER BY tool, pattern").all() as ToolRule[];
+
+export function addToolRule(rule: Omit<ToolRule, "created_at">): void {
+  getDb()
+    .prepare("INSERT INTO tool_rules (id, role, tool, pattern, note) VALUES (?, ?, ?, ?, ?)")
+    .run(rule.id, rule.role, rule.tool, rule.pattern, rule.note);
+}
+
+export const deleteToolRule = (id: string): void => {
+  getDb().prepare("DELETE FROM tool_rules WHERE id = ?").run(id);
+};
