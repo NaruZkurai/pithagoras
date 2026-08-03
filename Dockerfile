@@ -17,6 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git openssh-client ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# uv, so the agent can run Python tooling — a large share of MCP servers are
+# Python and are launched with uvx. Static musl binaries, no Python needed to
+# install them; uv fetches a managed interpreter on first use, into HOME on the
+# data volume. Pinned so a rebuild does not silently change the toolchain.
+COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /uvx /usr/local/bin/
+
 RUN npm install -g @earendil-works/pi-coding-agent@latest
 
 COPY package.json package-lock.json* ./
@@ -37,6 +43,11 @@ COPY skills skills
 
 # HOME lives on the data volume so pi packages and settings (~/.pi/agent)
 # survive image rebuilds instead of being silently wiped.
+# /data/bin is the escape hatch: anything dropped there is on PATH for pi and
+# every tool it launches, and survives an image rebuild. Installing a CLI into
+# the image filesystem instead looks like it worked — it survives a restart —
+# and then vanishes on the next deploy, which rebuilds.
+ENV PATH=/data/bin:$PATH
 ENV NODE_ENV=production \
     PORT=4100 \
     DATA_DIR=/data \
@@ -45,7 +56,7 @@ ENV NODE_ENV=production \
     CHANNELS_DIR=/data/channels \
     AGENT_HOME=/data/agent-home \
     HOME=/data/home
-RUN mkdir -p /data/home
+RUN mkdir -p /data/home /data/bin
 EXPOSE 4100
 VOLUME /data
 CMD ["node", "server/dist/index.js"]

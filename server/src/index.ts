@@ -41,6 +41,8 @@ const WORKSPACE_ROOT = path.resolve(
   process.env.WORKSPACE_ROOT || process.env.WORKSPACE_ROOT || "/workspaces"
 );
 const PORT = Number(process.env.PORT || 4100);
+/** Persistent place for CLIs, kept on PATH so pi and its tools can reach them. */
+const BIN_DIR = path.resolve(process.env.BIN_DIR || "/data/bin");
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -540,8 +542,14 @@ if (existsSync(webDist)) {
   app.get(/^(?!\/api).*/, (_req, res) => res.sendFile(path.join(webDist, "index.html")));
 }
 
+// On PATH via the image, but a volume that predates it has no such directory —
+// docker only seeds a volume that is empty, so an existing deploy would carry a
+// PATH entry pointing at nothing.
+mkdirSync(BIN_DIR, { recursive: true });
+
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`pithagoras listening on :${PORT}`);
+  console.log(`  local bin: ${BIN_DIR}`);
   console.log(`  executor: ${EXECUTOR_KIND}`);
   console.log(`  workspaces: ${WORKSPACE_ROOT}`);
   console.log(`  auth:     ${authEnabled ? "password" : "DISABLED"}`);
