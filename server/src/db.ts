@@ -186,6 +186,18 @@ export function getDb(): Database.Database {
       answer TEXT
     );
 
+    -- Things the portal said into a conversation while nobody was talking to
+    -- it: a routine's report, an answer relayed back. Held until that
+    -- conversation next runs, then folded into its context — otherwise the
+    -- agent is asked "why did you say that?" about a message it never saw.
+    CREATE TABLE IF NOT EXISTS notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      consumed_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -273,6 +285,7 @@ function migrate(d: Database.Database): void {
     }
   }
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_routines_slug ON routines(slug)");
+  d.exec("CREATE INDEX IF NOT EXISTS idx_notes_pending ON notes(session_id, consumed_at)");
 }
 
 export function createSession(row: {
@@ -506,4 +519,20 @@ export function setDefaultReportTo(to: ReportTo | null): void {
   }
   upsert.run("report_channel", to.channel);
   upsert.run("report_target", to.target);
+}
+
+/** Something the portal said into a conversation, waiting to join its context. */
+export function addNote(sessionId: string, text: string): void {
+  getDb().prepare("INSERT INTO notes (session_id, text) VALUES (?, ?)").run(sessionId, text);
+}
+
+/** Take the pending notes for a conversation. Reading them consumes them. */
+export function takeNotes(sessionId: string): string[] {
+  const rows = getDb()
+    .prepare("SELECT id, text FROM notes WHERE session_id = ? AND consumed_at IS NULL ORDER BY id ASC")
+    .all(sessionId) as { id: number; text: string }[];
+  if (!rows.length) return [];
+  const mark = getDb().prepare("UPDATE notes SET consumed_at = datetime('now') WHERE id = ?");
+  for (const r of rows) mark.run(r.id);
+  return rows.map((r) => r.text);
 }

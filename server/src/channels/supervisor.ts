@@ -1,5 +1,5 @@
-import { getDb, getDefaultReportTo } from "../db.js";
-import { resolveChannelSession } from "../agent.js";
+import { addNote, findChannelSession, getDb, getDefaultReportTo, takeNotes } from "../db.js";
+import { resolveChannelSession, scopeKey } from "../agent.js";
 import { sessions, EXECUTOR_KIND } from "../session-manager.js";
 import { readAnswer, recordAnswer } from "../questions.js";
 import {
@@ -196,6 +196,12 @@ class ChannelSupervisor {
     if (!live.send) throw new Error(`"${slug}" cannot start a conversation, only answer one`);
     if (!text.trim()) return;
     await live.send(target, text);
+
+    // The agent said this, so its conversation has to know it said it. Without
+    // this, a routine reports into a chat and the follow-up question — "what did
+    // you mean by that?" — reaches an agent with no idea what "that" is.
+    const session = findChannelSession(scopeKey(slug, target));
+    if (session) addNote(session.id, text);
   }
 
   /** Tell the primary user that somebody new turned up — once per person. */
@@ -368,7 +374,7 @@ class ChannelSupervisor {
     const wantsTools = Boolean(row.relay_tools);
     const relaying = packageReply && (wantsProgress || wantsTools);
 
-    return sessions.ask(session.id, withInstructions(text, row.instructions, person), {
+    return sessions.ask(session.id, withInstructions(text, row.instructions, person, takeNotes(session.id)), {
       onReply: relaying ? packageReply : undefined,
       streamText: wantsProgress,
       // Dialogs are relayed whatever the toggles say. They are not progress
@@ -495,9 +501,19 @@ function interpretAnswer(
 function withInstructions(
   text: string,
   instructions: string,
-  person?: PersonRow | null
+  person?: PersonRow | null,
+  notes: string[] = []
 ): string {
   const parts = [text];
+  if (notes.length) {
+    parts.push(
+      "<sent-since-you-last-spoke>\n" +
+        "You sent these into this conversation while it was idle — a routine's report, or an " +
+        "answer passed back. They are yours and the other person has already read them.\n\n" +
+        notes.join("\n\n---\n\n") +
+        "\n</sent-since-you-last-spoke>"
+    );
+  }
   const who = person ? senderFraming(person, primaryName(), Boolean(getDefaultReportTo())) : "";
   if (who) parts.push(`<speaker>\n${who}\n</speaker>`);
   const extra = (instructions ?? "").trim();

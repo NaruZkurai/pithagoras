@@ -166,7 +166,8 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       const factories: { name: string; factory: (pi: any) => void }[] = [
         { name: "guard", factory: guardExtension(opts.sessionDir, opts.roleNow ?? (() => "primary")) },
       ];
-      if (opts.routineTools) factories.push({ name: "routines", factory: routineTools });
+      if (opts.routineTools)
+        factories.push({ name: "routines", factory: routineTools(opts.sessionId) });
       // Only where it means something: a conversation with the primary user has
       // nobody to escalate to, and the tool would just be noise.
       if (opts.sessionId && opts.role && opts.role !== "primary") {
