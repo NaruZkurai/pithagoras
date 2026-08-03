@@ -199,7 +199,10 @@ export function getDb(): Database.Database {
       session_id TEXT NOT NULL,
       text TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      consumed_at TEXT
+      consumed_at TEXT,
+      -- 1 when the person has not seen this yet: the channel could not be
+      -- spoken to, so it waits and goes out with the next reply.
+      pending_delivery INTEGER NOT NULL DEFAULT 0
     );
 
     -- Exceptions to what a non-primary role may run. Without these the only
@@ -391,6 +394,12 @@ function migrate(d: Database.Database): void {
   }
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_routines_slug ON routines(slug)");
   d.exec("CREATE INDEX IF NOT EXISTS idx_notes_pending ON notes(session_id, consumed_at)");
+  const noteCols = (d.prepare("PRAGMA table_info(notes)").all() as { name: string }[]).map(
+    (c) => c.name
+  );
+  if (noteCols.length && !noteCols.includes("pending_delivery")) {
+    d.exec("ALTER TABLE notes ADD COLUMN pending_delivery INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 export function createSession(row: {
@@ -891,8 +900,25 @@ export function setDefaultReportTo(to: ReportTo | null): void {
 }
 
 /** Something the portal said into a conversation, waiting to join its context. */
-export function addNote(sessionId: string, text: string): void {
-  getDb().prepare("INSERT INTO notes (session_id, text) VALUES (?, ?)").run(sessionId, text);
+export function addNote(sessionId: string, text: string, pendingDelivery = false): void {
+  getDb()
+    .prepare("INSERT INTO notes (session_id, text, pending_delivery) VALUES (?, ?, ?)")
+    .run(sessionId, text, pendingDelivery ? 1 : 0);
+}
+
+/**
+ * Messages the person has not seen, because their channel cannot be spoken to.
+ *
+ * Reading them hands over responsibility for delivering them, so they are only
+ * taken at the point they are about to go out with a reply.
+ */
+export function takeDeliveries(sessionId: string): string[] {
+  const rows = getDb()
+    .prepare("SELECT id, text FROM notes WHERE session_id = ? AND pending_delivery = 1 ORDER BY id ASC")
+    .all(sessionId) as { id: number; text: string }[];
+  const mark = getDb().prepare("UPDATE notes SET pending_delivery = 0 WHERE id = ?");
+  for (const r of rows) mark.run(r.id);
+  return rows.map((r) => r.text);
 }
 
 /** Take the pending notes for a conversation. Reading them consumes them. */

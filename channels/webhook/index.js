@@ -14,6 +14,20 @@ export const manifest = {
   blurb: "POST a message in, get the agent's reply in the response body.",
   fields: [
     {
+      key: "senderId",
+      label: "Sender id",
+      hint:
+        "Optional but recommended. Pins every message to one person, so the secret is that " +
+        "person's credential. Without it the caller names itself in the body and can claim to " +
+        "be anyone holding the secret.",
+      placeholder: "priya",
+    },
+    {
+      key: "senderName",
+      label: "Sender name",
+      placeholder: "Priya",
+    },
+    {
       key: "callbackUrl",
       label: "Callback URL",
       hint:
@@ -75,11 +89,12 @@ export async function start(ctx) {
     try {
       const body = JSON.parse((await readBody(req)) || "{}");
       message = typeof body.message === "string" ? body.message.trim() : "";
-      // Who the caller is speaking for, when it knows. The secret authenticates
-      // the caller, not the person — so this is only as trustworthy as whatever
-      // is holding the secret, and it says so in the docs.
-      from =
-        body.from && typeof body.from.id === "string" && body.from.id
+      // Configured identity wins. Pinned this way the secret *is* the person's
+      // credential and a caller cannot claim to be somebody else; left unset,
+      // the caller names itself and is trusted exactly as far as the secret is.
+      from = ctx.config.senderId
+        ? { id: String(ctx.config.senderId), name: String(ctx.config.senderName || ctx.config.senderId) }
+        : body.from && typeof body.from.id === "string" && body.from.id
           ? { id: body.from.id, name: typeof body.from.name === "string" ? body.from.name : body.from.id }
           : null;
       // Only the caller knows what counts as a conversation here, so it picks.
