@@ -1,6 +1,7 @@
 import { getDb, getDefaultReportTo } from "../db.js";
 import { resolveChannelSession } from "../agent.js";
 import { sessions, EXECUTOR_KIND } from "../session-manager.js";
+import { readAnswer, recordAnswer } from "../questions.js";
 import {
   hasPrimary,
   lower,
@@ -267,6 +268,28 @@ class ChannelSupervisor {
         "I only talk to people I have been introduced to. I have let my primary user know you " +
         "got in touch — if they add you, try again."
       );
+    }
+
+    // The primary user answering a question a colleague's session raised. Handled
+    // before anything else: it is not a turn in this conversation, it is a reply
+    // destined for a different one, and routing it through the agent would have
+    // it answering itself.
+    if (person?.role === "primary") {
+      const pending = readAnswer(text);
+      if (pending) {
+        const { question, answer } = pending;
+        try {
+          await this.send(
+            question.channel_slug,
+            question.channel_key,
+            `${primaryName()} says: ${answer}`
+          );
+        } catch (e) {
+          return `Could not get that back to ${question.person_name}: ${(e as Error).message}`;
+        }
+        recordAnswer(question.id, answer);
+        return `Passed on to ${question.person_name}.`;
+      }
     }
 
     const key = typeof meta.session === "string" ? meta.session : "";

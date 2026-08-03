@@ -7,6 +7,7 @@ import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
 import { routineTools } from "./routine-tools.js";
 import { reportTool, reportToFor } from "./report-tool.js";
 import { guardExtension } from "./guard.js";
+import { askPrimaryTool } from "./ask-primary.js";
 
 function asArray(v: any): any[] {
   const resolved = typeof v === "function" ? v() : v;
@@ -143,6 +144,8 @@ export class SdkPiClient extends EventEmitter implements PiClient {
     roleNow?: () => string;
     /** Lowest role this conversation serves, deciding which context files load. */
     role?: string;
+    /** The portal's session id, for tools that record against it. */
+    sessionId?: string;
   }): Promise<SdkPiClient> {
     // Imported lazily so the server still boots (and the container executor
     // still works) if the SDK cannot initialise in this environment.
@@ -164,6 +167,11 @@ export class SdkPiClient extends EventEmitter implements PiClient {
         { name: "guard", factory: guardExtension(opts.sessionDir, opts.roleNow ?? (() => "primary")) },
       ];
       if (opts.routineTools) factories.push({ name: "routines", factory: routineTools });
+      // Only where it means something: a conversation with the primary user has
+      // nobody to escalate to, and the tool would just be noise.
+      if (opts.sessionId && opts.role && opts.role !== "primary") {
+        factories.push({ name: "ask-primary", factory: askPrimaryTool(opts.sessionId) });
+      }
       // Only when there is somewhere for it to go — a tool that always fails is
       // worse than no tool, and the model will keep trying it.
       if (opts.routineSlug !== undefined && reportToFor(opts.routineSlug)) {

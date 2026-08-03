@@ -68,6 +68,7 @@ export class HostExecutor implements Executor {
       routineTools: opts.routineTools,
       routineSlug: opts.routineSlug,
       role: opts.role,
+      sessionId: opts.sessionId,
       roleNow: opts.roleNow,
       provider: opts.provider,
       modelId: opts.model,

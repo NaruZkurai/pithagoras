@@ -171,6 +171,21 @@ export function getDb(): Database.Database {
       announced_at TEXT
     );
 
+    -- Questions a colleague's session could not answer, waiting on the primary
+    -- user. The id is short because a human types it back in a chat.
+    CREATE TABLE IF NOT EXISTS questions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      person_key TEXT NOT NULL,
+      person_name TEXT NOT NULL DEFAULT '',
+      channel_slug TEXT NOT NULL,
+      channel_key TEXT NOT NULL,
+      question TEXT NOT NULL,
+      asked_at TEXT NOT NULL DEFAULT (datetime('now')),
+      answered_at TEXT,
+      answer TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL

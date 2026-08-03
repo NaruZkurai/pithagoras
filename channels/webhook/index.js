@@ -14,6 +14,14 @@ export const manifest = {
   blurb: "POST a message in, get the agent's reply in the response body.",
   fields: [
     {
+      key: "callbackUrl",
+      label: "Callback URL",
+      hint:
+        "Optional. Without one this channel can only answer a request that is already open — " +
+        "so it never receives anything sent later, like an answer to a question it raised.",
+      placeholder: "https://chat.internal/hooks/agent",
+    },
+    {
       key: "secret",
       label: "Shared secret",
       secret: true,
@@ -105,6 +113,27 @@ export async function start(ctx) {
     async stop() {
       await new Promise((resolve) => server.close(resolve));
     },
+
+    ...(ctx.config.callbackUrl
+      ? {
+          /**
+           * Speak first, when somebody has said where to.
+           *
+           * The conversation key travels with the message: the receiving end has
+           * to know which of its conversations this belongs to, and it is the
+           * one that chose the key in the first place.
+           */
+          async send(target, text) {
+            const res = await fetch(ctx.config.callbackUrl, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ session: target, message: text }),
+              signal: ctx.signal,
+            });
+            if (!res.ok) throw new Error(`Callback returned ${res.status}`);
+          },
+        }
+      : {}),
   };
 }
 
