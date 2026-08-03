@@ -21,7 +21,7 @@ Rows are a name, a role and a chevron. Everything else lives on their page.
 ## How somebody is identified
 
 By the platform's own id — a Telegram user id, a Slack user id — scoped by
-channel, so `telegram:5544570917` and `slack:U04AB` never collide. Never by a
+channel, so `telegram:100200300` and `slack:U04AB` never collide. Never by a
 display name, which is whatever the sender set it to this morning.
 
 One person may reach the agent on several channels. Each identity is its own
