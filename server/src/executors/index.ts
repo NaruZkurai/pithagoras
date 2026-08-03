@@ -17,6 +17,8 @@ export interface LaunchOptions {
   sessionFile?: string;
   /** Give this session the routine tools. Channel sessions only. */
   routineTools?: boolean;
+  /** The routine being run, when this is a routine session. Enables reporting. */
+  routineSlug?: string | null;
 }
 
 export interface Executor {
@@ -60,6 +62,7 @@ export class HostExecutor implements Executor {
       sessionDir: path.join(this.sessionRoot, opts.sessionId),
       sessionFile: opts.sessionFile,
       routineTools: opts.routineTools,
+      routineSlug: opts.routineSlug,
       provider: opts.provider,
       modelId: opts.model,
       thinkingLevel: opts.thinkingLevel,

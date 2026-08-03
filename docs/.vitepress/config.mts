@@ -27,6 +27,7 @@ export default defineConfig({
           { text: "Deploying", link: "/guide/deploying" },
           { text: "Sessions", link: "/guide/sessions" },
           { text: "Slash commands", link: "/guide/commands" },
+          { text: "Routines", link: "/guide/routines" },
           { text: "Settings", link: "/guide/settings" },
           { text: "Extensions", link: "/guide/extensions" },
           { text: "MCP servers", link: "/guide/mcp" },

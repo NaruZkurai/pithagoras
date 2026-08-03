@@ -172,6 +172,19 @@ export async function start(ctx) {
         // already gone
       }
     },
+
+    /**
+     * Send without being asked — how a routine reports back. The target is the
+     * conversation key handed to ctx.ask, so destinations are picked from
+     * conversations that already exist. Posted to the channel, not a thread:
+     * an unprompted message belongs where it can be seen.
+     */
+    async send(target, text) {
+      const channel = String(target).replace(/^channel:/, "");
+      for (const chunk of split(text, 3000)) {
+        await web(botToken, "chat.postMessage", { channel, text: chunk }, ctx.signal);
+      }
+    },
   };
 }
 

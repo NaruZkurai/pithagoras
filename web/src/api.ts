@@ -76,6 +76,9 @@ export interface Routine {
   done: boolean;
   instructions: string;
   freshSession: boolean;
+  /** null inherits the portal default; "" means this one never reports. */
+  reportChannel: string | null;
+  reportTarget: string | null;
   lastRun: string | null;
   lastStatus: string | null;
   lastOutput: string | null;
@@ -204,11 +207,20 @@ export const api = {
     json<{ ok: true }>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),
 
   routines: () => json<{ routines: Routine[] }>("/api/routines"),
+  reportTargets: () =>
+    json<{ targets: ReportTarget[]; default: ReportTo | null }>("/api/routines/report-targets"),
+  setReportDefault: (to: ReportTo | null) =>
+    json<{ default: ReportTo | null }>("/api/routines/report-default", {
+      method: "PUT",
+      body: JSON.stringify(to ?? {}),
+    }),
   createRoutine: (input: {
     name: string;
     schedule?: string;
     runAt?: string;
     instructions?: string;
+    reportChannel?: string | null;
+    reportTarget?: string | null;
   }) =>
     json<Routine>("/api/routines", { method: "POST", body: JSON.stringify(input) }),
   updateRoutine: (
@@ -221,6 +233,8 @@ export const api = {
       instructions?: string;
       enabled?: boolean;
       freshSession?: boolean;
+      reportChannel?: string | null;
+      reportTarget?: string | null;
     }
   ) => json<Routine>(`/api/routines/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteRoutine: (id: string) => json<{ ok: true }>(`/api/routines/${id}`, { method: "DELETE" }),
@@ -537,4 +551,16 @@ export interface McpConfigView {
   settings: Record<string, unknown>;
   raw: string;
   parseError: string | null;
+}
+
+/** A conversation a routine can report into. */
+export interface ReportTarget {
+  channel: string;
+  target: string;
+  label: string;
+}
+
+export interface ReportTo {
+  channel: string;
+  target: string;
 }

@@ -17,7 +17,7 @@ import {
   LuTrash2,
   LuTriangleAlert,
 } from "react-icons/lu";
-import { api, type ExtensionInfo, type GlobalSettings } from "../api";
+import { api, type ExtensionInfo, type GlobalSettings, type ReportTarget, type ReportTo } from "../api";
 import { ChannelsPanel } from "./ChannelsPanel";
 import { SkillsPanel } from "./SkillsPanel";
 import { McpPanel } from "./McpPanel";
@@ -264,6 +264,72 @@ const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 // --- general ---
 
+/**
+ * Where a routine reports when it does not name a destination itself.
+ *
+ * Lives here rather than on the Routines page because it is a portal-wide
+ * default: a routine created by the agent from a chat gets it without anyone
+ * opening a form.
+ */
+function ReportDefault({ onError }: { onError: (e: string) => void }) {
+  const [targets, setTargets] = useState<ReportTarget[]>([]);
+  const [current, setCurrent] = useState<ReportTo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = () =>
+    api
+      .reportTargets()
+      .then((r) => {
+        setTargets(r.targets);
+        setCurrent(r.default);
+        setLoaded(true);
+      })
+      .catch((e) => onError((e as Error).message));
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  if (!loaded) return null;
+
+  const value = current ? `${current.channel}\u0000${current.target}` : "";
+
+  return (
+    <Section
+      title="Routine reports"
+      hint="Where a scheduled run reaches you when it has something worth saying. The agent decides whether a run is worth reporting; a routine can point somewhere else of its own."
+    >
+      <select
+        value={value}
+        onChange={async (e) => {
+          const [channel, target] = e.target.value.split("\u0000");
+          try {
+            await api.setReportDefault(channel && target ? { channel, target } : null);
+            await load();
+          } catch (err) {
+            onError((err as Error).message);
+          }
+        }}
+        className={inputCls}
+      >
+        <option value="">Nowhere — routines stay silent</option>
+        {targets.map((t) => (
+          <option key={`${t.channel}\u0000${t.target}`} value={`${t.channel}\u0000${t.target}`}>
+            {t.channel} — {t.label}
+          </option>
+        ))}
+      </select>
+      {targets.length === 0 && (
+        <p className="mt-1.5 text-xs text-fg-faint">
+          Nothing to pick yet. A destination is a conversation that already exists on a channel
+          that can speak first — message your bot once and it appears here. A webhook never will:
+          it can only answer.
+        </p>
+      )}
+    </Section>
+  );
+}
+
 function GeneralPanel({ onError }: { onError: (e: string) => void }) {
   /** Only the explicit overrides — an empty field means "inherit". */
   const [stored, setStored] = useState<Partial<GlobalSettings> | null>(null);
@@ -384,6 +450,8 @@ function GeneralPanel({ onError }: { onError: (e: string) => void }) {
           </button>
         </div>
       </Section>
+
+      <ReportDefault onError={onError} />
 
       <Section title="Deployment">
         <dl className="rounded-xl border border-line bg-raised/40 p-3 text-sm">

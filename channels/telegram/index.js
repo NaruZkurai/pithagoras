@@ -105,6 +105,20 @@ export async function start(ctx) {
       running = false;
       await loop.catch(() => {});
     },
+
+    /**
+     * Send without being asked — how a routine reports back.
+     *
+     * The target is the same conversation key handed to ctx.ask, so a
+     * destination is picked from conversations that already exist rather than
+     * by finding a chat id somewhere.
+     */
+    async send(target, text) {
+      const chatId = String(target).replace(/^chat:/, "");
+      for (const chunk of split(text, 4000)) {
+        await call(token, "sendMessage", { chat_id: chatId, text: chunk }, ctx.signal);
+      }
+    },
   };
 
   async function handle(message, text, chatId) {

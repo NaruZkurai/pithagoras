@@ -114,6 +114,9 @@ class SessionManager extends EventEmitter {
       // has no business rescheduling anything; a routine run is excluded too,
       // since a routine that can create routines can build a chain unwatched.
       routineTools: session.kind === "agent",
+      // A routine run gets the report tool instead: it is the one kind of
+      // session with nobody on the other end to read what it found.
+      routineSlug: session.kind === "routine" ? session.routine_slug : undefined,
     });
 
     // pi writes the file lazily, so it usually does not exist yet at launch.

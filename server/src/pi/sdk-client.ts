@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
 import { routineTools } from "./routine-tools.js";
+import { reportTool, reportToFor } from "./report-tool.js";
 
 function asArray(v: any): any[] {
   const resolved = typeof v === "function" ? v() : v;
@@ -119,6 +120,11 @@ export class SdkPiClient extends EventEmitter implements PiClient {
      * through a channel should be able to touch the schedule.
      */
     routineTools?: boolean;
+    /**
+     * The routine this session runs, when it is one. Gives the agent the report
+     * tool, so a run with nobody watching can still reach someone.
+     */
+    routineSlug?: string | null;
   }): Promise<SdkPiClient> {
     // Imported lazily so the server still boots (and the container executor
     // still works) if the SDK cannot initialise in this environment.
@@ -134,6 +140,13 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       // Both are required: the constructor resolves each and throws on
       // undefined, which previously left every session with no extensions.
       const builtinSkills = builtinSkillsDir();
+      const factories: { name: string; factory: (pi: any) => void }[] = [];
+      if (opts.routineTools) factories.push({ name: "routines", factory: routineTools });
+      // Only when there is somewhere for it to go — a tool that always fails is
+      // worse than no tool, and the model will keep trying it.
+      if (opts.routineSlug !== undefined && reportToFor(opts.routineSlug)) {
+        factories.push({ name: "report", factory: reportTool(opts.routineSlug ?? null) });
+      }
       resourceLoader = new pi.DefaultResourceLoader({
         cwd: opts.cwd,
         agentDir: pi.getAgentDir(),
@@ -144,9 +157,9 @@ export class SdkPiClient extends EventEmitter implements PiClient {
         // Inline rather than an installed package: the portal owns routines, so
         // a package would have to call back over HTTP to reach the database it
         // sits beside. Absent unless asked, so a task session never sees them.
-        ...(opts.routineTools
-          ? { extensionFactories: [{ name: "routines", factory: routineTools }] }
-          : {}),
+        // Registered only where each belongs: routine management for sessions
+        // reached through a channel, reporting for routine runs.
+        ...(factories.length ? { extensionFactories: factories } : {}),
         // pi discovers one context file per directory — AGENTS.md or CLAUDE.md
         // — so the agent's own files would be invisible to it. Rather than
         // generating an AGENTS.md from them and keeping it in sync, they are

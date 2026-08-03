@@ -35,6 +35,8 @@ interface Running {
   since: string;
   controller: AbortController;
   stop?: () => Promise<void> | void;
+  /** Optional: not every transport can speak first. A webhook cannot. */
+  send?: (target: string, text: string) => Promise<void> | void;
   log: { at: string; text: string }[];
 }
 
@@ -155,6 +157,7 @@ class ChannelSupervisor {
           this.ask(row.id, text, meta),
       });
       live.stop = handle?.stop;
+      live.send = handle?.send;
       live.state = "running";
       log("started");
     } catch (e) {
@@ -162,6 +165,33 @@ class ChannelSupervisor {
       live.error = (e as Error).message;
       log(`failed to start: ${live.error}`);
     }
+  }
+
+  /** Can this channel speak first? Only running channels that implement send. */
+  canSend(slug: string): boolean {
+    return Boolean(this.liveBySlug(slug)?.send);
+  }
+
+  /**
+   * Say something nobody asked for — a routine reporting back.
+   *
+   * Deliberately not routed through a session: this is the portal talking, not
+   * the agent mid-conversation, and pushing it through the channel's session
+   * would leave a message in the transcript that nobody sent.
+   */
+  async send(slug: string, target: string, text: string): Promise<void> {
+    const live = this.liveBySlug(slug);
+    if (!live) throw new Error(`Channel "${slug}" is not running`);
+    if (!live.send) throw new Error(`"${slug}" cannot start a conversation, only answer one`);
+    if (!text.trim()) return;
+    await live.send(target, text);
+  }
+
+  private liveBySlug(slug: string): Running | undefined {
+    for (const live of this.running.values()) {
+      if (live.slug === slug && live.state === "running") return live;
+    }
+    return undefined;
   }
 
   private async stopChannel(id: string): Promise<void> {

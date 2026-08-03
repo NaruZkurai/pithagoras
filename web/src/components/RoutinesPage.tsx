@@ -10,7 +10,7 @@ import {
   LuRefreshCw,
   LuTrash2,
 } from "react-icons/lu";
-import { api, type Routine } from "../api";
+import { api, type ReportTarget, type ReportTo, type Routine } from "../api";
 
 const inputCls =
   "w-full rounded-lg border border-line bg-raised/60 px-3 py-2 text-sm outline-none transition placeholder:text-fg-faint focus:border-accent/60";
@@ -130,6 +130,24 @@ function Timing({
  * agent does the job, and it goes quiet again. What it did last time is kept,
  * because that is the only way to know a routine is working.
  */
+/** The select's value for a routine: "" inherits, "off" is silent. */
+function reportValue(r: Routine): string {
+  if (r.reportChannel === "") return "off";
+  if (r.reportChannel && r.reportTarget) return `${r.reportChannel}\u0000${r.reportTarget}`;
+  return "";
+}
+
+/** Three states, and the empty string means two different things over the wire. */
+function reportPatch(value: string): { reportChannel: string | null; reportTarget: string | null } {
+  if (value === "off") return { reportChannel: "", reportTarget: "" };
+  if (!value) return { reportChannel: null, reportTarget: null };
+  const [channel, target] = value.split("\u0000");
+  return { reportChannel: channel, reportTarget: target };
+}
+
+const labelFor = (targets: ReportTarget[], to: ReportTo) =>
+  targets.find((t) => t.channel === to.channel && t.target === to.target)?.label;
+
 export function RoutinesPage({ onOpenSession }: { onOpenSession: (id: string) => void }) {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -444,6 +462,10 @@ function RoutineDetail({
   const [runAt, setRunAt] = useState(toLocalInput(r.runAt));
   const [instructions, setInstructions] = useState(r.instructions);
   const [fresh, setFresh] = useState(r.freshSession);
+  // "" = inherit the portal default, "off" = stay quiet, else "channel\u0000target".
+  const [report, setReport] = useState(reportValue(r));
+  const [targets, setTargets] = useState<ReportTarget[]>([]);
+  const [fallback, setFallback] = useState<ReportTo | null>(null);
   const [busy, setBusy] = useState<null | "save" | "run">(null);
   const [saved, setSaved] = useState(false);
   const [runs, setRuns] = useState<{ id: string; title: string }[]>([]);
@@ -455,7 +477,18 @@ function RoutineDetail({
     setRunAt(toLocalInput(r.runAt));
     setInstructions(r.instructions);
     setFresh(r.freshSession);
+    setReport(reportValue(r));
   }, [r.id, r.updatedAt]);
+
+  useEffect(() => {
+    api
+      .reportTargets()
+      .then((x) => {
+        setTargets(x.targets);
+        setFallback(x.default);
+      })
+      .catch(() => {});
+  }, [r.id]);
 
   useEffect(() => {
     api
@@ -469,7 +502,8 @@ function RoutineDetail({
     mode !== r.mode ||
     (mode === "repeats" ? schedule !== r.schedule : toLocalInput(r.runAt) !== runAt) ||
     instructions !== r.instructions ||
-    fresh !== r.freshSession;
+    fresh !== r.freshSession ||
+    report !== reportValue(r);
 
   const act = async (which: "save" | "run", fn: () => Promise<unknown>) => {
     setBusy(which);
@@ -575,6 +609,33 @@ function RoutineDetail({
             />
           </span>
         </button>
+
+        <label className="block pt-1">
+          <span className="mb-1 block text-xs text-fg-subtle">Report to</span>
+          <select
+            value={report}
+            onChange={(e) => setReport(e.target.value)}
+            className="w-full rounded-lg border border-line bg-raised/60 px-3 py-2 text-sm outline-none transition focus:border-accent/60"
+          >
+            <option value="">
+              {fallback
+                ? `Default — ${labelFor(targets, fallback) ?? fallback.channel}`
+                : "Default — none set"}
+            </option>
+            <option value="off">Never report</option>
+            {targets.map((t) => (
+              <option key={`${t.channel}\u0000${t.target}`} value={`${t.channel}\u0000${t.target}`}>
+                {t.channel} — {t.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px] text-fg-faint">
+            The agent decides whether a run is worth reporting and writes the message itself. It
+            only has somewhere to send it if this points at a conversation.
+            {targets.length === 0 &&
+              " Nothing to pick yet — message a channel that can start a conversation, and it appears here."}
+          </p>
+        </label>
       </section>
 
       {r.lastStatus && (
@@ -630,6 +691,7 @@ function RoutineDetail({
                   : { schedule: "", runAt: new Date(runAt).toISOString() }),
                 instructions,
                 freshSession: fresh,
+                ...reportPatch(report),
               });
               setSaved(true);
               setTimeout(() => setSaved(false), 2000);

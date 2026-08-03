@@ -42,6 +42,8 @@ export interface SessionRow {
    * channel — and the prefix keeps two channels using the same key apart.
    */
   channel_key: string | null;
+  /** Routine sessions only: the slug of the routine that owns this session. */
+  routine_slug: string | null;
 }
 
 export interface EventRow {
@@ -136,6 +138,10 @@ export function getDb(): Database.Database {
       instructions TEXT NOT NULL DEFAULT '',
       -- Start each run in a clean session instead of the routine's own.
       fresh_session INTEGER NOT NULL DEFAULT 0,
+      -- Where a run's report goes. NULL inherits the portal default; '' means
+      -- this routine never reports, whatever the default is.
+      report_channel TEXT,
+      report_target TEXT,
       last_run TEXT,
       last_status TEXT,
       last_output TEXT,
@@ -221,6 +227,11 @@ function migrate(d: Database.Database): void {
   );
   if (routineCols.length && !routineCols.includes("run_at")) {
     d.exec("ALTER TABLE routines ADD COLUMN run_at TEXT");
+  }
+  for (const col of ["report_channel", "report_target"]) {
+    if (routineCols.length && !routineCols.includes(col)) {
+      d.exec(`ALTER TABLE routines ADD COLUMN ${col} TEXT`);
+    }
   }
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_routines_slug ON routines(slug)");
 }
@@ -429,4 +440,31 @@ export function setSettings(patch: Partial<GlobalSettings>): GlobalSettings {
     else clear.run(k);
   }
   return getSettings();
+}
+
+/** Where reports go when a routine does not name a destination of its own. */
+export interface ReportTo {
+  channel: string;
+  target: string;
+}
+
+export function getDefaultReportTo(): ReportTo | null {
+  const stored = getStoredSettings() as Record<string, string>;
+  const channel = stored.report_channel;
+  const target = stored.report_target;
+  return channel && target ? { channel, target } : null;
+}
+
+export function setDefaultReportTo(to: ReportTo | null): void {
+  const upsert = getDb().prepare(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  );
+  const clear = getDb().prepare("DELETE FROM settings WHERE key = ?");
+  if (!to) {
+    clear.run("report_channel");
+    clear.run("report_target");
+    return;
+  }
+  upsert.run("report_channel", to.channel);
+  upsert.run("report_target", to.target);
 }

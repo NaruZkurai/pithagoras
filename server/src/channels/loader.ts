@@ -30,7 +30,11 @@ export interface LoadedChannel extends ChannelManifest {
   builtin: boolean;
   dir: string;
   /** Present only when the module loaded and exports a usable start(). */
-  start?: (ctx: unknown) => Promise<{ stop: () => Promise<void> | void }>;
+  start?: (ctx: unknown) => Promise<{
+    stop: () => Promise<void> | void;
+    /** Optional. A transport that can only answer, like a webhook, omits it. */
+    send?: (target: string, text: string) => Promise<void> | void;
+  }>;
 }
 
 export interface BrokenChannel {

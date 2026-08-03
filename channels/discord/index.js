@@ -220,6 +220,18 @@ export async function start(ctx) {
         // already gone
       }
     },
+
+    /**
+     * Send without being asked — how a routine reports back. The target is the
+     * conversation key handed to ctx.ask, so destinations are picked from
+     * conversations that already exist.
+     */
+    async send(target, text) {
+      const channel = String(target).replace(/^channel:/, "");
+      for (const chunk of split(text, 1900)) {
+        await rest(token, `/channels/${channel}/messages`, { content: chunk }, ctx.signal);
+      }
+    },
   };
 }
 
