@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { LuBookOpen, LuFolderOpen, LuMessagesSquare, LuSquare } from "react-icons/lu";
+import { LuBookOpen, LuFolderOpen, LuMessagesSquare, LuRotateCcw, LuSquare } from "react-icons/lu";
 import { api, type PiCommand, type PortalEvent, type Session, type Thread } from "../api";
 import { buildTranscript, type Item } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
@@ -32,6 +32,18 @@ export function Chat({
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
   const running = session.status === "running";
+
+  /** User messages with no assistant response after them (e.g. a run died). */
+  const unanswered = useMemo(() => {
+    const ids = new Set<string>();
+    let responseAfter = false;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it.kind === "assistant" && it.text) responseAfter = true;
+      if (it.kind === "user" && !responseAfter) ids.add(it.id);
+    }
+    return ids;
+  }, [items]);
 
   /** Open (or reopen) the thread on a message. The thread agent sees only it. */
   const openThread = async (item: Item) => {
@@ -112,6 +124,12 @@ export function Chat({
     }
   };
 
+  /** Re-issue a prompt that never got an answer. */
+  const resend = (item: Extract<Item, { kind: "user" }>) => {
+    if (sending || running) return;
+    void onSend(item.text);
+  };
+
   return (
     <div className="relative flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -178,6 +196,7 @@ export function Chat({
 
         {items.map((item) => {
           if (item.kind === "user") {
+            const noResponse = !running && unanswered.has(item.id);
             return (
               <div key={item.id} className="group flex justify-end gap-2">
                 <button
@@ -190,6 +209,15 @@ export function Chat({
                 <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-accent/10 px-3.5 py-2 text-sm text-fg ring-1 ring-inset ring-accent/15">
                   {item.text}
                 </div>
+                {noResponse && (
+                  <button
+                    onClick={() => resend(item)}
+                    title="No response — resend this message"
+                    className="self-center rounded-md p-1.5 text-fg-muted opacity-70 transition hover:bg-fg/5 hover:text-accent hover:opacity-100"
+                  >
+                    <LuRotateCcw className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             );
           }
