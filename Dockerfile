@@ -13,8 +13,10 @@ FROM node:22-slim
 WORKDIR /app
 
 # git and openssh so pi can work with real repos; ca-certificates for HTTPS.
+# curl because install scripts and the /data/bin workflow assume it — the base
+# image ships wget but not curl.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git openssh-client ca-certificates \
+      git openssh-client ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 # uv, so the agent can run Python tooling — a large share of MCP servers are
