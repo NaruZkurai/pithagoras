@@ -68,7 +68,7 @@ async function scoreSkillWithRankModel(
   task: string,
   skill: SkillRow
 ): Promise<{ score: number; reason: string }> {
-  const base = (process.env.LLAMA_RANK_BASE_URL || "http://127.0.0.1:8081").replace(/\/$/, "");
+  const base = (process.env.LLAMA_RANK_BASE_URL || "http://127.0.0.1:41002").replace(/\/$/, "");
   const model = process.env.PI_RANK_MODEL || "bonsai-1.7b";
   const system = RUBRIC;
   // The skill arrives as its raw precomputed token slots (name_tokens +
@@ -251,7 +251,7 @@ export function skillTools(pi: any, ctx: { sessionId: string }): void {
       // Lazy model startup: bring the rank model up (it may not be running at
       // boot) before scoring. If it can't come up, the try/catch below degrades.
       await ensureModelServer(
-        Number(new URL(process.env.LLAMA_RANK_BASE_URL || "http://127.0.0.1:8081").port || 8081)
+        Number(new URL(process.env.LLAMA_RANK_BASE_URL || "http://127.0.0.1:41002").port || 41002)
       );
       try {
         // Each candidate is scored in its own fresh requests — the ranking

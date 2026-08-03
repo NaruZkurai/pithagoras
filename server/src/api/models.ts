@@ -5,7 +5,7 @@ import { start, status, stop } from "../model-server.js";
 /**
  * Launch / stop llama.cpp servers from the UI. Each row in model_servers is
  * one server (bin + model path + port + flags + enabled). The main server on
- * 8080 is what pi talks to; any others (e.g. the rank model) work the same way.
+ * 41001 is what pi talks to; any others (e.g. the rank model) work the same way.
  */
 export function modelsRouter(): Router {
   const router = express.Router();
@@ -26,7 +26,7 @@ export function modelsRouter(): Router {
       bin: String(b.bin ?? "").trim() || "/nzk/bin/llama-turbo-latest/llama-server",
       model: String(b.model ?? "").trim(),
       alias: String(b.alias ?? "").trim(),
-      port: Math.max(1, Math.min(65535, Number(b.port) || 8080)),
+      port: Math.max(1, Math.min(65535, Number(b.port) || 41001)),
       ngl: Number(b.ngl) || 0,
       ctx: Number(b.ctx) || 2048,
       threads: Number(b.threads) || 12,

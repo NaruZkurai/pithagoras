@@ -10,7 +10,7 @@
 #   LLAMA_BIN  path to llama-server            (default: llama-server on PATH)
 #   MODEL      path to your .gguf              (default: ./models/model.gguf)
 #   ALIAS      model id the server exposes     (default: gemma-4)
-#   PORT       listen port                     (default: 8080)
+#   PORT       listen port                     (default: 41001)
 #
 # Tuning notes: offload the weights to the GPU (-ngl 99) and keep the KV cache
 # on CPU (--no-kv-offload) so a large model fits in VRAM shared with a desktop.
@@ -19,7 +19,7 @@ set -euo pipefail
 LLAMA_BIN="${LLAMA_BIN:-llama-server}"
 MODEL="${MODEL:-$PWD/models/model.gguf}"
 ALIAS="${ALIAS:-gemma-4}"
-PORT="${PORT:-8080}"
+PORT="${PORT:-41001}"
 
 if ! command -v "$LLAMA_BIN" >/dev/null 2>&1; then
   echo "llama-server not found (LLAMA_BIN=${LLAMA_BIN}). Set LLAMA_BIN to a clean llama.cpp build." >&2

@@ -17,7 +17,7 @@ const empty = {
   bin: DEFAULT_BIN,
   model: "",
   alias: "",
-  port: "8080",
+  port: "41001",
   ngl: "0",
   ctx: "2048",
   threads: "12",
@@ -63,7 +63,7 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
         bin: form.bin.trim() || DEFAULT_BIN,
         model: form.model.trim(),
         alias: form.alias.trim(),
-        port: Number(form.port) || 8080,
+        port: Number(form.port) || 41001,
         ngl: Number(form.ngl) || 0,
         ctx: Number(form.ctx) || 2048,
         threads: Number(form.threads) || 12,
@@ -119,7 +119,7 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
           <p className="text-sm text-fg-muted">
-            Launch and stop llama.cpp servers. The one on <code className="font-mono text-[11px]">:8080</code> is
+            Launch and stop llama.cpp servers. The one on <code className="font-mono text-[11px]">:41001</code> is
             what pi talks to.
           </p>
         </div>

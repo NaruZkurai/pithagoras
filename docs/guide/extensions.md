@@ -45,7 +45,7 @@ provider**, so a local llama-server appears in the model picker alongside hosted
 models:
 
 ```
-llama-server=http://192.168.1.101:8080 / qwen36-35b-a3b-mtp   64000 ctx
+llama-server=http://192.168.1.101:41001 / qwen36-35b-a3b-mtp   64000 ctx
 ```
 
 Those models only exist once extensions are bound, which is later than session

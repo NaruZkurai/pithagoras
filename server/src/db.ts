@@ -288,14 +288,14 @@ export function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_confirmations_time ON confirmations(confirmed_at);
 
     -- llama.cpp model servers the portal can launch / stop from the UI. The
-    -- main one (port 8080) is what pi talks to; others (e.g. the rank model)
+    -- main one (port 41001) is what pi talks to; others (e.g. the rank model)
     -- can be added and managed the same way.
     CREATE TABLE IF NOT EXISTS model_servers (
       name TEXT PRIMARY KEY,
       bin TEXT NOT NULL,
       model TEXT NOT NULL,
       alias TEXT NOT NULL DEFAULT '',
-      port INTEGER NOT NULL DEFAULT 8080,
+      port INTEGER NOT NULL DEFAULT 41001,
       ngl INTEGER NOT NULL DEFAULT 0,
       ctx INTEGER NOT NULL DEFAULT 2048,
       threads INTEGER NOT NULL DEFAULT 12,

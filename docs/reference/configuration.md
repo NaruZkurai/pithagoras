@@ -65,11 +65,11 @@ before writing; a broken file stops every future session from starting.
 
 ```json
 {
-  "defaultProvider": "llama-server=http://192.168.1.101:8080",
+  "defaultProvider": "llama-server=http://192.168.1.101:41001",
   "defaultModel": "qwen36-35b-a3b-mtp",
   "defaultThinkingLevel": "high",
   "packages": ["npm:pi-llama-cpp"],
-  "llamaServerUrl": "http://192.168.1.101:8080",
+  "llamaServerUrl": "http://192.168.1.101:41001",
   "compaction": { "enabled": true }
 }
 ```

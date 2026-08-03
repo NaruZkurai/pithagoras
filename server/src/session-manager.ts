@@ -133,8 +133,8 @@ class SessionManager extends EventEmitter {
     // up the local llama server pi will talk to before launching the session.
     const provider = session.provider || settings.provider || "local";
     if (provider === "local") {
-      const base = process.env.LLAMA_BASE_URL || "http://127.0.0.1:8080";
-      await ensureModelServer(Number(new URL(base).port || 8080));
+      const base = process.env.LLAMA_BASE_URL || "http://127.0.0.1:41001";
+      await ensureModelServer(Number(new URL(base).port || 41001));
     }
     const client = await executor.launch({
       sessionId,

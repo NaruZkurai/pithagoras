@@ -13,7 +13,7 @@
 #   LLAMA_BIN  path to llama-server     (default: PrismML fork, CPU build)
 #   MODEL      path to your .gguf       (default: Ternary-Bonsai-1.7B-Q2_0.gguf)
 #   ALIAS      model id it exposes      (default: bonsai-1.7b)
-#   PORT       listen port              (default: 8081)
+#   PORT       listen port              (default: 41002)
 #   CTX        context size             (default: 2048 — plenty for one skill)
 #   NGL        layers on GPU            (default: 0 = CPU-only)
 #   THREADS    CPU threads              (default: 12)
@@ -25,7 +25,7 @@ cd "$(dirname "$0")/.."
 LLAMA_BIN="${LLAMA_BIN:-/nzk/git/llama.cpp-prism/build-cpu/bin/llama-server}"
 MODEL="${MODEL:-/nzk/models/Ternary-Bonsai-1.7B-Q2_0.gguf}"
 ALIAS="${ALIAS:-bonsai-1.7b}"
-PORT="${PORT:-8081}"
+PORT="${PORT:-41002}"
 CTX="${CTX:-2048}"
 NGL="${NGL:-0}"
 THREADS="${THREADS:-12}"

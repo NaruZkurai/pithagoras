@@ -11,10 +11,10 @@ answered from the tool result.
 
 | Piece | Where |
 |---|---|
-| Model server | `llama.cpp` (`llama-server`) → `http://127.0.0.1:8080` |
+| Model server | `llama.cpp` (`llama-server`) → `http://127.0.0.1:41001` |
 | Model | A local coding `.gguf` (set `MODEL=` in `serve-model.sh`), aliased `gemma-4` |
 | Portal (pi harness web UI) | `http://localhost:4100` |
-| pi provider config | `~/.pi/agent/models.json` → provider `local` → `http://127.0.0.1:8080/v1` |
+| pi provider config | `~/.pi/agent/models.json` → provider `local` → `http://127.0.0.1:41001/v1` |
 | Portal env | `.env` (`PI_PROVIDER=local`, `PI_MODEL=gemma-4`) |
 | Runtime data | `./data/` (sessions, db, workspaces, agent home, channels) — gitignored |
 
