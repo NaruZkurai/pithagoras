@@ -1,5 +1,12 @@
 import { Type } from "typebox";
-import { recordSkillUsage, searchSkills, searchSkillsCount, type SkillRow } from "../db.js";
+import {
+  getSkill,
+  recordSkillUsage,
+  searchSkillNames,
+  searchSkillsCount,
+  skillsByName,
+  type SkillRow,
+} from "../db.js";
 
 /**
  * Skill search, as a tool the agent can call.
@@ -102,6 +109,40 @@ export function skillHint(): string {
   ].join(" ");
 }
 
+/**
+ * Per-session search cache: identical queries in the same chat reuse the
+ * ranked names instead of re-scoring (the pre-tokenized lexical scan).
+ * Scoped by session so one chat's search never pollutes another's numbers;
+ * a library re-index clears it naturally on restart (fresh process).
+ */
+const SEARCH_CACHE_TTL_MS = 60_000;
+const SEARCH_CACHE_DEPTH = 40;
+const searchCache = new Map<string, { names: string[]; at: number }>();
+
+function searchCacheKey(sessionId: string, q: string): string {
+  return `${sessionId}\u0000${q.toLowerCase()}`;
+}
+
+/**
+ * Ranked skill names for a query, cached per (session, query). Computes fresh
+ * when absent or expired, then serves hits without any re-scoring.
+ */
+async function rankedSearch(
+  sessionId: string,
+  q: string,
+  limit: number
+): Promise<string[]> {
+  const key = searchCacheKey(sessionId, q);
+  const hit = searchCache.get(key);
+  if (hit && Date.now() - hit.at < SEARCH_CACHE_TTL_MS) {
+    return hit.names.slice(0, limit);
+  }
+  // Pure lexical scoring over the pre-tokenized mirrors — no model calls.
+  const names = searchSkillNames(q, SEARCH_CACHE_DEPTH);
+  searchCache.set(key, { names, at: Date.now() });
+  return names.slice(0, limit);
+}
+
 /** An ExtensionFactory — every session can search the library. */
 export function skillTools(pi: any, ctx: { sessionId: string }): void {
   pi.registerTool({
@@ -119,7 +160,10 @@ export function skillTools(pi: any, ctx: { sessionId: string }): void {
       const q = String(args?.query ?? "").trim().slice(0, 200);
       if (!q) return ok("Give one keyword to search for.");
       const limit = Math.min(Math.max(Number(args?.limit) || 5, 1), 20);
-      const rows = searchSkills(q, limit);
+      // Ranked once per (chat, query) and cached: identical searches reuse
+      // the scores instead of re-scoring.
+      const names = await rankedSearch(ctx.sessionId ?? "", q, limit);
+      const rows = skillsByName(names);
       if (!rows.length)
         return ok("No skills match. Retry skill_search with a vaguer keyword, or create a new skill with the skill-creator skill.");
       const total = searchSkillsCount(q);
@@ -159,9 +203,9 @@ export function skillTools(pi: any, ctx: { sessionId: string }): void {
       if (!task) return ok("Pass the task so candidates can be scored against it.");
       if (!q) return ok("Pass the keyword(s) you searched with so the candidate numbers resolve.");
       if (!numbers.length) return ok("Pass at least one candidate number from skill_search.");
-      const rows = searchSkills(q, Math.max(...numbers, 1));
+      const names = await rankedSearch(ctx.sessionId ?? "", q, Math.max(...numbers, 1));
       const candidates = numbers
-        .map((n) => ({ n, row: rows[n - 1] }))
+        .map((n) => ({ n, row: names[n - 1] ? getSkill(names[n - 1]!) : undefined }))
         .filter((x): x is { n: number; row: SkillRow } => !!x.row);
       if (!candidates.length)
         return ok("None of those numbers matched the search. Run skill_search again.");
@@ -211,8 +255,9 @@ export function skillTools(pi: any, ctx: { sessionId: string }): void {
       if (!q || !Number.isFinite(n) || n < 1) {
         return ok("Pass the query you searched with and the skill's number from the results.");
       }
-      const rows = searchSkills(q, Math.max(n, 1));
-      const skill = rows[n - 1];
+      const names = await rankedSearch(ctx.sessionId ?? "", q, Math.max(n, 1));
+      const name = names[n - 1];
+      const skill = name ? getSkill(name) : undefined;
       if (!skill) return ok("That number is out of range for this search. Run skill_search again.");
       // Only the chosen skill's instructions enter the conversation, and the
       // choice is recorded so the chat can list what was used.

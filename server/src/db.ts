@@ -233,9 +233,12 @@ export function getDb(): Database.Database {
       path TEXT NOT NULL,
       content TEXT NOT NULL DEFAULT '',
       -- Mirrored, pre-tokenized search columns; kept in sync by upsertSkill.
+      -- Each row is: name + description (originals), then the lowercased
+      -- mirrors and the tokenized mirrors of each.
       name_lc TEXT NOT NULL DEFAULT '',
       desc_lc TEXT NOT NULL DEFAULT '',
-      tokens TEXT NOT NULL DEFAULT '',
+      name_tokens TEXT NOT NULL DEFAULT '',
+      desc_tokens TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -412,17 +415,33 @@ function migrate(d: Database.Database): void {
   if (skillCols.length) {
     if (!skillCols.includes("name_lc")) d.exec("ALTER TABLE skills ADD COLUMN name_lc TEXT NOT NULL DEFAULT ''");
     if (!skillCols.includes("desc_lc")) d.exec("ALTER TABLE skills ADD COLUMN desc_lc TEXT NOT NULL DEFAULT ''");
-    if (!skillCols.includes("tokens")) d.exec("ALTER TABLE skills ADD COLUMN tokens TEXT NOT NULL DEFAULT ''");
+    if (!skillCols.includes("name_tokens")) d.exec("ALTER TABLE skills ADD COLUMN name_tokens TEXT NOT NULL DEFAULT ''");
+    if (!skillCols.includes("desc_tokens")) d.exec("ALTER TABLE skills ADD COLUMN desc_tokens TEXT NOT NULL DEFAULT ''");
+    // The semantic-vector column was an experiment; the library search is pure
+    // lexical over the token mirrors, so drop it if a previous run created it.
+    if (skillCols.includes("embedding")) d.exec("ALTER TABLE skills DROP COLUMN embedding");
+    // An earlier iteration kept one merged `tokens` column; it was replaced by
+    // the split name/desc token mirrors.
+    if (skillCols.includes("tokens")) d.exec("ALTER TABLE skills DROP COLUMN tokens");
     // Backfill rows created before the mirrored columns existed.
     const stale = d
-      .prepare("SELECT name, description FROM skills WHERE name_lc = '' OR tokens = ''")
+      .prepare(
+        "SELECT name, description FROM skills WHERE name_lc = '' OR desc_lc = '' OR name_tokens = '' OR desc_tokens = ''"
+      )
       .all() as { name: string; description: string }[];
-    const backfill = d.prepare("UPDATE skills SET name_lc = ?, desc_lc = ?, tokens = ? WHERE name = ?");
+    const backfill = d.prepare(
+      "UPDATE skills SET name_lc = ?, desc_lc = ?, name_tokens = ?, desc_tokens = ? WHERE name = ?"
+    );
     for (const s of stale) {
       const t = tokenizeSkill(s.name, s.description);
-      backfill.run(t.name_lc, t.desc_lc, t.tokens, s.name);
+      backfill.run(t.name_lc, t.desc_lc, t.name_tokens, t.desc_tokens, s.name);
     }
   }
+
+  // Clean up the (removed) semantic-vector experiment: no embedding server and
+  // no model marker. The library search is pure lexical over the token mirrors.
+  d.exec("DELETE FROM model_servers WHERE name = 'bonsai-embed'");
+  d.exec("DELETE FROM settings WHERE key = 'skill_embed_model'");
 }
 
 export function createSession(row: {
@@ -757,32 +776,36 @@ export interface SkillRow {
   name_lc?: string;
   /** Lowercased mirror of description, kept in sync by upsertSkill. */
   desc_lc?: string;
-  /** Space-joined, deduped word tokens of name + description. */
-  tokens?: string;
+  /** Space-joined, deduped word tokens of the name only. */
+  name_tokens?: string;
+  /** Space-joined, deduped word tokens of the description only. */
+  desc_tokens?: string;
   updated_at: string;
 }
 
 /**
  * Pre-tokenize a skill's name + description into searchable mirror columns.
  *
- * name_lc/desc_lc are the lowercased originals; tokens is a space-joined,
- * deduped set of word tokens (a-z0-9, length ≥ 2). Written on every upsert so
- * the mirrors always match the originals, and search never has to re-lowercase
- * or re-tokenize the whole library per query.
+ * The mirrors are: name_lc/desc_lc (lowercased originals, for substring and
+ * prefix matching) and name_tokens/desc_tokens (space-joined, deduped word
+ * tokens of the name and of the description, kept separate). Written on every
+ * upsert so the mirrors always match the originals, and search never has to
+ * re-lowercase or re-tokenize the whole library per query.
  */
 function tokenizeSkill(
   name: string,
   description: string
-): { name_lc: string; desc_lc: string; tokens: string } {
+): { name_lc: string; desc_lc: string; name_tokens: string; desc_tokens: string } {
   const name_lc = name.toLowerCase();
   const desc_lc = description.toLowerCase();
-  const seen = new Set<string>();
-  for (const text of [name_lc, desc_lc]) {
+  const words = (text: string): string => {
+    const seen = new Set<string>();
     for (const w of text.split(/[^a-z0-9]+/)) {
       if (w.length >= 2) seen.add(w);
     }
-  }
-  return { name_lc, desc_lc, tokens: [...seen].sort().join(" ") };
+    return [...seen].sort().join(" ");
+  };
+  return { name_lc, desc_lc, name_tokens: words(name_lc), desc_tokens: words(desc_lc) };
 }
 
 /** Index one skill. Content is kept for a later targeted read, not the prompt. */
@@ -795,15 +818,16 @@ export function upsertSkill(row: {
   const mirror = tokenizeSkill(row.name, row.description);
   getDb()
     .prepare(
-      `INSERT INTO skills (name, description, path, content, name_lc, desc_lc, tokens, updated_at)
-       VALUES (@name, @description, @path, @content, @name_lc, @desc_lc, @tokens, datetime('now'))
+      `INSERT INTO skills (name, description, path, content, name_lc, desc_lc, name_tokens, desc_tokens, updated_at)
+       VALUES (@name, @description, @path, @content, @name_lc, @desc_lc, @name_tokens, @desc_tokens, datetime('now'))
        ON CONFLICT(name) DO UPDATE SET
          description = excluded.description,
          path = excluded.path,
          content = excluded.content,
          name_lc = excluded.name_lc,
          desc_lc = excluded.desc_lc,
-         tokens = excluded.tokens,
+         name_tokens = excluded.name_tokens,
+         desc_tokens = excluded.desc_tokens,
          updated_at = datetime('now')`
     )
     .run({ ...row, ...mirror });
@@ -821,7 +845,7 @@ function scoreSkills(needle: string): { name: string; score: number }[] {
   const tokens = (needle.toLowerCase().match(/[a-z0-9-]{2,}/g) ?? []).slice(0, 8);
   // Score over the pre-tokenized mirrors (kept in sync by upsertSkill) and
   // never touch the content column — bodies can be large, and only the top
-  // matches need them (fetched in searchSkills).
+  // matches need them (fetched via searchSkillNames/skillsByName).
   const all = getDb()
     .prepare("SELECT name, name_lc, desc_lc FROM skills")
     .all() as { name: string; name_lc: string; desc_lc: string }[];
@@ -839,19 +863,56 @@ function scoreSkills(needle: string): { name: string; score: number }[] {
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 }
 
-/** Lightweight search — names + descriptions, never the body. */
-export function searchSkills(needle: string, limit = 5): SkillRow[] {
-  const scored = scoreSkills(needle);
-  const names = scored.slice(0, limit).map((x) => x.name);
+/** Ranked skill names for a needle (no content fetched). */
+export function searchSkillNames(needle: string, limit = 40): string[] {
+  return scoreSkills(needle)
+    .slice(0, limit)
+    .map((x) => x.name);
+}
+
+/**
+ * The original lexical search, but each match comes back as its raw
+ * pre-tokenized slots (name_tokens + desc_tokens) instead of text. The
+ * mirrors were computed once at index time, so nothing is re-tokenized here.
+ */
+export function searchSkillTokens(
+  needle: string,
+  limit = 40
+): { name: string; name_tokens: string; desc_tokens: string }[] {
+  const names = searchSkillNames(needle, limit);
   if (!names.length) return [];
-  // Full rows (including content) only for the matches that will be returned,
-  // not for the whole library.
+  const ph = names.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(`SELECT name, name_tokens, desc_tokens FROM skills WHERE name IN (${ph})`)
+    .all(...names) as { name: string; name_tokens: string; desc_tokens: string }[];
+  const byName = new Map(rows.map((r) => [r.name, r]));
+  return names
+    .map((n) => {
+      const r = byName.get(n);
+      return r ? { name: r.name, name_tokens: r.name_tokens, desc_tokens: r.desc_tokens } : undefined;
+    })
+    .filter((x): x is { name: string; name_tokens: string; desc_tokens: string } => Boolean(x));
+}
+
+/** Full rows for the given names, in the given order (missing names skipped). */
+export function skillsByName(names: string[]): SkillRow[] {
+  if (!names.length) return [];
   const ph = names.map(() => "?").join(",");
   const rows = getDb()
     .prepare(`SELECT * FROM skills WHERE name IN (${ph})`)
     .all(...names) as SkillRow[];
   const byName = new Map(rows.map((r) => [r.name, r]));
   return names.map((n) => byName.get(n)!).filter(Boolean);
+}
+
+/** One skill by exact name (full row, incl. content). */
+export function getSkill(name: string): SkillRow | undefined {
+  return getDb().prepare("SELECT * FROM skills WHERE name = ?").get(name) as SkillRow | undefined;
+}
+
+/** Lightweight search — names + descriptions, never the body. */
+export function searchSkills(needle: string, limit = 5): SkillRow[] {
+  return skillsByName(searchSkillNames(needle, limit));
 }
 
 /** How many skills match a needle, so a caller knows whether to refine. */
