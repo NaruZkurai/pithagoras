@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { nanoid } from "nanoid";
 import type { PersonRow, Role } from "./people.js";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -7,12 +8,18 @@ import { findServerBuiltin, runBuiltin } from "./pi/builtins.js";
 import { buildExecutor, type Executor, type ExecutorKind } from "./executors/index.js";
 import {
   appendEvent,
+  appendThreadMessage,
+  createSession,
+  createThread,
   getSession,
   getSettings,
+  getThread,
+  listThreadMessages,
+  listThreads,
   markOrphanedSessionsInterrupted,
   updateSession,
 } from "./db.js";
-import { ensureModelServer } from "./model-server.js";
+import { ensureMainModelServer } from "./model-server.js";
 
 /** Mirrors what the web transcript shows, so a chat and the UI agree. */
 function summarizeToolInput(p: any): string | undefined {
@@ -100,7 +107,7 @@ class SessionManager extends EventEmitter {
   }
 
   /** Record an event: persist it, then fan out to any attached SSE clients. */
-  private record(sessionId: string, type: string, payload: unknown): void {
+  private record(sessionId: string, type: string, payload: unknown): number {
     if (EPHEMERAL_EVENTS.has(type)) {
       // Still deliver it to anyone attached right now, with a negative seq so
       // it can never be confused with a stored event during replay.
@@ -110,10 +117,11 @@ class SessionManager extends EventEmitter {
         type,
         payload: JSON.stringify(payload),
       });
-      return;
+      return -Date.now();
     }
     const row = appendEvent(sessionId, type, payload);
     this.emit(`session:${sessionId}`, row);
+    return row.seq;
   }
 
   private async ensureClient(sessionId: string): Promise<PiClient> {
@@ -132,10 +140,7 @@ class SessionManager extends EventEmitter {
     // Lazy model startup: with LAZY_MODELS on, nothing is pinned at boot. Bring
     // up the local llama server pi will talk to before launching the session.
     const provider = session.provider || settings.provider || "local";
-    if (provider === "local") {
-      const base = process.env.LLAMA_BASE_URL || "http://127.0.0.1:41001";
-      await ensureModelServer(Number(new URL(base).port || 41001));
-    }
+    if (provider === "local") await ensureMainModelServer();
     const client = await executor.launch({
       sessionId,
       workspacePath: session.workspace,
@@ -173,15 +178,32 @@ class SessionManager extends EventEmitter {
     };
     rememberSessionFile();
 
+    let currentAssistantSeq: number | null = null;
     client.on("event", (msg) => {
       rememberSessionFile();
-      this.record(sessionId, msg.type, msg);
+      const seq = this.record(sessionId, msg.type, msg);
+      // Remember which event each assistant message starts at — its thread is
+      // keyed on that seq so it lines up with the transcript's message id.
+      if (msg.type === "message_update") {
+        const inner = msg.assistantMessageEvent ?? {};
+        if (typeof inner.delta === "string" && inner.delta && currentAssistantSeq === null) {
+          currentAssistantSeq = seq;
+        }
+      }
       // A completed agent message wakes message-triggered routines. Routine
       // sessions are skipped inside the supervisor, so a run can never loop on
       // its own output.
       if (msg.type === "message_end" && msg.message?.role === "assistant") {
         const text = extractMessageText(msg.message);
-        if (text) this.emit("message_complete", sessionId, session.kind, text);
+        if (text) {
+          this.emit("message_complete", sessionId, session.kind, text);
+          // Log every agent message into the thread attached to it, not just
+          // the last one when a run finishes.
+          if (currentAssistantSeq !== null) {
+            this.logAgentMessageToThread(sessionId, currentAssistantSeq, text);
+          }
+        }
+        currentAssistantSeq = null;
       }
       // agent_end marks the end of a run — the task is done whether or not
       // anyone was watching.
@@ -215,12 +237,67 @@ class SessionManager extends EventEmitter {
   }
 
   /**
+   * Log a completed agent message into the thread attached to it. One thread
+   * per message (like Discord). The message becomes the thread's parent — so
+   * every agent message is recorded in a thread of its own, not just the last
+   * one when a run finishes. If the message already had a thread, the new text
+   * is appended to that thread's log as well.
+   */
+  private logAgentMessageToThread(sessionId: string, parentSeq: number, text: string): void {
+    const session = getSession(sessionId);
+    // Plain task sessions only — never a thread-of-a-thread, and no routine or
+    // channel chatter auto-threading itself into the list.
+    if (!session || session.kind !== "task") return;
+    const parentText = text.slice(0, 20000);
+    let thread = listThreads(sessionId).find((t) => t.parent_seq === parentSeq);
+    const existing = !!thread;
+    if (!thread) {
+      const id = nanoid(12);
+      createThread({
+        id,
+        session_id: sessionId,
+        parent_seq: parentSeq,
+        parent_role: "assistant",
+        parent_text: parentText,
+      });
+      createSession({
+        id,
+        title: `Thread on ${parentText.slice(0, 40)}`,
+        workspace: session.workspace,
+        executor: EXECUTOR_KIND,
+        kind: "thread",
+      });
+      thread = getThread(id)!;
+    }
+    // Fresh threads already carry the message as their parent; only append when
+    // the thread existed before this message (e.g. the user already threaded
+    // it), and never duplicate the exact same text.
+    if (!existing || !thread) return;
+    const msgs = listThreadMessages(thread.id);
+    const last = msgs[msgs.length - 1];
+    if (last?.role === "assistant" && last.content === parentText) return;
+    appendThreadMessage({
+      id: nanoid(12),
+      thread_id: thread.id,
+      role: "assistant",
+      content: parentText,
+    });
+  }
+
+  /**
    * Submit a prompt. Resolves once pi has accepted it — deliberately not when
    * the work finishes, so the HTTP request returns immediately and the run
    * continues in the background.
    */
   async prompt(sessionId: string, message: string): Promise<void> {
     const client = await this.ensureClient(sessionId);
+
+    // Every task keeps the main model server alive: reset its idle timer, and
+    // if the idle sweep stopped it, relaunch it with the configured model so a
+    // reused client never talks to a dead port.
+    const promptSession = getSession(sessionId);
+    const promptProvider = promptSession?.provider || getSettings().provider || "local";
+    if (promptProvider === "local") await ensureMainModelServer();
 
     // A slash command is an instruction to the agent, not something said in the
     // conversation, so it should not appear as a chat message — its dialog or

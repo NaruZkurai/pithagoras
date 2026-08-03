@@ -91,6 +91,16 @@ export async function ensureModelServer(port: number): Promise<boolean> {
   }
 }
 
+/** The port pi talks to — LLAMA_BASE_URL, defaulting to the main server. */
+export function mainModelPort(): number {
+  return Number(new URL(process.env.LLAMA_BASE_URL || "http://127.0.0.1:41001").port || 41001);
+}
+
+/** Bring up (and reset the idle timer for) the main model server pi talks to. */
+export async function ensureMainModelServer(): Promise<boolean> {
+  return ensureModelServer(mainModelPort());
+}
+
 export type ServerState = "down" | "starting" | "idle" | "busy";
 
 /**
