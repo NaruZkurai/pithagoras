@@ -7,6 +7,7 @@ import {
   skillsByName,
   type SkillRow,
 } from "../db.js";
+import { ensureModelServer } from "../model-server.js";
 
 /**
  * Skill search, as a tool the agent can call.
@@ -247,6 +248,11 @@ export function skillTools(pi: any, ctx: { sessionId: string }): void {
         .filter((x): x is { n: number; row: SkillRow } => !!x.row);
       if (!candidates.length)
         return ok("None of those numbers matched the search. Run skill_search again.");
+      // Lazy model startup: bring the rank model up (it may not be running at
+      // boot) before scoring. If it can't come up, the try/catch below degrades.
+      await ensureModelServer(
+        Number(new URL(process.env.LLAMA_RANK_BASE_URL || "http://127.0.0.1:8081").port || 8081)
+      );
       try {
         // Each candidate is scored in its own fresh requests — the ranking
         // model literally forgets the previous one, so every score is its own

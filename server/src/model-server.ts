@@ -12,9 +12,13 @@ import { getModelServer, listModelServers, type ModelServerRow } from "./db.js";
 interface RunningServer {
   proc: ChildProcess;
   startedAt: number;
+  /** True when brought up lazily (on demand) — eligible for idle shutdown. */
+  lazy: boolean;
 }
 
 const running = new Map<string, RunningServer>();
+/** Last time each managed server was used, for the idle power-saving sweep. */
+const lastUsed = new Map<string, number>();
 
 /** Flags differ between the stock llama-server and the Rust llama-rs server. */
 function buildArgs(s: ModelServerRow): string[] {
@@ -58,6 +62,35 @@ export function isRunning(name: string): boolean {
   return !!r && r.proc.exitCode === null;
 }
 
+/** Mark a managed server as used right now (keeps it alive past the idle window). */
+export function touchModelServer(name: string): void {
+  lastUsed.set(name, Date.now());
+}
+
+/**
+ * Ensure the managed server bound to `port` is serving — lazily started on
+ * demand, so nothing is pinned at boot (power saving). Returns true once the
+ * port answers /health; accepts whatever is already serving (managed or not).
+ */
+export async function ensureModelServer(port: number): Promise<boolean> {
+  const s = listModelServers().find((x) => x.port === port);
+  if (!s) return health(port);
+  try {
+    if (!isRunning(s.name) && !(await health(s.port))) {
+      await start(s.name);
+      console.log(`[portal] model server up (lazy): ${s.name} on :${s.port}`);
+    }
+    const r = running.get(s.name);
+    if (r) {
+      r.lazy = true;
+      touchModelServer(s.name);
+    }
+    return await health(s.port);
+  } catch {
+    return false;
+  }
+}
+
 export async function status(s: ModelServerRow): Promise<{
   name: string;
   port: number;
@@ -90,7 +123,7 @@ export async function start(name: string): Promise<void> {
     throw new Error(`port ${s.port} is already serving — stop it first or pick another port`);
 
   const proc = spawn(s.bin, buildArgs(s), { stdio: "ignore" });
-  running.set(name, { proc, startedAt: Date.now() });
+  running.set(name, { proc, startedAt: Date.now(), lazy: false });
   proc.on("exit", (code) => {
     if (running.get(name)?.proc === proc) running.delete(name);
   });
@@ -130,8 +163,13 @@ export async function stop(name: string): Promise<void> {
   running.delete(name);
 }
 
-/** Start every server marked enabled on boot (skips ports already serving). */
+/** Start every server marked enabled on boot — unless lazy mode is on. */
 export async function startEnabled(): Promise<void> {
+  const lazy = (process.env.LAZY_MODELS ?? "1") !== "0";
+  if (lazy) {
+    console.log("[portal] lazy model servers: none pinned at boot; started on demand");
+    return;
+  }
   for (const s of listModelServers()) {
     if (!s.enabled) continue;
     try {
@@ -140,6 +178,40 @@ export async function startEnabled(): Promise<void> {
     } catch (e) {
       console.warn(`[portal] model server '${s.name}' not started: ${(e as Error).message}`);
     }
+  }
+}
+
+let idleTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Periodically stop lazily-started servers that have been idle too long.
+ * `isBusy` is consulted first (e.g. any running session keeps the main model
+ * alive). Only on-demand servers are ever idle-stopped — never ones started
+ * by hand or by auto-start.
+ */
+export function startIdleSweeper(isBusy: () => boolean): void {
+  stopIdleSweeper();
+  const idleMs = Number(process.env.LAZY_IDLE_MS || 10 * 60 * 1000);
+  if (!Number.isFinite(idleMs) || idleMs <= 0) return;
+  idleTimer = setInterval(async () => {
+    if (isBusy()) return;
+    const now = Date.now();
+    for (const s of listModelServers()) {
+      const r = running.get(s.name);
+      if (!r || !r.lazy || r.proc.exitCode !== null) continue;
+      const last = lastUsed.get(s.name) ?? r.startedAt;
+      if (now - last > idleMs) {
+        console.log(`[portal] model server '${s.name}' idle — stopping to save power`);
+        await stop(s.name);
+      }
+    }
+  }, Math.min(idleMs, 60_000));
+}
+
+export function stopIdleSweeper(): void {
+  if (idleTimer) {
+    clearInterval(idleTimer);
+    idleTimer = null;
   }
 }
 

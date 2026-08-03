@@ -31,7 +31,7 @@ import { syncSkillsLibrary } from "./skills/library.js";
 import { filesRouter } from "./api/files.js";
 import { threadsRouter } from "./api/threads.js";
 import { modelsRouter } from "./api/models.js";
-import { startEnabled, shutdownModelServers } from "./model-server.js";
+import { startEnabled, shutdownModelServers, startIdleSweeper, stopIdleSweeper } from "./model-server.js";
 import { mcpRouter } from "./api/mcp.js";
 import { peopleRouter } from "./api/people.js";
 import { routineSupervisor } from "./routines/supervisor.js";
@@ -585,8 +585,12 @@ const server = app.listen(PORT, "0.0.0.0", () => {
 
   // Model servers marked enabled come up with the portal, so the UI's toggle
   // is what decides what's running after a restart. Ports already serving are
-  // skipped (a manually-started llama.cpp is left alone).
+  // skipped (a manually-started llama.cpp is left alone). In lazy mode (the
+  // default) nothing is pinned at boot; servers start on demand instead.
   void startEnabled();
+  // Power saving: stop lazily-started model servers after LAZY_IDLE_MS of
+  // inactivity, as long as no session is running.
+  startIdleSweeper(() => sessions.runningCount() > 0);
 
   channelSupervisor
     .sync()
@@ -596,6 +600,7 @@ const server = app.listen(PORT, "0.0.0.0", () => {
 
 async function shutdown(signal: string) {
   console.log(`${signal} received — stopping running sessions`);
+  stopIdleSweeper();
   routineSupervisor.stop();
   await channelSupervisor.shutdown();
   await shutdownModelServers();

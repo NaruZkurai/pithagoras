@@ -39,6 +39,11 @@ export PI_RANK_MODEL="${PI_RANK_MODEL:-bonsai-1.7b}"
 # How many form-fill scores per candidate, averaged (the tiny model is noisy;
 # it's fast enough that a few extra scores cost little).
 export PI_RANK_REPS="${PI_RANK_REPS:-6}"
+# Power saving: with LAZY_MODELS=1 (default) no llama.cpp model is pinned at
+# boot — servers start on demand (first session/rank) and stop after
+# LAZY_IDLE_MS of inactivity. Set LAZY_MODELS=0 for the old always-on boot.
+export LAZY_MODELS="${LAZY_MODELS:-1}"
+export LAZY_IDLE_MS="${LAZY_IDLE_MS:-600000}"
 export PORTAL_SECRET="${PORTAL_SECRET:-$(openssl rand -hex 32)}"
 
 : "${PORTAL_PASSWORD:?set PORTAL_PASSWORD in .env}"

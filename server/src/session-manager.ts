@@ -12,6 +12,7 @@ import {
   markOrphanedSessionsInterrupted,
   updateSession,
 } from "./db.js";
+import { ensureModelServer } from "./model-server.js";
 
 /** Mirrors what the web transcript shows, so a chat and the UI agree. */
 function summarizeToolInput(p: any): string | undefined {
@@ -87,6 +88,13 @@ class SessionManager extends EventEmitter {
     }
   }
 
+  /** How many sessions have a live pi client right now. */
+  runningCount(): number {
+    let n = 0;
+    for (const s of this.live.values()) if (s.client.running) n++;
+    return n;
+  }
+
   isRunning(sessionId: string): boolean {
     return this.live.get(sessionId)?.client.running ?? false;
   }
@@ -121,6 +129,13 @@ class SessionManager extends EventEmitter {
     // The session's own choices win over the portal defaults. Without this a
     // restart relaunched pi on the default model, quietly undoing the pick.
     const settings = getSettings();
+    // Lazy model startup: with LAZY_MODELS on, nothing is pinned at boot. Bring
+    // up the local llama server pi will talk to before launching the session.
+    const provider = session.provider || settings.provider || "local";
+    if (provider === "local") {
+      const base = process.env.LLAMA_BASE_URL || "http://127.0.0.1:8080";
+      await ensureModelServer(Number(new URL(base).port || 8080));
+    }
     const client = await executor.launch({
       sessionId,
       workspacePath: session.workspace,
