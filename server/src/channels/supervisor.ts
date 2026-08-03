@@ -1,6 +1,7 @@
 import {
   addGrant,
   addNote,
+  addToolRule,
   findChannelSession,
   getDb,
   getDefaultReportTo,
@@ -13,6 +14,7 @@ import { sessions, EXECUTOR_KIND, stripThinkingMarkers } from "../session-manage
 import { readAnswer, recordAnswer, type QuestionRow } from "../questions.js";
 import { nanoid } from "nanoid";
 import {
+  getPerson,
   hasPrimary,
   lower,
   markAnnounced,
@@ -367,7 +369,7 @@ class ChannelSupervisor {
     if (person?.role === "primary") {
       const pending = readAnswer(text);
       if (pending) {
-        const { question, answer, approves } = pending;
+        const { question, answer, approves, always } = pending;
 
         // An approval is a permission, not a sentence. Bound to the exact action
         // that was shown, the conversation that asked, one use, fifteen minutes
@@ -375,6 +377,19 @@ class ChannelSupervisor {
         const asking = findChannelSession(scopeKey(question.channel_slug, question.channel_key));
         if (approves && question.action && asking) {
           addGrant(nanoid(10), asking.id, question.action_tool || "bash", question.action);
+        }
+        // Standing permission, narrowed to the person who asked. Recorded as an
+        // ordinary rule so it shows up in Settings → People beside the ones
+        // written by hand, and is revoked the same way.
+        if (always && question.action) {
+          addToolRule({
+            id: nanoid(10),
+            role: getPerson(question.person_key)?.role || "colleague",
+            tool: question.action_tool || "bash",
+            pattern: question.action,
+            person_key: question.person_key,
+            note: `Approved for ${question.person_name}`,
+          });
         }
         let how: "sent" | "queued";
         try {
@@ -398,8 +413,11 @@ class ChannelSupervisor {
         if (asking) void this.resume(asking.id, question, answer, approves);
 
         if (approves && question.action) {
+          const scope = always
+            ? `${question.person_name} may run that from now on — revoke it in Settings → People.`
+            : "it may run that once.";
           return how === "sent"
-            ? `Approved — passed to ${question.person_name}, and it may run that once.`
+            ? `Approved — passed to ${question.person_name}, and ${scope}`
             : `Approved. ${question.person_name} will see it the next time they write.`;
         }
         return how === "sent"

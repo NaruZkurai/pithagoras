@@ -230,6 +230,10 @@ export function getDb(): Database.Database {
       tool TEXT NOT NULL,
       -- Glob against the command for bash, the path for file tools.
       pattern TEXT NOT NULL,
+      -- One person, when the rule came from approving their request. NULL
+      -- applies to everyone holding the role, which is a much bigger thing to
+      -- say and should only happen deliberately.
+      person_key TEXT,
       note TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -326,6 +330,12 @@ function migrate(d: Database.Database): void {
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_routines_slug ON routines(slug)");
   d.exec("CREATE INDEX IF NOT EXISTS idx_notes_pending ON notes(session_id, consumed_at)");
   d.exec("CREATE INDEX IF NOT EXISTS idx_grants_open ON grants(session_id, tool, used_at)");
+  const ruleCols = (d.prepare("PRAGMA table_info(tool_rules)").all() as { name: string }[]).map(
+    (c) => c.name
+  );
+  if (ruleCols.length && !ruleCols.includes("person_key")) {
+    d.exec("ALTER TABLE tool_rules ADD COLUMN person_key TEXT");
+  }
   const questionCols = (d.prepare("PRAGMA table_info(questions)").all() as { name: string }[]).map(
     (c) => c.name
   );
@@ -613,6 +623,8 @@ export interface ToolRule {
   role: string;
   tool: string;
   pattern: string;
+  /** Null applies to the whole role; set narrows it to one person. */
+  person_key: string | null;
   note: string;
   created_at: string;
 }
@@ -620,10 +632,12 @@ export interface ToolRule {
 export const listToolRules = (): ToolRule[] =>
   getDb().prepare("SELECT * FROM tool_rules ORDER BY tool, pattern").all() as ToolRule[];
 
-export function addToolRule(rule: Omit<ToolRule, "created_at">): void {
+export function addToolRule(rule: Omit<ToolRule, "created_at" | "person_key"> & { person_key?: string | null }): void {
   getDb()
-    .prepare("INSERT INTO tool_rules (id, role, tool, pattern, note) VALUES (?, ?, ?, ?, ?)")
-    .run(rule.id, rule.role, rule.tool, rule.pattern, rule.note);
+    .prepare(
+      "INSERT INTO tool_rules (id, role, tool, pattern, note, person_key) VALUES (?, ?, ?, ?, ?, ?)"
+    )
+    .run(rule.id, rule.role, rule.tool, rule.pattern, rule.note, rule.person_key ?? null);
 }
 
 export const deleteToolRule = (id: string): void => {

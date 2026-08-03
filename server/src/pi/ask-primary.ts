@@ -99,13 +99,17 @@ export function askPrimaryTool(sessionId: string) {
                 ? `It wants to run, exactly once:\n\n    ${row.action}\n\n` +
                   `Approving runs that and nothing else.\n\n`
                 : "") +
-              `Reply with "#${row.id} <your answer>" and I will pass it back to them.` +
+              (row.action
+                ? `Reply "#${row.id} approve" for this once, "#${row.id} always" to permit it from ` +
+                  `now on, or "#${row.id} no".`
+                : `Reply with "#${row.id} <your answer>" and I will pass it back to them.`) +
               (immediate ? "" : ` That channel cannot be messaged out of the blue, so they will see it the next time they write.`),
             // Only where there is something to approve. A question wanting an
             // opinion needs words, and two buttons would be pretending it does not.
             row.action
               ? [
-                  { label: "Approve", reply: `#${row.id} approve` },
+                  { label: "Approve once", reply: `#${row.id} approve` },
+                  { label: "Always allow", reply: `#${row.id} always` },
                   { label: "Deny", reply: `#${row.id} no` },
                 ]
               : undefined

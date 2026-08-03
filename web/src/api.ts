@@ -608,6 +608,9 @@ export interface ToolRule {
   role: string;
   tool: string;
   pattern: string;
+  /** Set when the rule is for one person rather than a whole role. */
+  person_key: string | null;
+  person_name: string | null;
   note: string;
   created_at: string;
 }

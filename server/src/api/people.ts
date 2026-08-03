@@ -45,7 +45,15 @@ export function peopleRouter(): Router {
 
   /** Exceptions: what a non-primary role is allowed to run despite the default. */
   router.get("/tool-rules", (_req, res) => {
-    res.json({ rules: listToolRules() });
+    // Names come from the roster: a rule showing a raw key is a rule nobody can
+    // decide about.
+    const people = new Map(listPeople().map((p) => [p.key, p.name]));
+    res.json({
+      rules: listToolRules().map((r) => ({
+        ...r,
+        person_name: r.person_key ? (people.get(r.person_key) ?? r.person_key) : null,
+      })),
+    });
   });
 
   router.post("/tool-rules", (req, res) => {
@@ -71,6 +79,7 @@ export function peopleRouter(): Router {
       tool,
       pattern: pattern.trim(),
       note: typeof note === "string" ? note.trim() : "",
+      person_key: typeof req.body?.personKey === "string" ? req.body.personKey : null,
     });
     res.json({ rules: listToolRules() });
   });

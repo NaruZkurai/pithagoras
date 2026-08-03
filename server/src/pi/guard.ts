@@ -174,7 +174,13 @@ const subjectOf = (toolName: string, input: Record<string, unknown>) =>
  */
 const STDERR_IDIOM = /\s+2>(&1|\/dev\/null)$/;
 
-export function ruleAllows(rules: ToolRule[], role: string, toolName: string, input: Record<string, unknown>): boolean {
+export function ruleAllows(
+  rules: ToolRule[],
+  role: string,
+  toolName: string,
+  input: Record<string, unknown>,
+  personKey?: string
+): boolean {
   let subject = subjectOf(toolName, input).trim();
   if (!subject) return false;
   if (toolName === "bash") subject = subject.replace(STDERR_IDIOM, "").trim();
@@ -182,6 +188,9 @@ export function ruleAllows(rules: ToolRule[], role: string, toolName: string, in
   return rules.some(
     (r) =>
       (r.role === role || r.role === "all") &&
+      // A rule naming somebody applies to them alone: approving Priya's request
+      // must not quietly permit the same command for every colleague.
+      (!r.person_key || r.person_key === personKey) &&
       r.tool === toolName &&
       globToRegExp(r.pattern).test(subject)
   );
@@ -190,7 +199,7 @@ export function ruleAllows(rules: ToolRule[], role: string, toolName: string, in
 /** An ExtensionFactory — see pi's InlineExtension. One instance per session. */
 export function guardExtension(
   sessionId: string,
-  roleNow: () => string = () => "primary",
+  whoNow: () => { role: string; key?: string } = () => ({ role: "primary" }),
   portalSessionId?: string
 ) {
   return (pi: any): void => {
@@ -219,7 +228,7 @@ export function guardExtension(
     });
 
     pi.on("tool_call", (event: any) => {
-      const role = roleNow();
+      const { role, key } = whoNow();
       // A one-off approval, spent here. Checked last, after the standing rules,
       // because it is the expensive kind of permission: somebody was asked.
       const granted = () =>
@@ -231,7 +240,7 @@ export function guardExtension(
       if (
         role !== "primary" &&
         !READ_ONLY.has(event.toolName) &&
-        !ruleAllows(listToolRules(), role, event.toolName, event.input ?? {}) &&
+        !ruleAllows(listToolRules(), role, event.toolName, event.input ?? {}, key) &&
         !granted()
       ) {
         console.warn(`[guard ${sessionId}] blocked ${event.toolName}: role ${role}`);

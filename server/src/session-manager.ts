@@ -141,7 +141,7 @@ class SessionManager extends EventEmitter {
       // The session's settled role picks the context files; the live one gates
       // each tool call, so a group conversation follows whoever is speaking.
       role: session.role,
-      roleNow: () => this.speakerRole(sessionId),
+      whoNow: () => ({ role: this.speakerRole(sessionId), key: this.speakerKey(sessionId) }),
     });
 
     // pi writes the file lazily, so it usually does not exist yet at launch.
@@ -456,6 +456,11 @@ class SessionManager extends EventEmitter {
     if (live) return live.role;
     const row = getSession(sessionId);
     return (row?.role as Role) ?? "guest";
+  }
+
+  /** Who is speaking, surviving a restart via the session's own record. */
+  speakerKey(sessionId: string): string | undefined {
+    return this.speaker.get(sessionId)?.key ?? getSession(sessionId)?.last_person_key ?? undefined;
   }
 
   currentSpeaker(sessionId: string): PersonRow | undefined {

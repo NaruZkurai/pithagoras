@@ -109,16 +109,24 @@ export function recordAnswer(id: string, answer: string): void {
  * is relayed as an ordinary answer and authorises nothing, so an ambiguous
  * reply can never be read as a yes.
  */
-const APPROVES = /^(approve|approved|allow|allowed|yes|ok|okay|go ahead|do it)\b/i;
+const APPROVES = /^(approve|approved|allow|allowed|yes|ok|okay|go ahead|do it|always)\b/i;
+
+/**
+ * Standing permission, which is a different promise from "yes".
+ *
+ * Kept to one unmistakable word: a rule that outlives the conversation should
+ * never be created by a reply that merely sounded enthusiastic.
+ */
+const ALWAYS = /^(always)\b/i;
 
 export function readAnswer(
   text: string
-): { question: QuestionRow; answer: string; approves: boolean } | null {
+): { question: QuestionRow; answer: string; approves: boolean; always: boolean } | null {
   const m = /^#([a-z2-9]{4})\b[\s:,-]*([\s\S]*)$/i.exec(text.trim());
   if (!m) return null;
   const question = getQuestion(m[1].toLowerCase());
   if (!question || question.answered_at) return null;
   const answer = m[2].trim();
   if (!answer) return null;
-  return { question, answer, approves: APPROVES.test(answer) };
+  return { question, answer, approves: APPROVES.test(answer), always: ALWAYS.test(answer) };
 }
