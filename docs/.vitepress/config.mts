@@ -15,6 +15,7 @@ export default defineConfig({
     logo: "/logo.png",
     nav: [
       { text: "Guide", link: "/guide/what-is-pithagoras" },
+      { text: "People", link: "/people/" },
       { text: "Channels", link: "/channels/" },
       { text: "Reference", link: "/reference/api" },
     ],
@@ -28,10 +29,21 @@ export default defineConfig({
           { text: "Sessions", link: "/guide/sessions" },
           { text: "Slash commands", link: "/guide/commands" },
           { text: "Routines", link: "/guide/routines" },
-          { text: "People", link: "/guide/people" },
           { text: "Settings", link: "/guide/settings" },
           { text: "Extensions", link: "/guide/extensions" },
+          { text: "Prompt injection", link: "/guide/security" },
           { text: "MCP servers", link: "/guide/mcp" },
+        ],
+      },
+      {
+        text: "People",
+        items: [
+          { text: "Overview", link: "/people/" },
+          { text: "Roles", link: "/people/roles" },
+          { text: "Approvals", link: "/people/approvals" },
+          { text: "Allowed anyway", link: "/people/rules" },
+          { text: "Group chats", link: "/people/groups" },
+          { text: "Trust and its limits", link: "/people/trust" },
         ],
       },
       {
