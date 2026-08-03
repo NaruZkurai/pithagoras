@@ -27,6 +27,7 @@ import { extensionsRouter } from "./api/extensions.js";
 import { channelsRouter } from "./api/channels.js";
 import { routinesRouter } from "./api/routines.js";
 import { skillsRouter } from "./api/skills.js";
+import { syncSkillsLibrary } from "./skills/library.js";
 import { filesRouter } from "./api/files.js";
 import { routineSupervisor } from "./routines/supervisor.js";
 import { channelSupervisor } from "./channels/supervisor.js";
@@ -528,6 +529,14 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   // Schedules resume with the server; a routine due while it was down does not
   // fire retroactively, it simply waits for its next slot.
   routineSupervisor.start();
+
+  // Skills are indexed into the library so the agent searches them on demand
+  // rather than pi listing every one in the system prompt.
+  try {
+    syncSkillsLibrary();
+  } catch (e) {
+    console.error(`[portal] skill library sync failed: ${(e as Error).message}`);
+  }
 
   channelSupervisor
     .sync()

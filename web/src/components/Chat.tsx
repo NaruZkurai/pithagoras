@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { LuFolderOpen } from "react-icons/lu";
+import { LuBookOpen, LuFolderOpen } from "react-icons/lu";
 import { api, type PiCommand, type PortalEvent, type Session } from "../api";
 import { buildTranscript } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
 import { FileExplorer } from "./FileExplorer";
+import { ChatSkillsPanel } from "./ChatSkillsPanel";
 
 export function Chat({
   session,
@@ -24,6 +25,7 @@ export function Chat({
   const [sending, setSending] = useState(false);
   const [panelRequest, setPanelRequest] = useState<"model" | "effort" | null>(null);
   const [showFiles, setShowFiles] = useState(false);
+  const [showSkills, setShowSkills] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
   const running = session.status === "running";
@@ -95,6 +97,16 @@ export function Chat({
           >
             <LuFolderOpen className="h-3.5 w-3.5" />
             Files
+          </button>
+          <button
+            onClick={() => setShowSkills((v) => !v)}
+            title="Skills this chat used — read them from the library"
+            className={`flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs transition hover:bg-fg/5 ${
+              showSkills ? "text-accent" : "text-fg-muted hover:text-fg"
+            }`}
+          >
+            <LuBookOpen className="h-3.5 w-3.5" />
+            Skills
           </button>
           {session.status === "interrupted" && (
             <span className="rounded-md bg-warn/10 px-2 py-0.5 text-[11px] text-warn">
@@ -257,6 +269,10 @@ export function Chat({
           workspace={session.workspace}
           onClose={() => setShowFiles(false)}
         />
+      )}
+
+      {showSkills && (
+        <ChatSkillsPanel sessionId={session.id} onClose={() => setShowSkills(false)} />
       )}
     </div>
   );

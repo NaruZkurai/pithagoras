@@ -154,6 +154,26 @@ export function getDb(): Database.Database {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    -- The skill library. Skills live on disk but are indexed here so the agent
+    -- searches a lightweight manifest (names + descriptions) instead of pi
+    -- loading every one into the system prompt.
+    CREATE TABLE IF NOT EXISTS skills (
+      name TEXT PRIMARY KEY,
+      description TEXT NOT NULL DEFAULT '',
+      path TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Which skills a session actually used, so a chat can list them for a human.
+    CREATE TABLE IF NOT EXISTS skill_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      skill_name TEXT NOT NULL,
+      used_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_skill_usage_session ON skill_usage(session_id);
   `);
   migrate(db);
   return db;
@@ -435,4 +455,96 @@ export function setSettings(patch: Partial<GlobalSettings>): GlobalSettings {
     else clear.run(k);
   }
   return getSettings();
+}
+
+// --- skill library ---
+
+export interface SkillRow {
+  name: string;
+  description: string;
+  path: string;
+  content: string;
+  updated_at: string;
+}
+
+/** Index one skill. Content is kept for a later targeted read, not the prompt. */
+export function upsertSkill(row: {
+  name: string;
+  description: string;
+  path: string;
+  content: string;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO skills (name, description, path, content, updated_at)
+       VALUES (@name, @description, @path, @content, datetime('now'))
+       ON CONFLICT(name) DO UPDATE SET
+         description = excluded.description,
+         path = excluded.path,
+         content = excluded.content,
+         updated_at = datetime('now')`
+    )
+    .run(row);
+}
+
+export function listSkills(): SkillRow[] {
+  return getDb().prepare("SELECT * FROM skills ORDER BY name ASC").all() as SkillRow[];
+}
+
+/** Tokenise, score and rank skills against a needle. */
+function scoreSkills(needle: string): { r: SkillRow; score: number }[] {
+  // A name hit is worth more than a description hit, and a skill matching
+  // several words ranks above one matching a single word. This survives
+  // phrasing differences ("write a skill" vs "writing a new skill").
+  const tokens = (needle.toLowerCase().match(/[a-z0-9-]{2,}/g) ?? []).slice(0, 8);
+  const all = getDb().prepare("SELECT * FROM skills").all() as SkillRow[];
+  if (!tokens.length) return all.map((r) => ({ r, score: 0 }));
+  return all
+    .map((r) => {
+      const name = r.name.toLowerCase();
+      const desc = r.description.toLowerCase();
+      let score = 0;
+      for (const t of tokens) {
+        if (name.includes(t)) score += 3;
+        else if (desc.includes(t)) score += 1;
+      }
+      return { r, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.r.name.localeCompare(b.r.name));
+}
+
+/** Lightweight search — names + descriptions, never the body. */
+export function searchSkills(needle: string, limit = 5): SkillRow[] {
+  const scored = scoreSkills(needle);
+  return scored.slice(0, limit).map((x) => x.r);
+}
+
+/** How many skills match a needle, so a caller knows whether to refine. */
+export function searchSkillsCount(needle: string): number {
+  return scoreSkills(needle).length;
+}
+
+export function skillCount(): number {
+  return (getDb().prepare("SELECT COUNT(*) c FROM skills").get() as { c: number }).c;
+}
+
+/** Note that a session used a skill, so its chat can list it. */
+export function recordSkillUsage(sessionId: string, skillName: string): void {
+  getDb()
+    .prepare("INSERT INTO skill_usage (session_id, skill_name) VALUES (?, ?)")
+    .run(sessionId, skillName);
+}
+
+/** Skills a session used, joined with their library content for a human to read. */
+export function usedSkills(sessionId: string): (SkillRow & { used_at: string })[] {
+  return getDb()
+    .prepare(
+      `SELECT s.name, s.description, s.path, s.content, s.updated_at, u.used_at
+       FROM skill_usage u JOIN skills s ON s.name = u.skill_name
+       WHERE u.session_id = ?
+       GROUP BY s.name
+       ORDER BY MAX(u.used_at) DESC`
+    )
+    .all(sessionId) as (SkillRow & { used_at: string })[];
 }

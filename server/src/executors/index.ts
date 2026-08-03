@@ -60,6 +60,7 @@ export class HostExecutor implements Executor {
       sessionDir: path.join(this.sessionRoot, opts.sessionId),
       sessionFile: opts.sessionFile,
       routineTools: opts.routineTools,
+      sessionId: opts.sessionId,
       provider: opts.provider,
       modelId: opts.model,
       thinkingLevel: opts.thinkingLevel,

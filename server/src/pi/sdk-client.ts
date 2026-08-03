@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
 import { routineTools } from "./routine-tools.js";
+import { skillTools, skillHint } from "./skill-tools.js";
 
 function asArray(v: any): any[] {
   const resolved = typeof v === "function" ? v() : v;
@@ -119,6 +120,8 @@ export class SdkPiClient extends EventEmitter implements PiClient {
      * through a channel should be able to touch the schedule.
      */
     routineTools?: boolean;
+    /** The portal session this client belongs to (for usage tracking). */
+    sessionId?: string;
   }): Promise<SdkPiClient> {
     // Imported lazily so the server still boots (and the container executor
     // still works) if the SDK cannot initialise in this environment.
@@ -134,19 +137,26 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       // Both are required: the constructor resolves each and throws on
       // undefined, which previously left every session with no extensions.
       const builtinSkills = builtinSkillsDir();
+      // Inline rather than an installed package: the portal owns the data they
+      // reach, so a package would have to call back over HTTP. The skill
+      // library is searchable by every session; the routine tools stay channel
+      // only.
+      const factories: { name: string; factory: (pi: any) => void }[] = [
+        { name: "skills", factory: (pi: any) => skillTools(pi, { sessionId: opts.sessionId! }) },
+      ];
+      if (opts.routineTools) factories.push({ name: "routines", factory: routineTools });
       resourceLoader = new pi.DefaultResourceLoader({
         cwd: opts.cwd,
         agentDir: pi.getAgentDir(),
+        // The skill library lives in the database, searched on demand. pi is
+        // told not to load the agent's skills here, or hundreds would be
+        // listed in every system prompt and blow the context window.
+        noSkills: true,
         // Available everywhere without being installed, and not editable in
         // place: they belong to the image, so an edit would be lost on the next
         // deploy without saying so.
         ...(builtinSkills ? { additionalSkillPaths: [builtinSkills] } : {}),
-        // Inline rather than an installed package: the portal owns routines, so
-        // a package would have to call back over HTTP to reach the database it
-        // sits beside. Absent unless asked, so a task session never sees them.
-        ...(opts.routineTools
-          ? { extensionFactories: [{ name: "routines", factory: routineTools }] }
-          : {}),
+        ...(factories.length ? { extensionFactories: factories } : {}),
         // pi discovers one context file per directory — AGENTS.md or CLAUDE.md
         // — so the agent's own files would be invisible to it. Rather than
         // generating an AGENTS.md from them and keeping it in sync, they are
@@ -159,8 +169,9 @@ export class SdkPiClient extends EventEmitter implements PiClient {
         // presents them as reference material and the model answers "who are
         // you" from its own base identity — verified: it read a fact out of
         // MEMORY.md correctly while insisting it was Pi, made by Baidu. This
-        // says what the files are for.
-        appendSystemPrompt: framing(opts.cwd),
+        // says what the files are for. The skill hint points at the search
+        // tool instead of a wall of skill names.
+        appendSystemPrompt: [...framing(opts.cwd), skillHint()],
       });
       await resourceLoader.reload();
     } catch (e) {

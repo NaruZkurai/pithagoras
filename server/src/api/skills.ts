@@ -12,6 +12,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { piAgentDir } from "../pi-settings.js";
 import { agentHome } from "../agent.js";
+import { getSession, usedSkills } from "../db.js";
 import { builtinSkillsDir } from "../pi/sdk-client.js";
 import { isValidSlug, slugify } from "../slug.js";
 import { importFromGit, previewFromGit, readSource, type SkillSource } from "../skills/github.js";
@@ -209,6 +210,34 @@ export function skillsRouter(): Router {
     }
     return null;
   };
+
+  /** Skills a session's agent actually used, with content for a human to read. */
+  router.get("/sessions/:id/skills", (req, res) => {
+    const session = getSession(req.params.id);
+    if (!session) return res.status(404).json({ error: "Not found" });
+    res.json({
+      skills: usedSkills(session.id).map((s) => ({
+        name: s.name,
+        description: s.description,
+        content: s.content,
+        usedAt: s.used_at,
+      })),
+    });
+  });
+
+  /** Skills a session's agent actually used, with content for a human to read. */
+  router.get("/sessions/:id/skills", (req, res) => {
+    const session = getSession(req.params.id);
+    if (!session) return res.status(404).json({ error: "Not found" });
+    res.json({
+      skills: usedSkills(session.id).map((s) => ({
+        name: s.name,
+        description: s.description,
+        content: s.content,
+        usedAt: s.used_at,
+      })),
+    });
+  });
 
   router.get("/skills", async (_req, res) => {
     try {

@@ -61,6 +61,14 @@ export interface SkillDiagnostic {
   path?: string;
 }
 
+/** A skill a session's agent actually used, with content for a human to read. */
+export interface UsedSkill {
+  name: string;
+  description: string;
+  content: string;
+  usedAt: string;
+}
+
 /** Work the agent does on a schedule. */
 export interface Routine {
   id: string;
@@ -209,6 +217,9 @@ export const api = {
     }),
   deleteSkill: (name: string) =>
     json<{ ok: true }>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  /** Skills a session's agent actually used, with content to read. */
+  usedSkills: (sessionId: string) =>
+    json<{ skills: UsedSkill[] }>(`/api/sessions/${sessionId}/skills`),
 
   routines: () => json<{ routines: Routine[] }>("/api/routines"),
   createRoutine: (input: {
