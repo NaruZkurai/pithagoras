@@ -30,6 +30,8 @@ import { skillsRouter } from "./api/skills.js";
 import { syncSkillsLibrary } from "./skills/library.js";
 import { filesRouter } from "./api/files.js";
 import { threadsRouter } from "./api/threads.js";
+import { modelsRouter } from "./api/models.js";
+import { startEnabled, shutdownModelServers } from "./model-server.js";
 import { routineSupervisor } from "./routines/supervisor.js";
 import { channelSupervisor } from "./channels/supervisor.js";
 import { piSettingsPath } from "./pi-settings.js";
@@ -455,6 +457,7 @@ app.use("/api", routinesRouter());
 app.use("/api", skillsRouter());
 app.use("/api", filesRouter());
 app.use("/api", threadsRouter());
+app.use("/api", modelsRouter());
 
 // --- event stream ---
 
@@ -540,6 +543,11 @@ const server = app.listen(PORT, "0.0.0.0", () => {
     console.error(`[portal] skill library sync failed: ${(e as Error).message}`);
   }
 
+  // Model servers marked enabled come up with the portal, so the UI's toggle
+  // is what decides what's running after a restart. Ports already serving are
+  // skipped (a manually-started llama.cpp is left alone).
+  void startEnabled();
+
   channelSupervisor
     .sync()
     .then(() => console.log(`  channels: ${channelSupervisor.summary()}`))
@@ -550,6 +558,7 @@ async function shutdown(signal: string) {
   console.log(`${signal} received — stopping running sessions`);
   routineSupervisor.stop();
   await channelSupervisor.shutdown();
+  await shutdownModelServers();
   await sessions.shutdown();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 10_000).unref();

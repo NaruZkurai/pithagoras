@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { LuBookOpen, LuFolderOpen, LuMessagesSquare } from "react-icons/lu";
+import { LuBookOpen, LuFolderOpen, LuMessagesSquare, LuSquare } from "react-icons/lu";
 import { api, type PiCommand, type PortalEvent, type Session, type Thread } from "../api";
 import { buildTranscript, type Item } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
@@ -150,14 +150,15 @@ export function Chat({
               interrupted — send a message to resume
             </span>
           )}
-          {running && (
-            <button
-              onClick={onAbort}
-              className="rounded-lg border border-line px-2.5 py-1 text-xs text-fg-muted transition hover:bg-fg/5 hover:text-fg"
-            >
-              Stop
-            </button>
-          )}
+          <button
+            onClick={onAbort}
+            disabled={!running}
+            title={running ? "Stop the agent mid-task" : "Agent is idle"}
+            className="flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs text-fg-muted transition hover:bg-fg/5 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <LuSquare className="h-3 w-3" />
+            Stop agent
+          </button>
         </div>
         </div>
       </header>

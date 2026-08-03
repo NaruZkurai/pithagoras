@@ -69,6 +69,30 @@ export interface UsedSkill {
   usedAt: string;
 }
 
+/** A llama.cpp server the portal can launch / stop from the UI. */
+export interface ModelServer {
+  name: string;
+  bin: string;
+  model: string;
+  alias: string;
+  port: number;
+  ngl: number;
+  ctx: number;
+  threads: number;
+  parallel: number;
+  no_kv_offload: number;
+  extra_args: string;
+  enabled: number;
+  status: {
+    name: string;
+    port: number;
+    running: boolean;
+    healthy: boolean;
+    managed: boolean;
+    pid: number | null;
+  };
+}
+
 /** Work the agent does on a schedule. */
 export interface Routine {
   id: string;
@@ -259,6 +283,37 @@ export const api = {
   /** Skills a session's agent actually used, with content to read. */
   usedSkills: (sessionId: string) =>
     json<{ skills: UsedSkill[] }>(`/api/sessions/${sessionId}/skills`),
+
+  // Model servers — launch / stop llama.cpp from the UI.
+  modelServers: () => json<{ servers: ModelServer[] }>("/api/models/servers"),
+  saveModelServer: (input: {
+    name: string;
+    bin?: string;
+    model?: string;
+    alias?: string;
+    port?: number;
+    ngl?: number;
+    ctx?: number;
+    threads?: number;
+    parallel?: number;
+    no_kv_offload?: boolean;
+    extra_args?: string;
+    enabled?: boolean;
+  }) =>
+    json<{ ok: true; server?: ModelServer }>("/api/models/servers", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  startModelServer: (name: string) =>
+    json<{ ok: true }>(`/api/models/servers/${encodeURIComponent(name)}/start`, {
+      method: "POST",
+    }),
+  stopModelServer: (name: string) =>
+    json<{ ok: true }>(`/api/models/servers/${encodeURIComponent(name)}/stop`, {
+      method: "POST",
+    }),
+  deleteModelServer: (name: string) =>
+    json<{ ok: true }>(`/api/models/servers/${encodeURIComponent(name)}`, { method: "DELETE" }),
 
   routines: () => json<{ routines: Routine[] }>("/api/routines"),
   createRoutine: (input: {

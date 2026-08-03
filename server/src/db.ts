@@ -211,6 +211,26 @@ export function getDb(): Database.Database {
       confirmed_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_confirmations_time ON confirmations(confirmed_at);
+
+    -- llama.cpp model servers the portal can launch / stop from the UI. The
+    -- main one (port 8080) is what pi talks to; others (e.g. the rank model)
+    -- can be added and managed the same way.
+    CREATE TABLE IF NOT EXISTS model_servers (
+      name TEXT PRIMARY KEY,
+      bin TEXT NOT NULL,
+      model TEXT NOT NULL,
+      alias TEXT NOT NULL DEFAULT '',
+      port INTEGER NOT NULL DEFAULT 8080,
+      ngl INTEGER NOT NULL DEFAULT 0,
+      ctx INTEGER NOT NULL DEFAULT 2048,
+      threads INTEGER NOT NULL DEFAULT 12,
+      parallel INTEGER NOT NULL DEFAULT 2,
+      no_kv_offload INTEGER NOT NULL DEFAULT 1,
+      extra_args TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
   migrate(db);
   return db;
@@ -708,3 +728,61 @@ export function usedSkills(sessionId: string): (SkillRow & { used_at: string })[
     )
     .all(sessionId) as (SkillRow & { used_at: string })[];
 }
+
+// --- model servers (llama.cpp launched/stopped from the UI) ---
+
+export interface ModelServerRow {
+  name: string;
+  bin: string;
+  model: string;
+  alias: string;
+  port: number;
+  ngl: number;
+  ctx: number;
+  threads: number;
+  parallel: number;
+  no_kv_offload: number;
+  extra_args: string;
+  enabled: number;
+}
+
+export function listModelServers(): ModelServerRow[] {
+  return getDb().prepare("SELECT * FROM model_servers ORDER BY port ASC").all() as ModelServerRow[];
+}
+
+export function getModelServer(name: string): ModelServerRow | undefined {
+  return getDb().prepare("SELECT * FROM model_servers WHERE name = ?").get(name) as
+    | ModelServerRow
+    | undefined;
+}
+
+/** Insert or replace a model server config. */
+export function upsertModelServer(
+  s: Omit<ModelServerRow, "created_at"> & { created_at?: string }
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO model_servers
+        (name, bin, model, alias, port, ngl, ctx, threads, parallel, no_kv_offload, extra_args, enabled, updated_at)
+       VALUES (@name, @bin, @model, @alias, @port, @ngl, @ctx, @threads, @parallel, @no_kv_offload, @extra_args, @enabled, datetime('now'))
+       ON CONFLICT(name) DO UPDATE SET
+         bin = excluded.bin,
+         model = excluded.model,
+         alias = excluded.alias,
+         port = excluded.port,
+         ngl = excluded.ngl,
+         ctx = excluded.ctx,
+         threads = excluded.threads,
+         parallel = excluded.parallel,
+         no_kv_offload = excluded.no_kv_offload,
+         extra_args = excluded.extra_args,
+         enabled = excluded.enabled,
+         updated_at = datetime('now')`
+    )
+    .run(s);
+}
+
+export function deleteModelServer(name: string): void {
+  getDb().prepare("DELETE FROM model_servers WHERE name = ?").run(name);
+}
+

@@ -26,6 +26,9 @@ export CHANNELS_DIR="${CHANNELS_DIR:-$PWD/data/channels}"
 export PI_PROVIDER="${PI_PROVIDER:-local}"
 export PI_MODEL="${PI_MODEL:-gemma-4}"
 export LLAMA_BASE_URL="${LLAMA_BASE_URL:-http://127.0.0.1:8080}"
+# npm puts the pi CLI shim (and friends) here; make them visible to the portal
+# so extension listing etc. can find them.
+export PATH="$PWD/node_modules/.bin:$PATH"
 # Dedicated tiny model for ranking candidate skills (see serve-rank-model.sh).
 export LLAMA_RANK_BASE_URL="${LLAMA_RANK_BASE_URL:-http://127.0.0.1:8081}"
 export PI_RANK_MODEL="${PI_RANK_MODEL:-bonsai-1.7b}"
