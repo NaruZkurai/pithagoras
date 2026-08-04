@@ -284,9 +284,13 @@ return {
 
   // Optional. Send without being asked — a routine's report, an answer coming
   // back later. A transport that can only fill in a response it already has
-  // open, like a webhook without a callback URL, omits this and is never
-  // offered as a destination.
-  async send(target, text) { /* … */ },
+  // open, like a webhook without a callback URL, omits this.
+  //
+  // options, when present, are one-tap replies: each carries exactly the
+  // message that would have been typed. Draw them as buttons if your platform
+  // has buttons and ignore them if it does not — the text is the protocol
+  // either way.
+  async send(target, text, options) { /* [{ label, reply }] */ },
 
   // Optional. Render a question the way this platform renders questions, and
   // capture the answer.
@@ -313,3 +317,23 @@ The Telegram package shows the shape: an inline keyboard for `select` and
 bytes, the button carries an index rather than the option itself, and the
 message is edited afterwards to show what was chosen — so the chat reads as a
 record of the decision rather than a question nobody answered.
+
+## When a channel cannot be spoken to
+
+Omitting `send` is not a dead end. A message meant for that conversation is held
+and goes out with the reply to whatever is said next, so an answer is late
+rather than lost. The portal reports which happened, and tells whoever is
+waiting.
+
+A webhook can opt into being spoken to by taking a **callback URL**: the portal
+POSTs `{session, message}` there, and the conversation becomes two-way.
+
+## Identity
+
+Pass `from: { id, name }` on `ctx.ask` — the platform's own id, never a display
+name. Without it every message is anonymous, which means it cannot be attributed
+to anybody in the [roster](/people/) and will be refused once a primary user is
+named.
+
+A webhook can pin its identity in config instead, so the secret is one person's
+credential rather than a licence to claim any name.

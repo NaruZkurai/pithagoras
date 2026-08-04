@@ -8,6 +8,66 @@ import { FileExplorer } from "./FileExplorer";
 import { ChatSkillsPanel } from "./ChatSkillsPanel";
 import { ThreadsPanel } from "./ThreadsPanel";
 
+/**
+ * Context the portal attaches to a message, and what to call it.
+ *
+ * The agent needs to be told who is speaking and what it said while nobody was
+ * talking to it. A person reading the transcript does not — they wrote the
+ * message, so seeing their own words buried under three framing blocks is
+ * noise. Folded away rather than dropped: it is still what the model saw, and
+ * when a reply looks strange this is usually why.
+ */
+/** Keep in step with what the server attaches — see channels/supervisor.ts. */
+const CONTEXT_BLOCKS: { tag: string; label: string }[] = [
+  { tag: "speaker", label: "Speaker" },
+  { tag: "sent-since-you-last-spoke", label: "Sent while idle" },
+  { tag: "answer-from-primary", label: "Answer" },
+  { tag: "channel-instructions", label: "Channel instructions" },
+  { tag: "routine", label: "Routine" },
+];
+
+function splitContext(raw: string): { text: string; blocks: { label: string; body: string }[] } {
+  let text = raw;
+  const blocks: { label: string; body: string }[] = [];
+  for (const { tag, label } of CONTEXT_BLOCKS) {
+    // The opening tag may carry attributes, as <routine name="..."> does.
+    const re = new RegExp(`<${tag}(\\s[^>]*)?>[\\s\\S]*?</${tag}>`, "g");
+    text = text.replace(re, (match) => {
+      const body = match
+        .replace(new RegExp(`^<${tag}(\\s[^>]*)?>`), "")
+        .replace(new RegExp(`</${tag}>$`), "")
+        .trim();
+      if (body) blocks.push({ label, body });
+      return "";
+    });
+  }
+  return { text: text.trim(), blocks };
+}
+
+function ContextChip({ label, body }: { label: string; body: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`rounded-full px-2 py-0.5 text-[11px] transition ${
+          open
+            ? "bg-accent/20 text-accent"
+            : "bg-fg/5 text-fg-faint hover:bg-fg/10 hover:text-fg-muted"
+        }`}
+        title="Context the portal attached to this message"
+      >
+        {label}
+      </button>
+      {open && (
+        <pre className="mt-1 w-full whitespace-pre-wrap rounded-lg bg-fg/5 p-2 text-left text-[11px] leading-relaxed text-fg-muted">
+          {body}
+        </pre>
+      )}
+    </>
+  );
+}
+
 export function Chat({
   session,
   events,
@@ -197,6 +257,18 @@ export function Chat({
         {items.map((item) => {
           if (item.kind === "user") {
             const noResponse = !running && unanswered.has(item.id);
+            const { text, blocks } = splitContext(item.text);
+            // Nothing but framing: the portal spoke, not a person. Drawing it as
+            // a message bubble with no message in it reads as something broken.
+            if (!text) {
+              return (
+                <div key={item.id} className="flex flex-wrap justify-end gap-1">
+                  {blocks.map((b, i) => (
+                    <ContextChip key={i} label={b.label} body={b.body} />
+                  ))}
+                </div>
+              );
+            }
             return (
               <div key={item.id} className="group flex justify-end gap-2">
                 <button
@@ -206,8 +278,15 @@ export function Chat({
                 >
                   <LuMessagesSquare className="h-3.5 w-3.5" />
                 </button>
-                <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-accent/10 px-3.5 py-2 text-sm text-fg ring-1 ring-inset ring-accent/15">
-                  {item.text}
+                <div className="max-w-[80%] rounded-2xl rounded-br-md bg-accent/10 px-3.5 py-2 text-sm text-fg ring-1 ring-inset ring-accent/15">
+                  <div className="whitespace-pre-wrap">{text}</div>
+                  {blocks.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap justify-end gap-1">
+                      {blocks.map((b, i) => (
+                        <ContextChip key={i} label={b.label} body={b.body} />
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {noResponse && (
                   <button
@@ -234,7 +313,9 @@ export function Chat({
                 )}
                 {item.text && (
                   <div className="md text-sm leading-relaxed text-fg">
-                    <ReactMarkdown>{item.text}</ReactMarkdown>
+                    {/* A reasoning model sometimes closes a thought inside the
+                        answer; the stray tag is noise to whoever is reading. */}
+                    <ReactMarkdown>{item.text.replace(/<\/?think(ing)?>/gi, "")}</ReactMarkdown>
                   </div>
                 )}
                 <button

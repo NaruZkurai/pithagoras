@@ -33,7 +33,17 @@ export interface LoadedChannel extends ChannelManifest {
   start?: (ctx: unknown) => Promise<{
     stop: () => Promise<void> | void;
     /** Optional. A transport that can only answer, like a webhook, omits it. */
-    send?: (target: string, text: string) => Promise<void> | void;
+    send?: (
+      target: string,
+      text: string,
+      /**
+       * Optional one-tap replies. Each is exactly the message that would be
+       * typed, so a channel that renders them as buttons and one that ignores
+       * them entirely behave identically — the text protocol stays the only
+       * protocol, and buttons are presentation over it.
+       */
+      options?: { label: string; reply: string }[]
+    ) => Promise<void> | void;
     /**
      * Optional. Render a question the way this platform renders questions —
      * Telegram has buttons, Slack has blocks — and capture the answer.

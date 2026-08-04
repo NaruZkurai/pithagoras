@@ -149,8 +149,8 @@ export class SdkPiClient extends EventEmitter implements PiClient {
      * tool, so a run with nobody watching can still reach someone.
      */
     routineSlug?: string | null;
-    /** The role of whoever is speaking right now — read at each tool call. */
-    roleNow?: () => string;
+    /** Whoever is speaking right now — read at each tool call. */
+    whoNow?: () => { role: string; key?: string };
     /** Lowest role this conversation serves, deciding which context files load. */
     role?: string;
   }): Promise<SdkPiClient> {
@@ -177,7 +177,10 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       ];
       // Every session, unconditionally: the point is to limit what a turn can do
       // after it reads something untrusted, and any session can read something.
-      factories.push({ name: "guard", factory: guardExtension(opts.sessionDir, opts.roleNow ?? (() => "primary")) });
+      factories.push({
+        name: "guard",
+        factory: guardExtension(opts.sessionDir, opts.whoNow ?? (() => ({ role: "primary" })), opts.sessionId),
+      });
       if (opts.routineTools)
         factories.push({ name: "routines", factory: routineTools(opts.sessionId) });
       if (opts.threadId) {

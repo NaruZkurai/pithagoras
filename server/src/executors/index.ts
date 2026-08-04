@@ -23,8 +23,8 @@ export interface LaunchOptions {
   routineSlug?: string | null;
   /** Lowest role the conversation serves; decides which context files load. */
   role?: string;
-  /** Live role of whoever is speaking, read at each tool call. */
-  roleNow?: () => string;
+  /** Whoever is speaking, read at each tool call. */
+  whoNow?: () => { role: string; key?: string };
 }
 
 export interface Executor {
@@ -72,7 +72,7 @@ export class HostExecutor implements Executor {
       threadId: opts.threadId,
       routineSlug: opts.routineSlug,
       role: opts.role,
-      roleNow: opts.roleNow,
+      whoNow: opts.whoNow,
       provider: opts.provider,
       modelId: opts.model,
       thinkingLevel: opts.thinkingLevel,

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { listToolRules, type ToolRule } from "../db.js";
+import { listToolRules, useGrant, type ToolRule } from "../db.js";
 
 /**
  * A blast-radius limiter for prompt injection.
@@ -174,7 +174,13 @@ const subjectOf = (toolName: string, input: Record<string, unknown>) =>
  */
 const STDERR_IDIOM = /\s+2>(&1|\/dev\/null)$/;
 
-export function ruleAllows(rules: ToolRule[], role: string, toolName: string, input: Record<string, unknown>): boolean {
+export function ruleAllows(
+  rules: ToolRule[],
+  role: string,
+  toolName: string,
+  input: Record<string, unknown>,
+  personKey?: string
+): boolean {
   let subject = subjectOf(toolName, input).trim();
   if (!subject) return false;
   if (toolName === "bash") subject = subject.replace(STDERR_IDIOM, "").trim();
@@ -182,13 +188,20 @@ export function ruleAllows(rules: ToolRule[], role: string, toolName: string, in
   return rules.some(
     (r) =>
       (r.role === role || r.role === "all") &&
+      // A rule naming somebody applies to them alone: approving Priya's request
+      // must not quietly permit the same command for every colleague.
+      (!r.person_key || r.person_key === personKey) &&
       r.tool === toolName &&
       globToRegExp(r.pattern).test(subject)
   );
 }
 
 /** An ExtensionFactory — see pi's InlineExtension. One instance per session. */
-export function guardExtension(sessionId: string, roleNow: () => string = () => "primary") {
+export function guardExtension(
+  sessionId: string,
+  whoNow: () => { role: string; key?: string } = () => ({ role: "primary" }),
+  portalSessionId?: string
+) {
   return (pi: any): void => {
     // Per session, not global: a taint belongs to the conversation that read the
     // content, and this factory runs once per session.
@@ -215,11 +228,20 @@ export function guardExtension(sessionId: string, roleNow: () => string = () => 
     });
 
     pi.on("tool_call", (event: any) => {
-      const role = roleNow();
+      const { role, key } = whoNow();
+      // A one-off approval, spent here. Checked last, after the standing rules,
+      // because it is the expensive kind of permission: somebody was asked.
+      const granted = () =>
+        Boolean(
+          portalSessionId &&
+            useGrant(portalSessionId, event.toolName, subjectOf(event.toolName, event.input ?? {}).trim())
+        );
+
       if (
         role !== "primary" &&
         !READ_ONLY.has(event.toolName) &&
-        !ruleAllows(listToolRules(), role, event.toolName, event.input ?? {})
+        !ruleAllows(listToolRules(), role, event.toolName, event.input ?? {}, key) &&
+        !granted()
       ) {
         console.warn(`[guard ${sessionId}] blocked ${event.toolName}: role ${role}`);
         return {
@@ -230,7 +252,9 @@ export function guardExtension(sessionId: string, roleNow: () => string = () => 
             `plus anything explicitly allowed for this role — and an allowed command must be ` +
             `run on its own, exactly as permitted: a pipe, a redirect, a semicolon or a second ` +
             `command makes it something else and it is refused. Tell them plainly that this ` +
-            `needs the primary user, and pass the request along. Do not look for another route.`,
+            `needs the primary user, and pass the request along — with the exact command as the ` +
+            `action, so they can approve that and only that. If you have already asked about ` +
+            `this, do not ask again: say you are waiting.`,
         };
       }
 

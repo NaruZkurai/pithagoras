@@ -21,6 +21,18 @@ import {
 } from "./db.js";
 import { ensureMainModelServer } from "./model-server.js";
 
+/**
+ * Thinking markers that escape into the answer.
+ *
+ * A reasoning model sometimes closes a thought inside the text it means to say,
+ * and a stray </think> then travels to whoever is reading — a chat window, a
+ * Telegram message. Stripped where the text leaves the portal rather than in
+ * the stored events, so the record of what the model actually produced stays
+ * intact.
+ */
+export const stripThinkingMarkers = (text: string): string =>
+  text.replace(/<\/?think(ing)?>/gi, "").trim();
+
 /** Mirrors what the web transcript shows, so a chat and the UI agree. */
 function summarizeToolInput(p: any): string | undefined {
   const input = p.input ?? p.args ?? p.parameters;
@@ -162,7 +174,7 @@ class SessionManager extends EventEmitter {
       // The session's settled role picks the context files; the live one gates
       // each tool call, so a group conversation follows whoever is speaking.
       role: session.role,
-      roleNow: () => this.speakerRole(sessionId),
+      whoNow: () => ({ role: this.speakerRole(sessionId), key: this.speakerKey(sessionId) }),
     });
 
     // pi writes the file lazily, so it usually does not exist yet at launch.
@@ -561,6 +573,11 @@ class SessionManager extends EventEmitter {
     if (live) return live.role;
     const row = getSession(sessionId);
     return (row?.role as Role) ?? "guest";
+  }
+
+  /** Who is speaking, surviving a restart via the session's own record. */
+  speakerKey(sessionId: string): string | undefined {
+    return this.speaker.get(sessionId)?.key ?? getSession(sessionId)?.last_person_key ?? undefined;
   }
 
   currentSpeaker(sessionId: string): PersonRow | undefined {

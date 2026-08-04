@@ -356,22 +356,24 @@ export const api = {
 
   people: () => json<{ people: Person[] }>("/api/people"),
   toolRules: () => json<{ rules: ToolRule[] }>("/api/tool-rules"),
-  addToolRule: (rule: { role: string; tool: string; pattern: string; note?: string }) =>
+  addToolRule: (rule: {
+    role: string;
+    tool: string;
+    pattern: string;
+    note?: string;
+    /** Narrows the rule to one person; omitted, it applies to the whole role. */
+    personKey?: string;
+  }) =>
     json<{ rules: ToolRule[] }>("/api/tool-rules", {
       method: "POST",
       body: JSON.stringify(rule),
     }),
   deleteToolRule: (id: string) =>
     json<{ rules: ToolRule[] }>(`/api/tool-rules/${id}`, { method: "DELETE" }),
-  setPersonRole: (key: string, role: Role) =>
+  updatePerson: (key: string, patch: { name?: string; role?: Role; notes?: string }) =>
     json<{ person: Person }>(`/api/people/${encodeURIComponent(key)}`, {
       method: "PATCH",
-      body: JSON.stringify({ role }),
-    }),
-  setPersonNotes: (key: string, notes: string) =>
-    json<{ person: Person }>(`/api/people/${encodeURIComponent(key)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ notes }),
+      body: JSON.stringify(patch),
     }),
   forgetPerson: (key: string) =>
     json<{ ok: true }>(`/api/people/${encodeURIComponent(key)}`, { method: "DELETE" }),
@@ -799,6 +801,9 @@ export interface ToolRule {
   role: string;
   tool: string;
   pattern: string;
+  /** Set when the rule is for one person rather than a whole role. */
+  person_key: string | null;
+  person_name: string | null;
   note: string;
   created_at: string;
 }

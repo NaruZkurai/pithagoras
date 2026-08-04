@@ -25,6 +25,9 @@ export interface QuestionRow {
   asked_at: string;
   answered_at: string | null;
   answer: string | null;
+  /** Set when the agent is asking permission rather than an opinion. */
+  action_tool: string | null;
+  action: string | null;
 }
 
 const ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789";
@@ -53,13 +56,16 @@ export function askQuestion(input: {
   channelSlug: string;
   channelKey: string;
   question: string;
+  actionTool?: string | null;
+  action?: string | null;
 }): QuestionRow {
   const id = freeId();
   getDb()
     .prepare(
       `INSERT INTO questions
-         (id, session_id, person_key, person_name, channel_slug, channel_key, question)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+         (id, session_id, person_key, person_name, channel_slug, channel_key, question,
+          action_tool, action)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -68,7 +74,9 @@ export function askQuestion(input: {
       input.personName,
       input.channelSlug,
       input.channelKey,
-      input.question
+      input.question,
+      input.action ? (input.actionTool || "bash") : null,
+      input.action || null
     );
   return getQuestion(id)!;
 }
@@ -94,11 +102,31 @@ export function recordAnswer(id: string, answer: string): void {
  * actually waiting, so "#tea break in 5" reaches the agent as a message rather
  * than being swallowed as an answer to something.
  */
-export function readAnswer(text: string): { question: QuestionRow; answer: string } | null {
+/**
+ * Approval has to be a word, not a mood.
+ *
+ * "sounds fine to me" is an opinion; only these grant anything. Anything else
+ * is relayed as an ordinary answer and authorises nothing, so an ambiguous
+ * reply can never be read as a yes.
+ */
+const APPROVES = /^(approve|approved|allow|allowed|yes|ok|okay|go ahead|do it|always)\b/i;
+
+/**
+ * Standing permission, which is a different promise from "yes".
+ *
+ * Kept to one unmistakable word: a rule that outlives the conversation should
+ * never be created by a reply that merely sounded enthusiastic.
+ */
+const ALWAYS = /^(always)\b/i;
+
+export function readAnswer(
+  text: string
+): { question: QuestionRow; answer: string; approves: boolean; always: boolean } | null {
   const m = /^#([a-z2-9]{4})\b[\s:,-]*([\s\S]*)$/i.exec(text.trim());
   if (!m) return null;
   const question = getQuestion(m[1].toLowerCase());
   if (!question || question.answered_at) return null;
   const answer = m[2].trim();
-  return answer ? { question, answer } : null;
+  if (!answer) return null;
+  return { question, answer, approves: APPROVES.test(answer), always: ALWAYS.test(answer) };
 }

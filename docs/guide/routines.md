@@ -42,6 +42,16 @@ A destination is a conversation that already exists — you pick "telegram —
 Anirban Kar", not a chat id. Only channels that can start a conversation appear;
 a webhook cannot, because it only ever answers a request that is already open.
 
+A routine created from a chat reports back **into that chat** — asking for a
+morning summary in Telegram means "tell me here". The portal-wide default
+applies to routines created any other way, and to conversations whose channel
+cannot be messaged out of the blue.
+
+What a routine says into a conversation becomes part of it. Ask "what did you
+mean by that?" the next morning and the agent knows what "that" was, because the
+report is folded into the conversation's next turn rather than only being
+delivered.
+
 ::: tip Silence is a result
 The agent is told to skip the report when a run was uneventful. A report that
 says nothing happened trains you to ignore the next one — and the next one might

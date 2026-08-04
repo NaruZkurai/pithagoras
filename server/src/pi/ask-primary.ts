@@ -4,6 +4,7 @@ import { unscopeKey } from "../agent.js";
 import { askQuestion } from "../questions.js";
 import { channelSupervisor } from "../channels/supervisor.js";
 import { sessions } from "../session-manager.js";
+import { getPerson } from "../people.js";
 
 /**
  * Reaching the primary user from a conversation that is not theirs.
@@ -33,6 +34,18 @@ export function askPrimaryTool(sessionId: string) {
             "The question, written for someone who cannot see this conversation: who is asking, " +
             "what they want, and what you would do if they said yes.",
         }),
+        action: Type.Optional(
+          Type.String({
+            description:
+              "When you are asking permission to do one specific thing, the exact thing — the " +
+              "shell command verbatim, or the path you would write. Approving authorises this " +
+              "and nothing else, so it must be exactly what you intend to run, once. Leave it " +
+              "out when you are asking for a decision rather than permission.",
+          })
+        ),
+        actionTool: Type.Optional(
+          Type.String({ description: "The tool the action belongs to. Defaults to bash." })
+        ),
       }),
       async execute(_id: string, p: any) {
         const question = String(p.question ?? "").trim();
@@ -63,7 +76,9 @@ export function askPrimaryTool(sessionId: string) {
         // promise changes — only the timing does.
         const immediate = channelSupervisor.canSend(session.channel_slug);
 
-        const who = sessions.currentSpeaker(sessionId);
+        const who =
+          sessions.currentSpeaker(sessionId) ??
+          (session.last_person_key ? getPerson(session.last_person_key) : undefined);
         const row = askQuestion({
           sessionId,
           personKey: who?.key ?? "unknown",
@@ -71,6 +86,8 @@ export function askPrimaryTool(sessionId: string) {
           channelSlug: session.channel_slug,
           channelKey: unscopeKey(session.channel_slug, session.channel_key),
           question,
+          actionTool: typeof p.actionTool === "string" ? p.actionTool : "bash",
+          action: typeof p.action === "string" && p.action.trim() ? p.action.trim() : null,
         });
 
         try {
@@ -78,8 +95,24 @@ export function askPrimaryTool(sessionId: string) {
             to.channel,
             to.target,
             `${row.person_name} is asking (via ${session.channel_slug}):\n\n${question}\n\n` +
-              `Reply with "#${row.id} <your answer>" and I will pass it back to them.` +
-              (immediate ? "" : ` That channel cannot be messaged out of the blue, so they will see it the next time they write.`)
+              (row.action
+                ? `It wants to run, exactly once:\n\n    ${row.action}\n\n` +
+                  `Approving runs that and nothing else.\n\n`
+                : "") +
+              (row.action
+                ? `Reply "#${row.id} approve" for this once, "#${row.id} always" to permit it from ` +
+                  `now on, or "#${row.id} no".`
+                : `Reply with "#${row.id} <your answer>" and I will pass it back to them.`) +
+              (immediate ? "" : ` That channel cannot be messaged out of the blue, so they will see it the next time they write.`),
+            // Only where there is something to approve. A question wanting an
+            // opinion needs words, and two buttons would be pretending it does not.
+            row.action
+              ? [
+                  { label: "Approve once", reply: `#${row.id} approve` },
+                  { label: "Always allow", reply: `#${row.id} always` },
+                  { label: "Deny", reply: `#${row.id} no` },
+                ]
+              : undefined
           );
         } catch (e) {
           return { output: `Could not reach them: ${(e as Error).message}`, isError: true };
