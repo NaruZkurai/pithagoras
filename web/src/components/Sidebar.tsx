@@ -3,6 +3,7 @@ import { Tooltip } from "./Tooltip";
 import {
   LuBot,
   LuClock,
+  LuFolder,
   LuMessagesSquare,
   LuPin,
   LuPinOff,
@@ -66,7 +67,7 @@ export function Sidebar({
   executor: string;
   activeId: string | null;
   /** Which top-level destination is showing, so the nav can mark it. */
-  view: "chat" | "sessions" | "agent" | "routines";
+  view: "chat" | "sessions" | "agent" | "routines" | "files";
   modelState: ServerState;
   onSelect: (id: string) => void;
   onCreate: (workspacePath: string) => Promise<void>;
@@ -76,7 +77,7 @@ export function Sidebar({
   onCreateWorkspace: (name: string) => Promise<Workspace>;
   onOpenSettings: () => void;
   onOpenModels: () => void;
-  onNavigate: (to: "sessions" | "agent" | "routines") => void;
+  onNavigate: (to: "sessions" | "agent" | "routines" | "files") => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [choice, setChoice] = useState<string>(NEW);
@@ -177,6 +178,12 @@ export function Sidebar({
           onClick={() => onNavigate("routines")}
           active={view === "routines"}
           tip="Scheduled tasks — tell pi what to do and on what cron schedule, then leave it alone."
+        />
+        <NavItem
+          icon={<LuFolder />}
+          label="Files"
+          onClick={() => onNavigate("files")}
+          active={view === "files"}
         />
 
         {creating && (

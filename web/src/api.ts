@@ -199,9 +199,17 @@ export interface WorkspaceEntry {
   mtime: string;
 }
 
-/** A file read for the explorer preview. */
+/** One entry in the Files-page workspace listing. */
+export interface FileEntry {
+  name: string;
+  type: "dir" | "file";
+  size: number;
+  mtime: number;
+}
+
+/** A file read for preview/editing (path only set by the session explorer). */
 export interface FileContent {
-  path: string;
+  path?: string;
   content?: string;
   binary?: boolean;
   size: number;
@@ -561,6 +569,29 @@ export const api = {
     }),
   updatePackages: () =>
     json<{ ok: true; output: string }>("/api/packages/update", { method: "POST" }),
+
+  workspaceListFiles: (workspace: string, dirPath: string) =>
+    json<{ path: string; entries: FileEntry[] }>(
+      `/api/workspaces/${encodeURIComponent(workspace)}/files?path=${encodeURIComponent(dirPath)}`
+    ),
+  workspaceReadFile: (workspace: string, filePath: string) =>
+    json<FileContent>(
+      `/api/workspaces/${encodeURIComponent(workspace)}/file?path=${encodeURIComponent(filePath)}`
+    ),
+  saveFile: (workspace: string, filePath: string, content: string) =>
+    json<{ ok: true; size: number; mtime: number }>(
+      `/api/workspaces/${encodeURIComponent(workspace)}/file?path=${encodeURIComponent(filePath)}`,
+      { method: "PUT", body: JSON.stringify({ content }) }
+    ),
+  deleteFile: (workspace: string, filePath: string) =>
+    json<{ ok: true }>(
+      `/api/workspaces/${encodeURIComponent(workspace)}/file?path=${encodeURIComponent(filePath)}`,
+      { method: "DELETE" }
+    ),
+  fileDownloadUrl: (workspace: string, filePath: string) =>
+    `/api/workspaces/${encodeURIComponent(workspace)}/file?path=${encodeURIComponent(filePath)}&download=1`,
+  archiveDownloadUrl: (workspace: string) =>
+    `/api/workspaces/${encodeURIComponent(workspace)}/archive`,
 };
 
 export interface PiModel {
