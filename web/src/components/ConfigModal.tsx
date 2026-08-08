@@ -7,6 +7,7 @@ import {
   LuDownload,
   LuExternalLink,
   LuFileJson,
+  LuDatabase,
   LuPlug,
   LuPuzzle,
   LuRadio,
@@ -24,10 +25,20 @@ import { SkillsPanel } from "./SkillsPanel";
 import { ModelServersPanel } from "./ModelServersPanel";
 import { McpPanel } from "./McpPanel";
 import { PeoplePanel } from "./PeoplePanel";
+import { NKToolsPanel } from "./NKToolsPanel";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 import { Modal } from "./Modal";
 
-export type Tab = "general" | "channels" | "people" | "skills" | "models" | "mcp" | "extensions" | "advanced";
+export type Tab =
+  | "general"
+  | "channels"
+  | "people"
+  | "skills"
+  | "models"
+  | "mcp"
+  | "nktools"
+  | "extensions"
+  | "advanced";
 
 /** Either a fixed tab or one extension's own configuration page. */
 type Nav = { kind: "tab"; id: Tab } | { kind: "ext"; spec: string };
@@ -68,6 +79,12 @@ const TABS: { id: Tab; label: string; icon: ReactNode; hint: string }[] = [
     label: "MCP",
     icon: <LuPlug />,
     hint: "Servers the agent can pull tools from",
+  },
+  {
+    id: "nktools",
+    label: "NK Tools",
+    icon: <LuDatabase />,
+    hint: "Memory hub status and stashed conversations",
   },
   { id: "extensions", label: "Extensions", icon: <LuBlocks />, hint: "Install and manage packages" },
   { id: "advanced", label: "Advanced", icon: <LuFileJson />, hint: "pi's raw settings file" },
@@ -166,6 +183,7 @@ export function ConfigModal({
       {nav.kind === "tab" && nav.id === "skills" && <SkillsPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "models" && <ModelServersPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "mcp" && <McpPanel onError={setError} />}
+      {nav.kind === "tab" && nav.id === "nktools" && <NKToolsPanel onError={setError} />}
       {nav.kind === "tab" && nav.id === "extensions" && (
         <ExtensionsPanel
           extensions={extensions}

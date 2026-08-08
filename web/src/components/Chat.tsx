@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { LuBookOpen, LuFolderOpen, LuMessagesSquare, LuRotateCcw, LuSquare } from "react-icons/lu";
+import { LuArchive, LuBookOpen, LuFolderOpen, LuMessagesSquare, LuRotateCcw, LuSquare } from "react-icons/lu";
 import { api, type PiCommand, type PortalEvent, type Session, type Thread } from "../api";
 import { buildTranscript, type Item } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
@@ -89,6 +89,7 @@ export function Chat({
   const [showSkills, setShowSkills] = useState(false);
   const [thread, setThread] = useState<Thread | null>(null);
   const [threadError, setThreadError] = useState<string | null>(null);
+  const [stashError, setStashError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
   const running = session.status === "running";
@@ -119,6 +120,26 @@ export function Chat({
       setThread(t);
     } catch (e) {
       setThreadError((e as Error).message);
+    }
+  };
+
+  /**
+   * Stash the whole conversation into a thread on this message (and push it
+   * to the memory hub), then continue the conversation in that thread.
+   */
+  const stashMessage = async (item: Item) => {
+    if (item.kind === "tool" || item.kind === "notice") return;
+    setShowFiles(false);
+    setStashError(null);
+    try {
+      const { thread } = await api.stashSession(session.id, {
+        seq: Number(item.id.slice(1)),
+        role: item.kind === "user" ? "user" : "assistant",
+        text: item.text,
+      });
+      setThread(thread);
+    } catch (e) {
+      setStashError((e as Error).message);
     }
   };
 
@@ -278,6 +299,13 @@ export function Chat({
                 >
                   <LuMessagesSquare className="h-3.5 w-3.5" />
                 </button>
+                <button
+                  onClick={() => stashMessage(item)}
+                  title="Stash the conversation into a thread on this message and push it to memory"
+                  className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                >
+                  <LuArchive className="h-3.5 w-3.5" />
+                </button>
                 <div className="max-w-[80%] rounded-2xl rounded-br-md bg-accent/10 px-3.5 py-2 text-sm text-fg ring-1 ring-inset ring-accent/15">
                   <div className="whitespace-pre-wrap">{text}</div>
                   {blocks.length > 0 && (
@@ -324,6 +352,13 @@ export function Chat({
                   className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
                 >
                   <LuMessagesSquare className="h-3 w-3" /> Thread
+                </button>
+                <button
+                  onClick={() => stashMessage(item)}
+                  title="Stash the conversation into a thread on this message and push it to memory"
+                  className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                >
+                  <LuArchive className="h-3 w-3" /> Stash
                 </button>
               </div>
             );
@@ -440,6 +475,13 @@ export function Chat({
         <div className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-lg bg-danger/10 px-3 py-1.5 text-xs text-danger ring-1 ring-inset ring-danger/20">
           Couldn't open thread: {threadError}{" "}
           <button onClick={() => setThreadError(null)} className="ml-1 opacity-70 hover:opacity-100">✕</button>
+        </div>
+      )}
+
+      {stashError && (
+        <div className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-lg bg-danger/10 px-3 py-1.5 text-xs text-danger ring-1 ring-inset ring-danger/20">
+          Couldn't stash: {stashError}{" "}
+          <button onClick={() => setStashError(null)} className="ml-1 opacity-70 hover:opacity-100">✕</button>
         </div>
       )}
 

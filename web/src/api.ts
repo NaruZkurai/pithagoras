@@ -169,6 +169,31 @@ export interface ThreadMeta {
   updatedAt: string;
 }
 
+/** A conversation stashed into a thread (and usually the memory hub). */
+export interface Stash {
+  id: string;
+  sessionId: string;
+  threadId: string;
+  parentSeq: number;
+  parentRole: string;
+  parentText: string;
+  messageCount: number;
+  pushed: boolean;
+  createdAt: string;
+}
+
+/** A stash as it appears on the NK Tools list, with its session's title. */
+export interface StashMeta extends Stash {
+  sessionTitle: string;
+}
+
+/** Whether the background memory hub daemon is reachable. */
+export interface MemoryHubStatus {
+  running: boolean;
+  services: { core: boolean; panel: boolean; knowledge: boolean; proxy: boolean };
+  error?: string;
+}
+
 /** The agent's home directory and the files that define it. */
 export interface AgentSetup {
   home: string;
@@ -440,6 +465,18 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
   deleteThread: (id: string) => json<{ ok: true }>(`/api/threads/${id}`, { method: "DELETE" }),
+
+  // Conversation stashes — archive a session into a thread + the memory hub.
+  stashSession: (sessionId: string, input: { seq: number; role: string; text: string }) =>
+    json<{ stash: Stash; thread: Thread }>(`/api/sessions/${sessionId}/stash`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  stashes: () => json<{ stashes: StashMeta[] }>(`/api/stashes`),
+  deleteStash: (id: string) => json<{ ok: true }>(`/api/stashes/${id}`, { method: "DELETE" }),
+
+  // NK Tools — background memory hub status.
+  memoryStatus: () => json<MemoryHubStatus>(`/api/nk/status`),
 
   agentSetup: () => json<AgentSetup>("/api/agent/setup"),
   runAgentWizard: (input: {

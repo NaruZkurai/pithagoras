@@ -310,6 +310,23 @@ export function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_confirmations_time ON confirmations(confirmed_at);
 
+    -- A stashed conversation: the portal archived a session's history into a
+    -- thread on one of its messages (and, when the memory hub is reachable,
+    -- pushed it there). Listed on the NK Tools tab.
+    CREATE TABLE IF NOT EXISTS stashes (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      parent_seq INTEGER NOT NULL,
+      parent_role TEXT NOT NULL,
+      parent_text TEXT NOT NULL,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      transcript TEXT NOT NULL DEFAULT '',
+      pushed INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_stashes_session ON stashes(session_id);
+
     -- llama.cpp model servers the portal can launch / stop from the UI. The
     -- main one (port 41001) is what pi talks to; others (e.g. the rank model)
     -- can be added and managed the same way.
@@ -704,6 +721,62 @@ export function deleteThreadAndMessages(id: string): void {
   d.prepare("DELETE FROM thread_messages WHERE thread_id = ?").run(id);
   d.prepare("DELETE FROM confirmations WHERE thread_id = ?").run(id);
   d.prepare("DELETE FROM threads WHERE id = ?").run(id);
+}
+
+// --- conversation stashes ---
+
+export interface StashRow {
+  id: string;
+  session_id: string;
+  thread_id: string;
+  parent_seq: number;
+  parent_role: string;
+  parent_text: string;
+  message_count: number;
+  transcript: string;
+  pushed: number;
+  created_at: string;
+}
+
+export function createStash(row: {
+  id: string;
+  session_id: string;
+  thread_id: string;
+  parent_seq: number;
+  parent_role: string;
+  parent_text: string;
+  message_count: number;
+  transcript: string;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO stashes (id, session_id, thread_id, parent_seq, parent_role, parent_text, message_count, transcript)
+       VALUES (@id, @session_id, @thread_id, @parent_seq, @parent_role, @parent_text, @message_count, @transcript)`
+    )
+    .run(row);
+}
+
+export function getStash(id: string): StashRow | undefined {
+  return getDb().prepare("SELECT * FROM stashes WHERE id = ?").get(id) as StashRow | undefined;
+}
+
+/** Recent stashes, newest first, with the owning session's title attached. */
+export function listStashes(limit = 50): (StashRow & { session_title: string })[] {
+  return getDb()
+    .prepare(
+      `SELECT s.*, sess.title AS session_title FROM stashes s
+       LEFT JOIN sessions sess ON sess.id = s.session_id
+       ORDER BY s.created_at DESC LIMIT ?`
+    )
+    .all(limit) as (StashRow & { session_title: string })[];
+}
+
+export function setStashPushed(id: string, pushed: 0 | 1): void {
+  getDb().prepare("UPDATE stashes SET pushed = ? WHERE id = ?").run(pushed, id);
+}
+
+export function deleteStash(id: string): void {
+  getDb().prepare("DELETE FROM stashes WHERE id = ?").run(id);
 }
 
 export function appendEvent(sessionId: string, type: string, payload: unknown): EventRow {

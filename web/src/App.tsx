@@ -4,7 +4,7 @@ import { api, type PortalEvent, type ServerState, type Session, type Workspace }
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { Login } from "./components/Login";
-import { ConfigModal } from "./components/ConfigModal";
+import { ConfigModal, type Tab } from "./components/ConfigModal";
 import { ExtensionDialog, type UiRequest } from "./components/ExtensionDialog";
 import { SessionsPage } from "./components/SessionsPage";
 import { AgentPage } from "./components/AgentPage";
@@ -13,7 +13,6 @@ import { FilesPage } from "./components/FilesPage";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
 
 // Legacy routes ("session", "global") still resolve — old links stay valid.
-type Tab = "general" | "extensions" | "advanced";
 const LEGACY_TABS: Record<string, Tab> = { session: "general", global: "general" };
 
 export default function App() {
