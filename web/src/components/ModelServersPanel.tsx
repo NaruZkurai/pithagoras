@@ -200,17 +200,20 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
             </label>
           ))}
           <div>
-            <div className="mb-1 flex items-center justify-between">
+            <div className="mb-1 flex items-center justify-between gap-2">
               <span className="text-[11px] font-medium text-fg-subtle">Context (-c)</span>
-              <span className="font-mono text-[11px] text-fg">
-                {Math.round(Number(form.ctx) / 1024)}k
-                {Number(form.parallel) > 1 && (
-                  <span className="text-fg-faint">
-                    {" "}
-                    · ≈{Math.max(1, Math.round(Number(form.ctx) / Number(form.parallel) / 1024))}k/request
-                  </span>
-                )}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={CTX_MIN}
+                  step={CTX_STEP}
+                  value={form.ctx}
+                  onChange={(e) => setForm((f) => ({ ...f, ctx: e.target.value }))}
+                  title="Type an exact context size in tokens — allocated on the next start"
+                  className="w-28 rounded-lg border border-line bg-surface px-2 py-1 text-right font-mono text-[11px] text-fg outline-none focus:border-accent"
+                />
+                <span className="font-mono text-[10px] text-fg-faint">tokens</span>
+              </div>
             </div>
             <input
               type="range"
@@ -221,7 +224,7 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
               onChange={(e) => setForm((f) => ({ ...f, ctx: e.target.value }))}
               className="w-full accent-accent"
             />
-            <div className="mt-1.5 flex flex-wrap gap-1">
+            <div className="mt-1.5 flex flex-wrap items-center gap-1">
               {CTX_PRESETS.map((p) => (
                 <button
                   key={p}
@@ -236,6 +239,11 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
                   {p / 1024}k
                 </button>
               ))}
+              {Number(form.parallel) > 1 && (
+                <span className="ml-auto font-mono text-[10px] text-fg-faint">
+                  ≈{Math.max(1, Math.round(Number(form.ctx) / Number(form.parallel) / 1024))}k/request
+                </span>
+              )}
             </div>
           </div>
           <label className="flex items-center gap-2 py-1 text-xs text-fg-muted">
