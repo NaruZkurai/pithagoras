@@ -51,8 +51,15 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
     return () => clearInterval(t);
   }, [load]);
 
-  const set = (k: keyof typeof empty) => (e: { target: { value: string; checked?: boolean } }) =>
-    setForm((f) => ({ ...f, [k]: e.target.checked !== undefined ? e.target.checked : e.target.value }));
+  const set =
+    (k: keyof typeof empty) =>
+    (e: { target: { type?: string; value: string; checked?: boolean } }) =>
+      setForm((f) => ({
+        ...f,
+        // Text/number inputs report checked=false (not undefined), so only read
+        // `checked` for actual checkboxes — otherwise every field becomes "false".
+        [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value,
+      }));
 
   const save = async () => {
     if (!form.name.trim()) return onError("Give the server a name");
