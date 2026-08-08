@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { LuArchive, LuBookOpen, LuFolderOpen, LuMessagesSquare, LuRotateCcw, LuSquare } from "react-icons/lu";
+import { LuArchive, LuBookOpen, LuCornerUpLeft, LuFolderOpen, LuMessagesSquare, LuRotateCcw, LuSquare } from "react-icons/lu";
 import { api, type PiCommand, type PortalEvent, type Session, type Thread } from "../api";
 import { buildTranscript, type Item } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
 import { FileExplorer } from "./FileExplorer";
 import { ChatSkillsPanel } from "./ChatSkillsPanel";
+import { InlineThread } from "./InlineThread";
 import { ThreadsPanel } from "./ThreadsPanel";
 
 /**
@@ -90,6 +91,12 @@ export function Chat({
   const [thread, setThread] = useState<Thread | null>(null);
   const [threadError, setThreadError] = useState<string | null>(null);
   const [stashError, setStashError] = useState<string | null>(null);
+  // Inline replies to specific messages — threads rendered under their parent.
+  const [inlineThreads, setInlineThreads] = useState<Record<number, Thread>>({});
+  const [replyingTo, setReplyingTo] = useState<number | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [replySeq, setReplySeq] = useState<number | null>(null);
+  const [replyError, setReplyError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
   const running = session.status === "running";
@@ -143,6 +150,75 @@ export function Chat({
     }
   };
 
+  /** The numeric id a message's thread is keyed on (its event seq). */
+  const seqOf = (it: Item) =>
+    it.kind === "tool" || it.kind === "notice" ? -1 : Number(it.id.slice(1));
+
+  /** Toggle the inline reply composer anchored to a specific message. */
+  const toggleReply = (seq: number) => {
+    setReplyingTo((prev) => (prev === seq ? null : seq));
+    setReplyText("");
+    setReplyError(null);
+  };
+
+  /**
+   * Reply to a specific message — continue from that point. Uses a thread on
+   * the message (one per message), and shows the exchange inline underneath it.
+   */
+  const sendReply = async (seq: number, text: string) => {
+    const t = text.trim();
+    if (!t || (replySeq === seq && replyBusy)) return;
+    setReplySeq(seq);
+    setReplyError(null);
+    try {
+      const parent = items.find(
+        (it) =>
+          (it.kind === "user" || it.kind === "assistant") &&
+          Number(it.id.slice(1)) === seq
+      ) as Extract<Item, { kind: "user" | "assistant" }> | undefined;
+      const role = parent?.kind === "user" ? "user" : "assistant";
+      const parentText = parent?.text?.trim() ? parent.text : "This message";
+      let thread = inlineThreads[seq];
+      if (!thread) {
+        thread = await api.createThread(session.id, { seq, role, text: parentText });
+      }
+      const updated = await api.sendThreadMessage(thread.id, t);
+      setInlineThreads((m) => ({ ...m, [seq]: updated }));
+      setReplyingTo(null);
+      setReplyText("");
+    } catch (e) {
+      setReplyError((e as Error).message);
+    } finally {
+      setReplySeq(null);
+    }
+  };
+
+  // Load every thread on this session so replies render inline under their
+  // parent message (a thread is keyed on the parent message's event seq).
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .threads(session.id)
+      .then(async ({ threads }) => {
+        const map: Record<number, Thread> = {};
+        await Promise.all(
+          threads.map(async (t) => {
+            if (cancelled) return;
+            try {
+              map[t.parentSeq] = await api.getThread(t.id);
+            } catch {
+              // skip an unreadable thread rather than dropping the page
+            }
+          })
+        );
+        if (!cancelled) setInlineThreads(map);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [session.id]);
+
   // A task just finished: open a thread on the final assistant message so the
   // follow-up can happen in an isolated context. Fires on the running→idle
   // transition, once per finished run.
@@ -168,6 +244,9 @@ export function Chat({
     // Refetch when a run ends: installing an extension mid-session should make
     // its commands show up without a reload.
   }, [session.id, running]);
+
+  /** True while a reply to a specific message is being processed. */
+  const replyBusy = replySeq !== null;
 
   // Show the palette while the composer holds a bare "/name" prefix.
   const slashQuery = /^\/([\w:-]*)$/.exec(input.trimStart());
@@ -291,39 +370,89 @@ export function Chat({
               );
             }
             return (
-              <div key={item.id} className="group flex justify-end gap-2">
-                <button
-                  onClick={() => openThread(item)}
-                  title="Thread on this message — an isolated agent that sees only it"
-                  className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
-                >
-                  <LuMessagesSquare className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => stashMessage(item)}
-                  title="Stash the conversation into a thread on this message and push it to memory"
-                  className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
-                >
-                  <LuArchive className="h-3.5 w-3.5" />
-                </button>
-                <div className="max-w-[80%] rounded-2xl rounded-br-md bg-accent/10 px-3.5 py-2 text-sm text-fg ring-1 ring-inset ring-accent/15">
-                  <div className="whitespace-pre-wrap">{text}</div>
-                  {blocks.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap justify-end gap-1">
-                      {blocks.map((b, i) => (
-                        <ContextChip key={i} label={b.label} body={b.body} />
-                      ))}
-                    </div>
+              <div key={item.id} className="group">
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => openThread(item)}
+                    title="Thread on this message — an isolated agent that sees only it"
+                    className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                  >
+                    <LuMessagesSquare className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => toggleReply(seqOf(item))}
+                    title="Reply to this message — continue the conversation from here"
+                    className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                  >
+                    <LuCornerUpLeft className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => stashMessage(item)}
+                    title="Stash the conversation into a thread on this message and push it to memory"
+                    className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                  >
+                    <LuArchive className="h-3.5 w-3.5" />
+                  </button>
+                  <div className="max-w-[80%] rounded-2xl rounded-br-md bg-accent/10 px-3.5 py-2 text-sm text-fg ring-1 ring-inset ring-accent/15">
+                    <div className="whitespace-pre-wrap">{text}</div>
+                    {blocks.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap justify-end gap-1">
+                        {blocks.map((b, i) => (
+                          <ContextChip key={i} label={b.label} body={b.body} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {noResponse && (
+                    <button
+                      onClick={() => resend(item)}
+                      title="No response — resend this message"
+                      className="self-center rounded-md p-1.5 text-fg-muted opacity-70 transition hover:bg-fg/5 hover:text-accent hover:opacity-100"
+                    >
+                      <LuRotateCcw className="h-3.5 w-3.5" />
+                    </button>
                   )}
                 </div>
-                {noResponse && (
-                  <button
-                    onClick={() => resend(item)}
-                    title="No response — resend this message"
-                    className="self-center rounded-md p-1.5 text-fg-muted opacity-70 transition hover:bg-fg/5 hover:text-accent hover:opacity-100"
-                  >
-                    <LuRotateCcw className="h-3.5 w-3.5" />
-                  </button>
+                {inlineThreads[seqOf(item)]?.messages.length > 0 && (
+                  <InlineThread
+                    thread={inlineThreads[seqOf(item)]}
+                    busy={replySeq === seqOf(item)}
+                    onSend={(t) => sendReply(seqOf(item), t)}
+                  />
+                )}
+                {replyingTo === seqOf(item) && (
+                  <div className="mt-1.5 flex justify-end">
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void sendReply(seqOf(item), replyText);
+                      }}
+                      className="flex w-[70%] gap-1.5"
+                    >
+                      <input
+                        autoFocus
+                        value={replyText}
+                        onChange={(e) => setReplyText(e.target.value)}
+                        placeholder="Reply from this point…"
+                        className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1 text-xs text-fg outline-none focus:border-accent"
+                      />
+                      <button
+                        type="submit"
+                        disabled={replySeq === seqOf(item) || !replyText.trim()}
+                        className="rounded-lg bg-accent px-2.5 py-1 text-xs text-white disabled:opacity-50"
+                      >
+                        {replySeq === seqOf(item) ? "…" : "Send"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReplyingTo(null)}
+                        title="Cancel reply"
+                        className="rounded-md px-1.5 text-fg-faint hover:text-fg"
+                      >
+                        ✕
+                      </button>
+                    </form>
+                  </div>
                 )}
               </div>
             );
@@ -354,12 +483,60 @@ export function Chat({
                   <LuMessagesSquare className="h-3 w-3" /> Thread
                 </button>
                 <button
+                  onClick={() => toggleReply(seqOf(item))}
+                  title="Reply to this message — continue the conversation from here"
+                  className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                >
+                  <LuCornerUpLeft className="h-3 w-3" /> Reply
+                </button>
+                <button
                   onClick={() => stashMessage(item)}
                   title="Stash the conversation into a thread on this message and push it to memory"
                   className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
                 >
                   <LuArchive className="h-3 w-3" /> Stash
                 </button>
+                {inlineThreads[seqOf(item)]?.messages.length > 0 && (
+                  <InlineThread
+                    thread={inlineThreads[seqOf(item)]}
+                    busy={replySeq === seqOf(item)}
+                    onSend={(t) => sendReply(seqOf(item), t)}
+                  />
+                )}
+                {replyingTo === seqOf(item) && (
+                  <div className="mt-1.5 flex">
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void sendReply(seqOf(item), replyText);
+                      }}
+                      className="flex w-[70%] gap-1.5"
+                    >
+                      <input
+                        autoFocus
+                        value={replyText}
+                        onChange={(e) => setReplyText(e.target.value)}
+                        placeholder="Reply from this point…"
+                        className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1 text-xs text-fg outline-none focus:border-accent"
+                      />
+                      <button
+                        type="submit"
+                        disabled={replySeq === seqOf(item) || !replyText.trim()}
+                        className="rounded-lg bg-accent px-2.5 py-1 text-xs text-white disabled:opacity-50"
+                      >
+                        {replySeq === seqOf(item) ? "…" : "Send"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReplyingTo(null)}
+                        title="Cancel reply"
+                        className="rounded-md px-1.5 text-fg-faint hover:text-fg"
+                      >
+                        ✕
+                      </button>
+                    </form>
+                  </div>
+                )}
               </div>
             );
           }
@@ -482,6 +659,13 @@ export function Chat({
         <div className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-lg bg-danger/10 px-3 py-1.5 text-xs text-danger ring-1 ring-inset ring-danger/20">
           Couldn't stash: {stashError}{" "}
           <button onClick={() => setStashError(null)} className="ml-1 opacity-70 hover:opacity-100">✕</button>
+        </div>
+      )}
+
+      {replyError && (
+        <div className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-lg bg-danger/10 px-3 py-1.5 text-xs text-danger ring-1 ring-inset ring-danger/20">
+          Couldn't reply: {replyError}{" "}
+          <button onClick={() => setReplyError(null)} className="ml-1 opacity-70 hover:opacity-100">✕</button>
         </div>
       )}
 
