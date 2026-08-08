@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   LuCircleAlert,
+  LuPencil,
   LuPlay,
   LuPlus,
   LuRefreshCw,
@@ -109,6 +110,23 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
     } finally {
       setBusy(null);
     }
+  };
+
+  /** Load a server's settings into the form so Save updates it (upsert by name). */
+  const edit = (s: ModelServer) => {
+    setForm({
+      name: s.name,
+      bin: s.bin,
+      model: s.model,
+      alias: s.alias ?? "",
+      port: String(s.port),
+      ngl: String(s.ngl),
+      ctx: String(s.ctx),
+      threads: String(s.threads),
+      parallel: String(s.parallel),
+      enabled: !!s.enabled,
+    });
+    setShowForm(true);
   };
 
   const toggleEnabled = async (s: ModelServer) => {
@@ -282,6 +300,13 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
                   />
                   auto
                 </label>
+                <button
+                  onClick={() => edit(s)}
+                  title="Edit server config (binary, model, port…)"
+                  className="rounded-md p-1 text-fg-faint hover:text-fg"
+                >
+                  <LuPencil className="h-3.5 w-3.5" />
+                </button>
                 <button
                   onClick={() => remove(s.name)}
                   title="Delete server config"
