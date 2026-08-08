@@ -13,6 +13,12 @@ import { api, type ModelServer } from "../api";
 
 const DEFAULT_BIN = "/nzk/bin/llama-turbo-latest/llama-server";
 
+/** Context-size presets offered under the slider (server total tokens). */
+const CTX_PRESETS = [2048, 8192, 16384, 32768, 65536, 131072];
+const CTX_MIN = 2048;
+const CTX_MAX = 131072;
+const CTX_STEP = 1024;
+
 const empty = {
   name: "",
   bin: DEFAULT_BIN,
@@ -20,7 +26,7 @@ const empty = {
   alias: "",
   port: "41001",
   ngl: "0",
-  ctx: "2048",
+  ctx: "65536",
   threads: "12",
   parallel: "2",
   enabled: true,
@@ -178,7 +184,6 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
               ["alias", "Alias / model id", "text"],
               ["port", "Port", "number"],
               ["ngl", "GPU layers (-ngl)", "number"],
-              ["ctx", "Context (-c)", "number"],
               ["threads", "Threads (-t)", "number"],
               ["parallel", "Parallel slots", "number"],
             ] as const
@@ -194,6 +199,45 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
               />
             </label>
           ))}
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[11px] font-medium text-fg-subtle">Context (-c)</span>
+              <span className="font-mono text-[11px] text-fg">
+                {Math.round(Number(form.ctx) / 1024)}k
+                {Number(form.parallel) > 1 && (
+                  <span className="text-fg-faint">
+                    {" "}
+                    · ≈{Math.max(1, Math.round(Number(form.ctx) / Number(form.parallel) / 1024))}k/request
+                  </span>
+                )}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={CTX_MIN}
+              max={CTX_MAX}
+              step={CTX_STEP}
+              value={Number(form.ctx) || CTX_MIN}
+              onChange={(e) => setForm((f) => ({ ...f, ctx: e.target.value }))}
+              className="w-full accent-accent"
+            />
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {CTX_PRESETS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setForm((f) => ({ ...f, ctx: String(p) }))}
+                  className={`rounded-md border px-1.5 py-0.5 text-[10px] transition-colors ${
+                    Number(form.ctx) === p
+                      ? "border-accent text-accent"
+                      : "border-line text-fg-faint hover:text-fg"
+                  }`}
+                >
+                  {p / 1024}k
+                </button>
+              ))}
+            </div>
+          </div>
           <label className="flex items-center gap-2 py-1 text-xs text-fg-muted">
             <input type="checkbox" checked={form.enabled} onChange={set("enabled")} />
             Start with the portal
