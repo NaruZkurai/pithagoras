@@ -116,3 +116,55 @@ export async function pushStashToMemory(opts: {
     return { ok: false, detail: (e as Error).message };
   }
 }
+
+/** A single L1 memory atom as the hub reports it. */
+export interface MemoryAtom {
+  id: string;
+  type: "persona" | "episodic" | "instruction";
+  content: string;
+  background?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * Fetch every stored memory atom from the hub's L1 layer (`/v2/atomic/query`,
+ * which skips /v3's strict team/agent/user isolation). Best-effort — returns
+ * an empty list plus an error string when the hub is unreachable.
+ */
+export async function listHubMemories(): Promise<{ atoms: MemoryAtom[]; error?: string }> {
+  const key = adminKey();
+  try {
+    const res = await fetch(`${MEMORY_ENDPOINTS.core}/v2/atomic/query`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${key || "local"}`,
+        "x-tdai-service-id": SERVICE_ID,
+        ...(key ? { "x-tdai-user-key": key } : {}),
+      },
+      body: JSON.stringify({ pagination: { limit: 1000 } }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { atoms: [], error: `http ${res.status} ${body.slice(0, 200)}` };
+    }
+    const json = await res.json();
+    const items: any[] = json?.data?.items ?? [];
+    const atoms: MemoryAtom[] = items.map((it: any) => ({
+      id: String(it.id ?? ""),
+      type:
+        it.type === "persona" || it.type === "instruction"
+          ? it.type
+          : "episodic",
+      content: String(it.content ?? ""),
+      background: it.background ? String(it.background) : undefined,
+      createdAt: it.created_at,
+      updatedAt: it.updated_at,
+    }));
+    return { atoms };
+  } catch (e) {
+    return { atoms: [], error: (e as Error).message };
+  }
+}

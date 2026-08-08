@@ -194,6 +194,16 @@ export interface MemoryHubStatus {
   error?: string;
 }
 
+/** A single memory the hub is holding (persona / episodic / instruction). */
+export interface MemoryAtom {
+  id: string;
+  type: "persona" | "episodic" | "instruction";
+  content: string;
+  background?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 /** The agent's home directory and the files that define it. */
 export interface AgentSetup {
   home: string;
@@ -477,6 +487,10 @@ export const api = {
 
   // NK Tools — background memory hub status.
   memoryStatus: () => json<MemoryHubStatus>(`/api/nk/status`),
+
+  // Everything the memory hub is holding.
+  memories: () =>
+    json<{ atoms: MemoryAtom[]; stashes: StashMeta[]; error?: string }>(`/api/nk/memories`),
 
   agentSetup: () => json<AgentSetup>("/api/agent/setup"),
   runAgentWizard: (input: {

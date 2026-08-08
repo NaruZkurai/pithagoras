@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Tooltip } from "./Tooltip";
 import {
   LuBot,
+  LuBrain,
   LuClock,
   LuFolder,
   LuMessagesSquare,
@@ -67,7 +68,7 @@ export function Sidebar({
   executor: string;
   activeId: string | null;
   /** Which top-level destination is showing, so the nav can mark it. */
-  view: "chat" | "sessions" | "agent" | "routines" | "files";
+  view: "chat" | "sessions" | "agent" | "routines" | "files" | "memories";
   modelState: ServerState;
   onSelect: (id: string) => void;
   onCreate: (workspacePath: string) => Promise<void>;
@@ -77,7 +78,7 @@ export function Sidebar({
   onCreateWorkspace: (name: string) => Promise<Workspace>;
   onOpenSettings: () => void;
   onOpenModels: () => void;
-  onNavigate: (to: "sessions" | "agent" | "routines" | "files") => void;
+  onNavigate: (to: "sessions" | "agent" | "routines" | "files" | "memories") => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [choice, setChoice] = useState<string>(NEW);
@@ -184,6 +185,13 @@ export function Sidebar({
           label="Files"
           onClick={() => onNavigate("files")}
           active={view === "files"}
+        />
+        <NavItem
+          icon={<LuBrain />}
+          label="Memories"
+          onClick={() => onNavigate("memories")}
+          active={view === "memories"}
+          tip="Everything the memory hub is holding — persona, episodic and instruction memories, plus stashed conversations."
         />
 
         {creating && (

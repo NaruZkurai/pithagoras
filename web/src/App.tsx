@@ -10,6 +10,7 @@ import { SessionsPage } from "./components/SessionsPage";
 import { AgentPage } from "./components/AgentPage";
 import { RoutinesPage } from "./components/RoutinesPage";
 import { FilesPage } from "./components/FilesPage";
+import { MemoriesPage } from "./components/MemoriesPage";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
 
 // Legacy routes ("session", "global") still resolve — old links stay valid.
@@ -50,6 +51,7 @@ export default function App() {
       <Route path="/agent" element={<Shell view="agent" />} />
       <Route path="/routines" element={<Shell view="routines" />} />
       <Route path="/files" element={<Shell view="files" />} />
+      <Route path="/memories" element={<Shell view="memories" />} />
       <Route path="/s/:sessionId" element={<Shell />} />
       <Route path="/s/:sessionId/settings" element={<Shell settings />} />
       <Route path="/s/:sessionId/settings/:tab" element={<Shell settings />} />
@@ -65,7 +67,7 @@ function Shell({
   view = "chat",
 }: {
   settings?: boolean;
-  view?: "chat" | "sessions" | "agent" | "routines" | "files";
+  view?: "chat" | "sessions" | "agent" | "routines" | "files" | "memories";
 }) {
   const { sessionId, tab } = useParams<{ sessionId?: string; tab?: string }>();
   const navigate = useNavigate();
@@ -257,6 +259,8 @@ function Shell({
           <RoutinesPage onOpenSession={(id) => navigate(`/s/${id}`)} />
         ) : view === "files" ? (
           <FilesPage workspaces={workspaces} />
+        ) : view === "memories" ? (
+          <MemoriesPage />
         ) : active ? (
           <Chat
             session={active}

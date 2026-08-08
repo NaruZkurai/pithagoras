@@ -17,7 +17,7 @@ import {
 } from "../db.js";
 import { EXECUTOR_KIND } from "../session-manager.js";
 import { readTranscript } from "../pi/transcript.js";
-import { memoryHubStatus, pushStashToMemory } from "../memory-hub.js";
+import { memoryHubStatus, pushStashToMemory, listHubMemories } from "../memory-hub.js";
 
 /**
  * Conversation stashes — archive a session's history into a thread on one of
@@ -173,6 +173,27 @@ export function stashesRouter(): Router {
   /** NK Tools status: is the background memory hub running? */
   router.get("/nk/status", async (_req, res) => {
     res.json(await memoryHubStatus());
+  });
+
+  /** Everything the hub is holding: memory atoms + locally stashed conversations. */
+  router.get("/nk/memories", async (_req, res) => {
+    const [hub, stashes] = await Promise.all([listHubMemories(), Promise.resolve(listStashes())]);
+    res.json({
+      atoms: hub.atoms,
+      stashes: stashes.map((s) => ({
+        id: s.id,
+        sessionId: s.session_id,
+        sessionTitle: s.session_title ?? "(deleted session)",
+        threadId: s.thread_id,
+        parentSeq: s.parent_seq,
+        parentRole: s.parent_role,
+        parentText: s.parent_text,
+        messageCount: s.message_count,
+        pushed: !!s.pushed,
+        createdAt: s.created_at,
+      })),
+      error: hub.error,
+    });
   });
 
   return router;
