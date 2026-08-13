@@ -1306,10 +1306,9 @@ export function Chat({
               type="submit"
               disabled={!input.trim() || sendBusy}
               title={running ? "Send — queues after the current reply if the agent is busy" : "Send"}
-              // Transparent when idle — no fill, just the grey arrow, so it
-              // matches the text box background. A coloured (accent) background
-              // appears only on hover/click.
-              className="flex h-8 w-8 items-center justify-center rounded-l-lg bg-transparent text-fg transition hover:bg-accent hover:text-white active:bg-accent active:text-white disabled:text-fg-faint disabled:hover:bg-transparent disabled:hover:text-fg-faint"
+              // Transparent when idle with a darker grey arrow. Hover is a
+              // lighter grey; the accent (blue) appears ONLY while clicked.
+              className="flex h-8 w-8 items-center justify-center rounded-l-lg bg-transparent text-fg-muted transition hover:bg-fg/10 hover:text-fg active:bg-accent active:text-white disabled:text-fg-faint disabled:hover:bg-transparent disabled:hover:text-fg-faint"
             >
               <LuCornerDownLeft className="h-4 w-4" />
             </button>
@@ -1318,7 +1317,7 @@ export function Chat({
               onClick={() => setSendMenuOpen((v) => !v)}
               title="Choose how to send — Stop, Queue, or Steer"
               className={`flex h-8 w-6 items-center justify-center rounded-r-lg transition ${
-                sendMenuOpen ? "bg-accent/20 text-accent" : "text-fg-faint hover:bg-fg/5 hover:text-fg"
+                sendMenuOpen ? "bg-accent/20 text-accent" : "text-fg-muted hover:bg-fg/10 hover:text-fg"
               }`}
             >
               <LuChevronDown className="h-3.5 w-3.5" />
@@ -1330,15 +1329,15 @@ export function Chat({
                 </p>
                 <button
                   onClick={() => sendAs("stop")}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg-muted hover:bg-fg/5 hover:text-fg active:bg-accent/15 active:text-accent"
                   title="Abort the running turn, then send this as a fresh prompt"
                 >
-                  <span className="w-4 shrink-0 text-center text-fg">→</span>
+                  <span className="w-4 shrink-0 text-center text-fg-muted">→</span>
                   <span className="flex-1">Stop and Send</span>
                 </button>
                 <button
                   onClick={() => sendAs("queue")}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg-muted hover:bg-fg/5 hover:text-fg active:bg-accent/15 active:text-accent"
                   title="Queue to send after the current reply finishes"
                 >
                   <span className="w-4 shrink-0 text-center text-accent">+</span>
@@ -1347,7 +1346,7 @@ export function Chat({
                 </button>
                 <button
                   onClick={() => sendAs("steer")}
-                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-fg ring-1 ring-inset ring-accent/40 bg-accent/10 hover:bg-accent/15"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg-muted hover:bg-fg/5 hover:text-fg active:bg-accent/15 active:text-accent"
                   title="Interrupt the running turn and steer it with this message"
                 >
                   <span className="w-4 shrink-0 text-center text-accent">↩</span>
