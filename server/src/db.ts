@@ -178,7 +178,7 @@ export function getDb(): Database.Database {
       announced_at TEXT
     );
 
-    -- Portal login accounts (the second user, e.g. narukurai). Distinct from
+    -- Portal login accounts (the second user, e.g. naruzkurai). Distinct from
     -- the people table (channel identities). The legacy PORTAL_PASSWORD still
     -- logs in as the primary user when no username is given.
     CREATE TABLE IF NOT EXISTS users (
@@ -1408,6 +1408,15 @@ export function upsertUser(username: string, password: string, displayName = "")
        ON CONFLICT(username) DO NOTHING`
     )
     .run(username.toLowerCase(), displayName || username, password);
+}
+
+/** Rename a user account (e.g. a previous mistyped username). No-op if missing. */
+export function migrateUser(from: string, to: string): void {
+  getDb()
+    .prepare(
+      `UPDATE users SET username = ? WHERE username = ? AND ? NOT IN (SELECT username FROM users)`
+    )
+    .run(to.toLowerCase(), from.toLowerCase(), to.toLowerCase());
 }
 
 // --- repos ---------------------------------------------------------------

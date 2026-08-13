@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
-import { getUser, upsertUser } from "./db.js";
+import { getUser, migrateUser, upsertUser } from "./db.js";
 
 /**
  * Portal gate.
@@ -11,7 +11,7 @@ import { getUser, upsertUser } from "./db.js";
  * Two ways in:
  *  - No username -> the legacy shared PORTAL_PASSWORD (the primary user).
  *  - A username  -> a portal account from the `users` table (e.g.
- *    narukurai / cc), stored as an scrypt hash. Seeded on boot.
+ *    naruzkurai / cc), stored as an scrypt hash. Seeded on boot.
  *
  * The cookie is an HMAC of an expiry stamp + username — no session store.
  */
@@ -46,11 +46,13 @@ function verifyHashed(password: string, stored: string): boolean {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-/** Seed the second portal user (narukurai / cc) if not present. */
+/** Seed the second portal user (naruzkurai / cc) if not present. */
 export function seedUsers(): void {
   if (!authEnabled) return;
-  const pass = process.env.NARUKURAI_PASSWORD || "cc";
-  upsertUser("narukurai", hashPassword(pass), "narukurai");
+  // Migrate a legacy mistyped account (narukurai -> naruzkurai) if it exists.
+  migrateUser("narukurai", "naruzkurai");
+  const pass = process.env.NARUZKURAI_PASSWORD || "cc";
+  upsertUser("naruzkurai", hashPassword(pass), "naruzkurai");
 }
 
 function sign(expiry: number, username: string): string {

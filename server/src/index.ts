@@ -591,7 +591,7 @@ try {
   console.warn(`[portal] could not create BIN_DIR ${BIN_DIR}; tools on PATH may not be available`);
 }
 
-// Seed the second portal user (narukurai) so it can log in.
+// Seed the second portal user (naruzkurai) so it can log in.
 seedUsers();
 // Seed the portal's own repo in the Repos tab.
 seedPithagorasRepo();
