@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import {
   LuBookOpen,
   LuChevronDown,
-  LuCornerUpRight,
+  LuCornerDownLeft,
   LuFolderOpen,
   LuGitBranch,
   LuGitCompare,
@@ -1308,9 +1308,11 @@ export function Chat({
               type="submit"
               disabled={!input.trim() || sendBusy}
               title={running ? "Send — queues after the current reply if the agent is busy" : "Send"}
-              className="flex h-8 w-8 items-center justify-center rounded-l-lg bg-accent text-white transition hover:bg-accent/90 disabled:opacity-40"
+              // Lighter grey by default; accent (blue) only when clicked/hovered
+              // or actively engaged.
+              className="flex h-8 w-8 items-center justify-center rounded-l-lg bg-fg/10 text-fg transition hover:bg-accent hover:text-white active:bg-accent active:text-white disabled:opacity-35 disabled:hover:bg-fg/10 disabled:hover:text-fg"
             >
-              <LuCornerUpRight className="h-4 w-4" />
+              <LuCornerDownLeft className="h-4 w-4" />
             </button>
             <button
               type="button"
