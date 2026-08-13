@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { LuArchive, LuBookOpen, LuCornerUpLeft, LuFolderOpen, LuMessagesSquare, LuRotateCcw, LuSquare } from "react-icons/lu";
+import {
+  LuBookOpen,
+  LuFolderOpen,
+  LuGitBranch,
+  LuPencil,
+  LuRotateCcw,
+  LuSquare,
+} from "react-icons/lu";
 import { api, type PiCommand, type PortalEvent, type Session, type Thread } from "../api";
 import { buildTranscript, type Item } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
@@ -8,6 +15,7 @@ import { FileExplorer } from "./FileExplorer";
 import { ChatSkillsPanel } from "./ChatSkillsPanel";
 import { InlineThread } from "./InlineThread";
 import { ThreadsPanel } from "./ThreadsPanel";
+import { Tooltip } from "./Tooltip";
 
 /**
  * Context the portal attaches to a message, and what to call it.
@@ -93,10 +101,13 @@ export function Chat({
   const [stashError, setStashError] = useState<string | null>(null);
   // Inline replies to specific messages — threads rendered under their parent.
   const [inlineThreads, setInlineThreads] = useState<Record<number, Thread>>({});
-  const [replyingTo, setReplyingTo] = useState<number | null>(null);
-  const [replyText, setReplyText] = useState("");
   const [replySeq, setReplySeq] = useState<number | null>(null);
   const [replyError, setReplyError] = useState<string | null>(null);
+  // Edit an existing user message in place, then resend it.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState("");
+  // Branch overview (Obsidian-style branching of messages -> stash threads).
+  const [showBranches, setShowBranches] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
   const running = session.status === "running";
@@ -154,13 +165,6 @@ export function Chat({
   const seqOf = (it: Item) =>
     it.kind === "tool" || it.kind === "notice" ? -1 : Number(it.id.slice(1));
 
-  /** Toggle the inline reply composer anchored to a specific message. */
-  const toggleReply = (seq: number) => {
-    setReplyingTo((prev) => (prev === seq ? null : seq));
-    setReplyText("");
-    setReplyError(null);
-  };
-
   /**
    * Reply to a specific message — continue from that point. Uses a thread on
    * the message (one per message), and shows the exchange inline underneath it.
@@ -184,8 +188,6 @@ export function Chat({
       }
       const updated = await api.sendThreadMessage(thread.id, t);
       setInlineThreads((m) => ({ ...m, [seq]: updated }));
-      setReplyingTo(null);
-      setReplyText("");
     } catch (e) {
       setReplyError((e as Error).message);
     } finally {
@@ -290,6 +292,48 @@ export function Chat({
     void onSend(item.text);
   };
 
+  /** Start editing a user message; sending applies the edit and resends it. */
+  const startEdit = (item: Extract<Item, { kind: "user" }>) => {
+    if (sending || running) return;
+    setEditingId(item.id);
+    // Strip framing blocks so the user edits just what they actually wrote.
+    setEditingText(splitContext(item.text).text);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditingText("");
+  };
+
+  /** Save an edited user message and re-issue it as the new prompt. */
+  const applyEdit = () => {
+    const msg = editingText.trim();
+    if (!msg || sending || running) return;
+    setEditingId(null);
+    setEditingText("");
+    void onSend(msg);
+  };
+
+  // Map message ids -> their stash/reply thread (a "branch"), for the overview.
+  const branches = useMemo(() => {
+    const out: { seq: number; role: "user" | "assistant"; parent: string; messages: Thread["messages"] }[] = [];
+    const all = items.filter((it) => it.kind === "user" || it.kind === "assistant");
+    const seqs = Object.keys(inlineThreads).map(Number);
+    for (const seq of seqs) {
+      const t = inlineThreads[seq];
+      if (!t || t.messages.length === 0) continue;
+      const parent = all.find((it) => Number(it.id.slice(1)) === seq);
+      out.push({
+        seq,
+        role: parent?.kind === "user" ? "user" : "assistant",
+        parent: (parent as Extract<Item, { kind: "user" | "assistant" }>)?.text?.trim() || t.parentText,
+        messages: t.messages,
+      });
+    }
+    out.sort((a, b) => a.seq - b.seq);
+    return out;
+  }, [items, inlineThreads]);
+
   return (
     <div className="relative flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -322,6 +366,24 @@ export function Chat({
           >
             <LuBookOpen className="h-3.5 w-3.5" />
             Skills
+          </button>
+          <button
+            onClick={() => {
+              setShowBranches((v) => !v);
+              setShowFiles(false);
+            }}
+            title="Branches — every stashed/threaded sub-conversation on this chat"
+            className={`flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs transition hover:bg-fg/5 ${
+              showBranches ? "text-accent" : "text-fg-muted hover:text-fg"
+            }`}
+          >
+            <LuGitBranch className="h-3.5 w-3.5" />
+            Branches
+            {branches.length > 0 && (
+              <span className="rounded-full bg-fg/10 px-1.5 text-[10px] text-fg-faint">
+                {branches.length}
+              </span>
+            )}
           </button>
           {session.status === "interrupted" && (
             <span className="rounded-md bg-warn/10 px-2 py-0.5 text-[11px] text-warn">
@@ -372,30 +434,66 @@ export function Chat({
             return (
               <div key={item.id} className="group">
                 <div className="flex justify-end gap-2">
-                  <button
-                    onClick={() => openThread(item)}
-                    title="Thread on this message — an isolated agent that sees only it"
-                    className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
-                  >
-                    <LuMessagesSquare className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onClick={() => toggleReply(seqOf(item))}
-                    title="Reply to this message — continue the conversation from here"
-                    className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
-                  >
-                    <LuCornerUpLeft className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onClick={() => stashMessage(item)}
-                    title="Stash the conversation into a thread on this message and push it to memory"
-                    className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
-                  >
-                    <LuArchive className="h-3.5 w-3.5" />
-                  </button>
+                  <Tooltip label="Edit this message and resend it" side="top">
+                    <button
+                      onClick={() => startEdit(item)}
+                      className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                    >
+                      <LuPencil className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip label="Branch — stash the conversation here as a thread and push it to memory" side="top">
+                    <button
+                      onClick={() => stashMessage(item)}
+                      className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                    >
+                      <LuGitBranch className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                  {noResponse && (
+                    <Tooltip label="Resend this message (it got no reply)" side="top">
+                      <button
+                        onClick={() => resend(item)}
+                        className="self-center rounded-md p-1.5 text-fg-muted opacity-70 transition hover:bg-fg/5 hover:text-accent hover:opacity-100"
+                      >
+                        <LuRotateCcw className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
+                  )}
                   <div className="max-w-[80%] rounded-2xl rounded-br-md bg-accent/10 px-3.5 py-2 text-sm text-fg ring-1 ring-inset ring-accent/15">
-                    <div className="whitespace-pre-wrap">{text}</div>
-                    {blocks.length > 0 && (
+                    {editingId === item.id ? (
+                      <div className="space-y-1.5">
+                        <textarea
+                          autoFocus
+                          value={editingText}
+                          onChange={(e) => setEditingText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) applyEdit();
+                            if (e.key === "Escape") cancelEdit();
+                          }}
+                          rows={Math.max(2, Math.min(8, editingText.split("\n").length + 1))}
+                          className="w-full resize-y rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-fg outline-none focus:border-accent"
+                        />
+                        <div className="flex justify-end gap-1.5 text-[11px]">
+                          <button
+                            onClick={applyEdit}
+                            title="Save edit and resend (Ctrl+Enter)"
+                            className="rounded-md bg-accent px-2 py-1 text-white"
+                          >
+                            Save & resend
+                          </button>
+                          <button
+                            onClick={cancelEdit}
+                            className="rounded-md px-2 py-1 text-fg-muted hover:text-fg"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="whitespace-pre-wrap">{text}</div>
+                    )}
+                    {editingId !== item.id && blocks.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap justify-end gap-1">
                         {blocks.map((b, i) => (
                           <ContextChip key={i} label={b.label} body={b.body} />
@@ -403,15 +501,6 @@ export function Chat({
                       </div>
                     )}
                   </div>
-                  {noResponse && (
-                    <button
-                      onClick={() => resend(item)}
-                      title="No response — resend this message"
-                      className="self-center rounded-md p-1.5 text-fg-muted opacity-70 transition hover:bg-fg/5 hover:text-accent hover:opacity-100"
-                    >
-                      <LuRotateCcw className="h-3.5 w-3.5" />
-                    </button>
-                  )}
                 </div>
                 {inlineThreads[seqOf(item)]?.messages.length > 0 && (
                   <InlineThread
@@ -419,40 +508,6 @@ export function Chat({
                     busy={replySeq === seqOf(item)}
                     onSend={(t) => sendReply(seqOf(item), t)}
                   />
-                )}
-                {replyingTo === seqOf(item) && (
-                  <div className="mt-1.5 flex justify-end">
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void sendReply(seqOf(item), replyText);
-                      }}
-                      className="flex w-[70%] gap-1.5"
-                    >
-                      <input
-                        autoFocus
-                        value={replyText}
-                        onChange={(e) => setReplyText(e.target.value)}
-                        placeholder="Reply from this point…"
-                        className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1 text-xs text-fg outline-none focus:border-accent"
-                      />
-                      <button
-                        type="submit"
-                        disabled={replySeq === seqOf(item) || !replyText.trim()}
-                        className="rounded-lg bg-accent px-2.5 py-1 text-xs text-white disabled:opacity-50"
-                      >
-                        {replySeq === seqOf(item) ? "…" : "Send"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setReplyingTo(null)}
-                        title="Cancel reply"
-                        className="rounded-md px-1.5 text-fg-faint hover:text-fg"
-                      >
-                        ✕
-                      </button>
-                    </form>
-                  </div>
                 )}
               </div>
             );
@@ -475,67 +530,20 @@ export function Chat({
                     <ReactMarkdown>{item.text.replace(/<\/?think(ing)?>/gi, "")}</ReactMarkdown>
                   </div>
                 )}
-                <button
-                  onClick={() => openThread(item)}
-                  title="Thread on this message — an isolated agent that sees only it"
-                  className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
-                >
-                  <LuMessagesSquare className="h-3 w-3" /> Thread
-                </button>
-                <button
-                  onClick={() => toggleReply(seqOf(item))}
-                  title="Reply to this message — continue the conversation from here"
-                  className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
-                >
-                  <LuCornerUpLeft className="h-3 w-3" /> Reply
-                </button>
-                <button
-                  onClick={() => stashMessage(item)}
-                  title="Stash the conversation into a thread on this message and push it to memory"
-                  className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
-                >
-                  <LuArchive className="h-3 w-3" /> Stash
-                </button>
+                <Tooltip label="Branch — stash the conversation here as a thread and push it to memory" side="top">
+                  <button
+                    onClick={() => stashMessage(item)}
+                    className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                  >
+                    <LuGitBranch className="h-3 w-3" /> Branch
+                  </button>
+                </Tooltip>
                 {inlineThreads[seqOf(item)]?.messages.length > 0 && (
                   <InlineThread
                     thread={inlineThreads[seqOf(item)]}
                     busy={replySeq === seqOf(item)}
                     onSend={(t) => sendReply(seqOf(item), t)}
                   />
-                )}
-                {replyingTo === seqOf(item) && (
-                  <div className="mt-1.5 flex">
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void sendReply(seqOf(item), replyText);
-                      }}
-                      className="flex w-[70%] gap-1.5"
-                    >
-                      <input
-                        autoFocus
-                        value={replyText}
-                        onChange={(e) => setReplyText(e.target.value)}
-                        placeholder="Reply from this point…"
-                        className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1 text-xs text-fg outline-none focus:border-accent"
-                      />
-                      <button
-                        type="submit"
-                        disabled={replySeq === seqOf(item) || !replyText.trim()}
-                        className="rounded-lg bg-accent px-2.5 py-1 text-xs text-white disabled:opacity-50"
-                      >
-                        {replySeq === seqOf(item) ? "…" : "Send"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setReplyingTo(null)}
-                        title="Cancel reply"
-                        className="rounded-md px-1.5 text-fg-faint hover:text-fg"
-                      >
-                        ✕
-                      </button>
-                    </form>
-                  </div>
                 )}
               </div>
             );
@@ -646,6 +654,75 @@ export function Chat({
 
       {showSkills && (
         <ChatSkillsPanel sessionId={session.id} onClose={() => setShowSkills(false)} />
+      )}
+
+      {showBranches && (
+        <aside className="flex w-80 shrink-0 flex-col border-l border-line bg-surface">
+          {/* Header */}
+          <div className="flex items-center gap-2 border-b border-line px-3 py-2.5">
+            <LuGitBranch className="h-4 w-4 shrink-0 text-accent" />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium text-fg">Branches</div>
+              <div className="text-[10px] text-fg-faint">
+                stashed / threaded sub-conversations on this chat
+              </div>
+            </div>
+            <button
+              onClick={() => setShowBranches(false)}
+              title="Close branches"
+              className="rounded-md p-1 text-fg-faint hover:bg-fg/5 hover:text-fg-muted"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="flex-1 space-y-2 overflow-y-auto p-3">
+            {branches.length === 0 && (
+              <p className="pt-6 text-center text-xs leading-relaxed text-fg-faint">
+                No branches yet. Hover any message and use the{" "}
+                <LuGitBranch className="inline h-3 w-3" /> breadcrumb to stash the
+                conversation there and branch from it.
+              </p>
+            )}
+            {branches.map((b) => (
+              <div key={b.seq} className="rounded-xl border border-line bg-raised/40 p-2.5">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
+                      b.role === "user" ? "bg-accent/15 text-accent" : "bg-ok/15 text-ok"
+                    }`}
+                  >
+                    {b.role === "user" ? "you" : "agent"}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-fg-faint">
+                    message {b.seq}
+                  </span>
+                  <span className="shrink-0 rounded-full bg-fg/10 px-1.5 text-[10px] text-fg-faint">
+                    {b.messages.length}
+                  </span>
+                </div>
+                <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-fg-subtle">
+                  {b.parent}
+                </p>
+                <button
+                  onClick={() =>
+                    api
+                      .getThread(inlineThreads[b.seq].id)
+                      .then((t) => {
+                        setThread(t);
+                        setShowBranches(false);
+                      })
+                      .catch(() => {})
+                  }
+                  title="Open this branch as a thread"
+                  className="mt-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint hover:bg-fg/5 hover:text-accent"
+                >
+                  Open branch →
+                </button>
+              </div>
+            ))}
+          </div>
+        </aside>
       )}
 
       {threadError && (
