@@ -14,6 +14,7 @@ import { buildTranscript, type Item } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
 import { FileExplorer } from "./FileExplorer";
 import { ChatSkillsPanel } from "./ChatSkillsPanel";
+import { InlineThread } from "./InlineThread";
 import { ThreadsPanel } from "./ThreadsPanel";
 import { Tooltip } from "./Tooltip";
 
@@ -243,10 +244,10 @@ export function Chat({
 
   /**
    * Reply to a specific message — continue from that point. Uses a thread on
-   * the message (one per message) and opens it in the side panel so the
-   * exchange is visible there (thread messages stay out of the main chat).
+   * the message (one per message). The active branch's exchange is rendered
+   * inline under the branch message in the timeline view (not a side panel).
    */
-  const sendReply = async (seq: number, text: string, openPanel = true) => {
+  const sendReply = async (seq: number, text: string) => {
     const t = text.trim();
     if (!t || (replySeq === seq && replyBusy)) return;
     setReplySeq(seq);
@@ -263,10 +264,25 @@ export function Chat({
       if (!thread) {
         thread = await api.createThread(session.id, { seq, role, text: parentText });
       }
-      if (openPanel) setThread(thread);
+      // Optimistically show the user's message inline right away, before the
+      // thread agent finishes (which can take minutes). Reconcile below.
+      setInlineThreads((m) => ({
+        ...m,
+        [seq]: {
+          ...thread!,
+          messages: [
+            ...thread!.messages,
+            {
+              id: `opt-${Date.now()}`,
+              role: "user",
+              content: t,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+      }));
       const updated = await api.sendThreadMessage(thread.id, t);
       setInlineThreads((m) => ({ ...m, [seq]: updated }));
-      if (openPanel) setThread(updated);
     } catch (e) {
       setReplyError((e as Error).message);
     } finally {
@@ -599,6 +615,12 @@ export function Chat({
             return (
               <div key={item.id} className="group">
                 <div className="flex justify-end gap-2">
+                  <span
+                    title="message key (seq)"
+                    className="self-center font-mono text-[9px] text-fg-faint/50 group-hover:text-fg-faint"
+                  >
+                    #{seqOf(item)}
+                  </span>
                   <Tooltip label="Edit this message and resend it" side="top">
                     <button
                       onClick={() => startEdit(item)}
@@ -667,6 +689,14 @@ export function Chat({
                     )}
                   </div>
                 </div>
+                {seqOf(item) === branchSeq &&
+                  inlineThreads[seqOf(item)]?.messages.length > 0 && (
+                    <InlineThread
+                      thread={inlineThreads[seqOf(item)]}
+                      busy={replySeq === seqOf(item)}
+                      onSend={(t) => sendReply(seqOf(item), t)}
+                    />
+                  )}
               </div>
             );
           }
@@ -720,6 +750,12 @@ export function Chat({
                   )
                 )}
                 <div className="mt-1 flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+                  <span
+                    title="message key (seq)"
+                    className="self-center font-mono text-[9px] text-fg-faint"
+                  >
+                    #{seqOf(item)}
+                  </span>
                   <Tooltip label="Edit this message and ask the agent to respond again" side="top">
                     <button
                       onClick={() => startEdit(item)}
@@ -737,6 +773,14 @@ export function Chat({
                     </button>
                   </Tooltip>
                 </div>
+                {seqOf(item) === branchSeq &&
+                  inlineThreads[seqOf(item)]?.messages.length > 0 && (
+                    <InlineThread
+                      thread={inlineThreads[seqOf(item)]}
+                      busy={replySeq === seqOf(item)}
+                      onSend={(t) => sendReply(seqOf(item), t)}
+                    />
+                  )}
               </div>
             );
           }
