@@ -82,7 +82,10 @@ export function Sidebar({
 }) {
   const [creating, setCreating] = useState(false);
   const [choice, setChoice] = useState<string>(NEW);
-  const [name, setName] = useState("");
+  // Pre-filled so "Start session" is immediately clickable — a new workspace
+  // defaults to "untitled" but is one keypress away from a better name. Keeps
+  // "New" from looking broken (the button used to sit disabled until typed).
+  const [name, setName] = useState("untitled");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -99,7 +102,7 @@ export function Sidebar({
       // from that folder.
       const workspacePath = makingNew ? (await onCreateWorkspace(name.trim())).path : choice;
       await onCreate(workspacePath);
-      setName("");
+      setName("untitled");
       setChoice(NEW);
       setCreating(false);
     } catch (e) {
