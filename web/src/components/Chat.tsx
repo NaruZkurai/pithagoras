@@ -120,8 +120,23 @@ export function Chat({
   // into the branch message's thread (not the main session), so it genuinely
   // continues from that timeline instead of appending to the folded future.
   const [branchSeq, setBranchSeq] = useState<number | null>(null);
+  // The message to scroll to + briefly highlight (deep-linked via the URL).
+  const [focusSeq, setFocusSeq] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
+
+  /**
+   * Focus a message: reflect it in the URL (deep link) and scroll/highlight it.
+   * The URL shows the chat and the timeline and the message, e.g.
+   * /s/:id + hash #msg{seq}; opening that URL lands on the same message.
+   */
+  const focusMessage = (seq: number) => {
+    setFocusSeq(seq);
+    const target = `#msg${seq}`;
+    if (window.location.hash !== target) {
+      window.history.replaceState(null, "", target);
+    }
+  };
 
   // After a branch, only show messages up to and including the branch point
   // (the "stash all future" behaviour) unless the user continues past it.
@@ -363,6 +378,36 @@ export function Chat({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [items.length, events.length]);
+
+  // Deep link: opening ?/#msg{seq} lands on and highlights that message.
+  useEffect(() => {
+    const m = /#msg(\d+)/.exec(window.location.hash);
+    if (m) setFocusSeq(Number(m[1]));
+  }, []);
+
+  // Scroll to the focused message and briefly highlight it.
+  useEffect(() => {
+    if (focusSeq === null) return;
+    const el = document.getElementById(`msg-${focusSeq}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const t = setTimeout(() => setFocusSeq(null), 2000);
+    return () => clearTimeout(t);
+  }, [focusSeq]);
+
+  // Keep the URL's message pointer on the most recent message (it is the
+  // "current" message in the timeline the user is on). Suppressed briefly
+  // after a manual message click so the deep link it set is honoured.
+  useEffect(() => {
+    if (focusSeq !== null) return;
+    const last = [...items].reverse().find((i) => i.kind === "user" || i.kind === "assistant");
+    if (last) {
+      const seq = seqOf(last);
+      const target = `#msg${seq}`;
+      if (window.location.hash !== target) {
+        window.history.replaceState(null, "", target);
+      }
+    }
+  }, [items, focusSeq]);
 
   const send = async () => {
     const msg = input.trim();
@@ -611,14 +656,21 @@ export function Chat({
               );
             }
             return (
-              <div key={item.id} className="group">
+              <div
+                key={item.id}
+                id={`msg-${seqOf(item)}`}
+                className={`group rounded-lg transition ${
+                  focusSeq === seqOf(item) ? "bg-accent/10 ring-1 ring-inset ring-accent/30" : ""
+                }`}
+              >
                 <div className="flex justify-end gap-2">
-                  <span
-                    title="message key (seq)"
-                    className="self-center font-mono text-[9px] text-fg-faint/50 group-hover:text-fg-faint"
+                  <button
+                    onClick={() => focusMessage(seqOf(item))}
+                    title="Message key — click to deep-link to this message"
+                    className="self-center font-mono text-[9px] text-fg-faint/50 transition hover:text-accent group-hover:text-fg-faint"
                   >
                     #{seqOf(item)}
-                  </span>
+                  </button>
                   <Tooltip label="Edit this message and resend it" side="top">
                     <button
                       onClick={() => startEdit(item)}
@@ -700,7 +752,13 @@ export function Chat({
           }
           if (item.kind === "assistant") {
             return (
-              <div key={item.id} className="group max-w-[90%]">
+              <div
+                key={item.id}
+                id={`msg-${seqOf(item)}`}
+                className={`group max-w-[90%] rounded-lg transition ${
+                  focusSeq === seqOf(item) ? "bg-accent/10 ring-1 ring-inset ring-accent/30" : ""
+                }`}
+              >
                 {item.thinking && (
                   <details className="mb-1 text-xs text-fg-subtle">
                     <summary className="cursor-pointer hover:text-fg-muted">thinking</summary>
@@ -748,12 +806,13 @@ export function Chat({
                   )
                 )}
                 <div className="mt-1 flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
-                  <span
-                    title="message key (seq)"
-                    className="self-center font-mono text-[9px] text-fg-faint"
+                  <button
+                    onClick={() => focusMessage(seqOf(item))}
+                    title="Message key — click to deep-link to this message"
+                    className="self-center font-mono text-[9px] text-fg-faint transition hover:text-accent"
                   >
                     #{seqOf(item)}
-                  </span>
+                  </button>
                   <Tooltip label="Edit this message and ask the agent to respond again" side="top">
                     <button
                       onClick={() => startEdit(item)}
