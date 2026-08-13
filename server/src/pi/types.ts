@@ -38,7 +38,15 @@ export interface PiClient extends EventEmitter {
    */
   readonly sessionFile?: string;
 
-  prompt(message: string): Promise<void>;
+  /**
+   * Submit a user message.
+   *
+   * When the agent is mid-turn, `behavior` decides how to queue it:
+   *  - "followUp" (default): let the current turn finish, then run this as the
+   *    follow-up. The message queues and runs right after.
+   *  - "steer": interrupt the current turn and steer it with this message.
+   */
+  prompt(message: string, behavior?: "followUp" | "steer"): Promise<void>;
   abort(): Promise<void>;
   dispose(): void;
 

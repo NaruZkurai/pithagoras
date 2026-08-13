@@ -89,13 +89,17 @@ export function Chat({
 }: {
   session: Session;
   events: PortalEvent[];
-  onSend: (message: string) => Promise<void>;
+  onSend: (message: string, behavior?: "followUp" | "steer") => Promise<void>;
   onAbort: () => Promise<void>;
   /** Builtins the portal itself services — /settings, /new, /name. */
   onClientCommand: (name: string, args: string) => void | Promise<void>;
 }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  // When the agent is mid-turn and the user hits Enter with a message, hold it
+  // here and ask how to send it: stop-and-send, add-to-queue, or steer.
+  const [sendChoice, setSendChoice] = useState<string | null>(null);
+  const [sendBusy, setSendBusy] = useState(false);
   const [panelRequest, setPanelRequest] = useState<"model" | "effort" | null>(null);
   const [showFiles, setShowFiles] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
@@ -521,12 +525,47 @@ export function Chat({
     }
 
     if (sending) return;
+
+    // The agent is busy. Ask how to send it instead of guessing: stop-and-send,
+    // add-to-queue (default), or steer with the message.
+    if (running) {
+      setInput("");
+      setSendChoice(msg);
+      return;
+    }
+
     setSending(true);
     setInput("");
     try {
       await onSend(msg);
     } finally {
       setSending(false);
+    }
+  };
+
+  /**
+   * Resolve a held send-choice: "stop" aborts the running turn first and sends
+   * as a fresh prompt, "queue" sends with followUp (default, waited on), and
+   * "steer" sends with steer (interrupts the current turn).
+   */
+  const commitSendChoice = async (kind: "stop" | "queue" | "steer") => {
+    const msg = sendChoice;
+    setSendChoice(null);
+    if (!msg || sendBusy) return;
+    setSendBusy(true);
+    try {
+      if (kind === "queue") {
+        await onSend(msg, "followUp");
+      } else if (kind === "steer") {
+        await onSend(msg, "steer");
+      } else {
+        await onAbort();
+        await onSend(msg);
+      }
+    } catch {
+      // Surface via the session error state; nothing extra to do here.
+    } finally {
+      setSendBusy(false);
     }
   };
 
@@ -1373,6 +1412,68 @@ export function Chat({
 
       {thread && (
         <ThreadsPanel thread={thread} onClose={() => setThread(null)} />
+      )}
+
+      {sendChoice && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+          onClick={() => setSendChoice(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setSendChoice(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl outline-none"
+            onClick={(e) => e.stopPropagation()}
+            ref={(el) => el?.focus()}
+            tabIndex={-1}
+          >
+            <div className="border-b border-line px-4 py-3">
+              <div className="text-sm font-medium text-fg">How should I send this?</div>
+              <p className="mt-0.5 truncate text-xs text-fg-faint" title={sendChoice}>
+                “{sendChoice}”
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-fg-faint">
+                The agent is working right now. Queueing finishes the current
+                reply first; steering interrupts it with your message; stopping
+                cancels it, then sends fresh.
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 p-3">
+              <button
+                onClick={() => commitSendChoice("stop")}
+                disabled={sendBusy}
+                className="rounded-xl border border-line bg-raised/40 px-2 py-2.5 text-center hover:border-danger/40 hover:bg-danger/10"
+                title="Abort the running turn, then send this as a fresh prompt"
+              >
+                <div className="text-[11px] font-medium text-danger">Stop and Send</div>
+                <div className="mt-0.5 text-[9px] text-fg-faint">cancel, then send</div>
+              </button>
+              <button
+                onClick={() => commitSendChoice("queue")}
+                disabled={sendBusy}
+                className="rounded-xl border border-line bg-accent/10 px-2 py-2.5 text-center hover:border-accent/40 hover:bg-accent/15"
+                title="Queue to send after the current reply finishes (Alt+Enter)"
+              >
+                <div className="text-[11px] font-medium text-accent">+ Add to Queue</div>
+                <div className="mt-0.5 text-[9px] text-fg-faint">after current reply</div>
+              </button>
+              <button
+                onClick={() => commitSendChoice("steer")}
+                disabled={sendBusy}
+                className="rounded-xl border border-line bg-raised/40 px-2 py-2.5 text-center hover:border-accent/40 hover:bg-accent/10"
+                title="Interrupt the running turn and steer it with your message (Enter)"
+              >
+                <div className="text-[11px] font-medium text-fg">Steer with Message</div>
+                <div className="mt-0.5 text-[9px] text-fg-faint">interrupt now</div>
+              </button>
+            </div>
+            <div className="flex items-center justify-between border-t border-line px-4 py-2">
+              <span className="text-[10px] text-fg-faint/60">Esc to cancel</span>
+              {sendBusy && <span className="text-[10px] text-accent">sending…</span>}
+            </div>
+          </div>
+        </div>
       )}
 
       {showCheckpoint && checkpoint && (

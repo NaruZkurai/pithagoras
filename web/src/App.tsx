@@ -275,8 +275,8 @@ function Shell({
           <Chat
             session={active}
             events={events}
-            onSend={async (msg) => {
-              await api.prompt(active.id, msg);
+            onSend={async (msg, behavior) => {
+              await api.prompt(active.id, msg, behavior);
               refreshSessions();
             }}
             onAbort={async () => {

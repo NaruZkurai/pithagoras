@@ -437,10 +437,16 @@ export class SdkPiClient extends EventEmitter implements PiClient {
     return true;
   }
 
-  async prompt(message: string): Promise<void> {
+  async prompt(message: string, behavior: "followUp" | "steer" = "followUp"): Promise<void> {
     // expandPromptTemplates lets "/name" resolve to its template or extension
     // command, which is how the TUI treats the same input.
-    await this.session.prompt(message, { expandPromptTemplates: true });
+    // If the agent is already streaming, the SDK requires an explicit
+    // streamingBehavior to queue the message: followUp waits for the current
+    // turn then runs this one; steer interrupts and steers with it.
+    await this.session.prompt(message, {
+      expandPromptTemplates: true,
+      streamingBehavior: behavior,
+    });
   }
 
   async abort(): Promise<void> {

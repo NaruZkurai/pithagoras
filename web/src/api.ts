@@ -341,10 +341,10 @@ export const api = {
   renameSession: (id: string, title: string) =>
     json<Session>(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   deleteSession: (id: string) => json<{ ok: true }>(`/api/sessions/${id}`, { method: "DELETE" }),
-  prompt: (id: string, message: string) =>
+  prompt: (id: string, message: string, behavior?: "followUp" | "steer") =>
     json<{ ok: true }>(`/api/sessions/${id}/prompt`, {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, ...(behavior ? { behavior } : {}) }),
     }),
   respondUi: (sessionId: string, id: string, payload: { value?: unknown; cancelled?: boolean }) =>
     json<{ ok: boolean }>(`/api/sessions/${sessionId}/ui-response`, {

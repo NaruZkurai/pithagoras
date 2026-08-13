@@ -313,10 +313,14 @@ app.post("/api/sessions/:id/prompt", async (req, res) => {
   if (typeof message !== "string" || !message.trim()) {
     return res.status(400).json({ error: "message required" });
   }
+  // When the agent is busy, how to queue this message. "followUp" (default)
+  // waits for the current turn then runs this one; "steer" interrupts and
+  // steers with it.
+  const behavior: "followUp" | "steer" = req.body?.behavior === "steer" ? "steer" : "followUp";
   try {
     // Returns as soon as pi accepts the prompt. The run continues server-side
     // regardless of what this browser does next.
-    await sessions.prompt(session.id, message);
+    await sessions.prompt(session.id, message, behavior);
     res.json({ ok: true, status: "running" });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });

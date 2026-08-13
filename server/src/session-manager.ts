@@ -309,7 +309,7 @@ class SessionManager extends EventEmitter {
    * the work finishes, so the HTTP request returns immediately and the run
    * continues in the background.
    */
-  async prompt(sessionId: string, message: string): Promise<void> {
+  async prompt(sessionId: string, message: string, behavior: "followUp" | "steer" = "followUp"): Promise<void> {
     const client = await this.ensureClient(sessionId);
 
     // Every task keeps the main model server alive: reset its idle timer, and
@@ -364,7 +364,7 @@ class SessionManager extends EventEmitter {
     }
     this.record(sessionId, "portal_status", { status: "running" });
     try {
-      await client.prompt(message);
+      await client.prompt(message, behavior);
       // A slash command completes inside prompt() without starting an agent
       // turn, so no agent_end arrives to clear the status. Settle it here
       // rather than leaving "working" on screen forever.
