@@ -47,6 +47,10 @@ function extractMessageText(message: any): string {
 }
 
 const SESSION_ROOT = path.resolve(process.env.SESSION_DIR || "./data/sessions");
+// Each agent is filesystem-sandboxed to its own workspace by default (see the
+// guard extension). EXECUTOR=container opts into full OS isolation in a
+// throwaway Docker container; EXECUTOR=host disables the in-process confinement
+// unless the guard still filters paths.
 const EXECUTOR_KIND = (process.env.EXECUTOR || "host") as ExecutorKind;
 
 /**

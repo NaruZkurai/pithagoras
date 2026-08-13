@@ -48,9 +48,6 @@ const target = (input: Record<string, unknown>) =>
       ? (input.file_path as string)
       : "";
 
-/** Bash verbs whose operand is (or includes) a destination/target path. */
-const WRITE_VERBS = /(?:^|[\s;&|])(python3?\s+-m\s+venv|pip\s+install|mkdir\s+-p?\s+|touch\s+|rm(?:dir)?\s+-[a-z]*r?[a-z]*\s+|cp\s+|mv\s+|install\s+|tee\s+|chmod\s+|chown\s+|ln\s+)/;
-
 /** Anchor-relative: is `p` strictly inside `ws` (either `p` == `ws` or p starts with ws + /)? */
 function inside(p: string, ws: string): boolean {
   if (p === ws) return true;
@@ -58,56 +55,26 @@ function inside(p: string, ws: string): boolean {
 }
 
 /**
- * If a write would touch an absolute path outside the workspace, return that
- * path (else empty). Covers the write-capable tools and, for bash, both POSIX
- * redirections and WRITE_VERBS whose operand is a target. `../` is only a real
- * escape when the resolved result lands outside the workspace. Best-effort: a
- * blast-radius limiter, not a sandbox.
+ * The filesystem sandbox: return the first path a structured file tool touches
+ * that resolves OUTSIDE the workspace (else "").
+ *
+ * Bash is deliberately NOT parsed here: it is already fully sandboxed in a
+ * throwaway container that mounts only the workspace, so no shell command can
+ * reach outside it no matter how it is phrased (and heuristic shell parsing
+ * would false-positive on entirely valid in-workspace commands). The structured
+ * tools below run in-process, so they need an explicit path guard. Memories,
+ * skills and threads are not filesystem tools and never come here.
  */
-function escapedWrite(toolName: string, input: Record<string, unknown>, workspace: string): string {
+function fsEscaped(toolName: string, input: Record<string, unknown>, workspace: string): string {
+  if (toolName === "bash") return ""; // sandboxed by the container, not here
+
   const ws = path.resolve(workspace);
-  const check = (p: string): string => {
-    const resolved = path.resolve(p);
-    return inside(resolved, ws) ? "" : p;
-  };
-
-  if (toolName !== "bash") {
-    return check(target(input));
+  const candidates = [input.path, input.file_path, input.dest];
+  for (const c of candidates) {
+    if (typeof c !== "string" || !c) continue;
+    const resolved = path.resolve(c);
+    if (!inside(resolved, ws)) return c;
   }
-
-  const command = cmd(input);
-  if (!command) return "";
-
-  // POSIX redirections: `> file`, `>> file`, `2> file` — the operand is a write.
-  // `2>&1` and `>&2` are fd-fd redirects, not files, so operands starting with
-  // `&` are skipped.
-  for (const m of command.matchAll(/(?<![<>])(>>?|2>|2>>)\s*(\S+)/g)) {
-    const f = m[2];
-    if (f && !f.startsWith("&") && !/^\$/.test(f) && !/^["']/.test(f)) {
-      const bad = check(f);
-      if (bad) return bad;
-    }
-  }
-
-  // A write verb: every absolute path operand must stay inside the workspace.
-  // Checking all of them (not just the first) catches `cp src /outside/dest`,
-  // where the destination is the last operand and the first is a source.
-  const verbMatch = command.match(WRITE_VERBS);
-  if (verbMatch) {
-    // Everything after the verb, up to the next `;`, `&` or `|` (a fresh
-    // command or pipeline stage). Trim so a leading space doesn't split into
-    // an empty first token.
-    const tail = command.slice((verbMatch.index ?? 0) + verbMatch[0].length).trimStart();
-    const segment = tail.split(/[;&|]/)[0] ?? "";
-    for (const word of segment.split(/\s+/)) {
-      const operand = word.replace(/^["']|["']$/g, "");
-      if (operand && path.isAbsolute(operand)) {
-        const bad = check(operand);
-        if (bad) return bad;
-      }
-    }
-  }
-
   return "";
 }
 
@@ -302,23 +269,26 @@ export function guardExtension(
             useGrant(portalSessionId, event.toolName, subjectOf(event.toolName, event.input ?? {}).trim())
         );
 
-      // A workspace is a hard boundary, applied to every session that has one —
-      // not just tainted ones. Sandboxes live INSIDE their repo (data/workspaces
-      // under the working tree), so without this a model that decides to set up
-      // a .venv or touch config at the repo root writes straight into the real
-      // project. Once written, shell escaping into CRLF / echo re-writes is too
-      // easy to chase — refuse the write outright, with the escaped path named.
+      // A workspace is a hard boundary — the agent's filesystem sandbox. It is
+      // applied to every session that has one (primary user included), not
+      // just tainted ones. The agent may read and write inside its workspace
+      // freely, but no filesystem tool call (bash or a file tool) may touch a
+      // path that resolves outside it. This stops a model from reading the
+      // parent repo's secrets or writing a .venv into the real project it
+      // happens to sit inside. Non-filesystem toolcalls (memories, skills,
+      // threads) are never blocked here.
       if (workspacePath) {
-        const escape = escapedWrite(event.toolName, event.input ?? {}, workspacePath);
+        const escape = fsEscaped(event.toolName, event.input ?? {}, workspacePath);
         if (escape) {
           console.warn(`[guard ${sessionId}] blocked ${event.toolName}: outside workspace ${escape}`);
           return {
             block: true,
             reason:
-              `Refused: that ${event.toolName} write targets a path outside your workspace ` +
-              `(${escape}). You work inside ${workspacePath}. If something outside the ` +
-              `workspace genuinely must change, a human has to do it — hand your user the ` +
-              `path instead of trying to reach it differently.`,
+              `Refused: \`${event.toolName}\` touches \`${escape}\`, which is outside your ` +
+              `filesystem sandbox. You may only read and write inside your workspace ` +
+              `(\`${workspacePath}\`). Memories, skills and threads are always available ` +
+              `— they are not files. If a path outside the sandbox genuinely must change, ` +
+              `hand it to your user; do not try to reach it around the sandbox.`,
           };
         }
       }

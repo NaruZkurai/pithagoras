@@ -10,6 +10,7 @@ import { threadTools, threadFraming } from "./thread-tools.js";
 import { reportTool, reportToFor } from "./report-tool.js";
 import { guardExtension } from "./guard.js";
 import { askPrimaryTool } from "./ask-primary.js";
+import { sandboxBashOperations, sandboxLimits } from "./sandbox-fs.js";
 
 function asArray(v: any): any[] {
   const resolved = typeof v === "function" ? v() : v;
@@ -153,6 +154,11 @@ export class SdkPiClient extends EventEmitter implements PiClient {
     whoNow?: () => { role: string; key?: string };
     /** Lowest role this conversation serves, deciding which context files load. */
     role?: string;
+    /**
+     * Route bash through the filesystem sandbox container. On by default.
+     * Set false only for a trusted, local-only deployment that opts out.
+     */
+    sandboxFs?: boolean;
   }): Promise<SdkPiClient> {
     // Imported lazily so the server still boots (and the container executor
     // still works) if the SDK cannot initialise in this environment.
@@ -271,6 +277,26 @@ export class SdkPiClient extends EventEmitter implements PiClient {
         ? pi.SessionManager.open(opts.sessionFile, opts.sessionDir, opts.cwd)
         : pi.SessionManager.create(opts.cwd, opts.sessionDir);
 
+    // Filesystem sandbox: replace pi's builtin bash with a container-backed
+    // version that runs each command inside a throwaway container mounting only
+    // this workspace. The agent cannot reach the host or the parent repo, while
+    // the portal reads and writes the same workspace normally. Non-filesystem
+    // tools (memories, skills, threads) are untouched.
+    const customTools: any[] = [];
+    if (opts.sandboxFs ?? true) {
+      try {
+        customTools.push(
+          pi.createBashToolDefinition(opts.cwd, {
+            operations: sandboxBashOperations(opts.cwd, sandboxLimits()),
+          })
+        );
+      } catch (e) {
+        console.warn(
+          `[sandbox] container-backed bash unavailable, falling back to local: ${(e as Error).message}`
+        );
+      }
+    }
+
     const { session } = await pi.createAgentSession({
       cwd: opts.cwd,
       sessionManager,
@@ -278,6 +304,7 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       ...(resourceLoader ? { resourceLoader } : {}),
       ...(model ? { model } : {}),
       ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
+      customTools,
     });
 
     const client = new SdkPiClient(session, modelRuntime, () => {});
