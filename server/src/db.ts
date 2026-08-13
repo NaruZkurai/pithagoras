@@ -178,6 +178,16 @@ export function getDb(): Database.Database {
       announced_at TEXT
     );
 
+    -- Portal login accounts (the second user, e.g. narukurai). Distinct from
+    -- the people table (channel identities). The legacy PORTAL_PASSWORD still
+    -- logs in as the primary user when no username is given.
+    CREATE TABLE IF NOT EXISTS users (
+      username TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL DEFAULT '',
+      password TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Questions a colleague's session could not answer, waiting on the primary
     -- user. The id is short because a human types it back in a chat.
     CREATE TABLE IF NOT EXISTS questions (
@@ -1359,3 +1369,34 @@ export function useGrant(sessionId: string, tool: string, subject: string): bool
   getDb().prepare("UPDATE grants SET used_at = ? WHERE id = ?").run(new Date().toISOString(), row.id);
   return true;
 }
+
+// --- portal login users ---------------------------------------------------
+
+export interface UserRow {
+  username: string;
+  display_name: string;
+  password: string;
+  created_at: string;
+}
+
+/** Look up a portal login account by username. */
+export function getUser(username: string): UserRow | undefined {
+  return getDb().prepare("SELECT * FROM users WHERE username = ?").get(username.toLowerCase()) as
+    | UserRow
+    | undefined;
+}
+
+export function listUsers(): UserRow[] {
+  return getDb().prepare("SELECT * FROM users ORDER BY created_at ASC").all() as UserRow[];
+}
+
+/** Insert a portal login account; no-op if it already exists (idempotent). */
+export function upsertUser(username: string, password: string, displayName = ""): void {
+  getDb()
+    .prepare(
+      `INSERT INTO users (username, display_name, password) VALUES (?, ?, ?)
+       ON CONFLICT(username) DO NOTHING`
+    )
+    .run(username.toLowerCase(), displayName || username, password);
+}
+

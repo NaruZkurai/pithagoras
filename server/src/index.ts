@@ -21,7 +21,7 @@ import {
   type WizardInput,
 } from "./agent-setup.js";
 import { sessions, EXECUTOR_KIND } from "./session-manager.js";
-import { authEnabled, checkPassword, isAuthed, issueCookie, requireAuth } from "./auth.js";
+import { authEnabled, authedUser, isAuthed, issueCookie, requireAuth, seedUsers, verifyUser } from "./auth.js";
 import { packagesRouter } from "./api/packages.js";
 import { extensionsRouter } from "./api/extensions.js";
 import { channelsRouter } from "./api/channels.js";
@@ -60,16 +60,19 @@ app.use(cookieParser());
 // --- auth ---
 
 app.get("/api/auth/status", (req, res) => {
-  res.json({ authRequired: authEnabled, authed: isAuthed(req) });
+  const user = authedUser(req);
+  res.json({ authRequired: authEnabled, authed: isAuthed(req), user });
 });
 
 app.post("/api/auth/login", (req, res) => {
   if (!authEnabled) return res.json({ ok: true });
-  if (!checkPassword(req.body?.password)) {
-    return res.status(401).json({ error: "Wrong password" });
+  const { username, password } = req.body ?? {};
+  if (!verifyUser(username, password)) {
+    return res.status(401).json({ error: "Wrong email or password" });
   }
-  issueCookie(res);
-  res.json({ ok: true });
+  const name = typeof username === "string" && username.trim() ? username.trim().toLowerCase() : "primary";
+  issueCookie(res, name);
+  res.json({ ok: true, user: name });
 });
 
 app.use("/api", requireAuth);
@@ -581,6 +584,9 @@ try {
 } catch {
   console.warn(`[portal] could not create BIN_DIR ${BIN_DIR}; tools on PATH may not be available`);
 }
+
+// Seed the second portal user (narukurai) so it can log in.
+seedUsers();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`pithagoras listening on :${PORT}`);

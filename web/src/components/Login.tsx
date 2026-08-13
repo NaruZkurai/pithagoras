@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 
 export function Login({ onSuccess }: { onSuccess: () => void }) {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -11,7 +12,7 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await api.login(password);
+      await api.login(password, username.trim() || undefined);
       onSuccess();
     } catch (err) {
       setError((err as Error).message);
@@ -33,11 +34,17 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
 
         <input
           autoFocus
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="Username (blank = primary password)"
+          className="w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm text-fg outline-none transition placeholder:text-fg-faint focus:border-accent/50 focus:ring-4 focus:ring-accent/10"
+        />
+        <input
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Password"
-          className="w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm text-fg outline-none transition placeholder:text-fg-faint focus:border-accent/50 focus:ring-4 focus:ring-accent/10"
+          className="mt-2 w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm text-fg outline-none transition placeholder:text-fg-faint focus:border-accent/50 focus:ring-4 focus:ring-accent/10"
         />
         {error && <p className="mt-2 text-xs text-danger">{error}</p>}
 

@@ -302,9 +302,13 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  authStatus: () => json<{ authRequired: boolean; authed: boolean }>("/api/auth/status"),
-  login: (password: string) =>
-    json<{ ok: true }>("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) }),
+  authStatus: () =>
+    json<{ authRequired: boolean; authed: boolean; user?: string }>("/api/auth/status"),
+  login: (password: string, username?: string) =>
+    json<{ ok: true; user?: string }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password, username }),
+    }),
   workspaces: () => json<{ root: string; workspaces: Workspace[] }>("/api/workspaces"),
   createWorkspace: (name: string) =>
     json<Workspace>("/api/workspaces", { method: "POST", body: JSON.stringify({ name }) }),
