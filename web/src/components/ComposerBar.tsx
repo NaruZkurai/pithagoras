@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LuCornerUpRight } from "react-icons/lu";
 import { api, type PiConfig, type PiModel, type Session } from "../api";
 import { ContextPill } from "./ContextPill";
 
@@ -255,35 +256,55 @@ export function ComposerBar({
                 Your servers
               </p>
               {cfg.servers.map((sv) => {
-                const active =
-                  (cfg.state.model.provider === "local" && sv.alias.split(",").includes(cfg.state.model.id)) ||
+                const svActive =
+                  (cfg.state.model.provider === "local" &&
+                    sv.alias.split(",").includes(cfg.state.model.id)) ||
                   (sv.status.remote && cfg.state.model.provider === "remote");
                 const dot =
                   sv.status.running && sv.status.healthy ? "bg-ok" : sv.status.running ? "bg-warn" : "bg-fg/30";
+                // The models this one server serves — from its aliases (or its
+                // model file) as "server : model" choices.
+                const models = sv.alias
+                  .split(",")
+                  .map((a) => a.trim())
+                  .filter(Boolean);
+                const list = models.length ? models : sv.model ? [sv.model] : [sv.name];
                 return (
-                  <button
-                    key={sv.name}
-                    type="button"
-                    title={`${sv.host ? sv.host + ":" : ""}${sv.port} · ${sv.status.state}${
-                      active ? " · running now" : ""
-                    }`}
-                    onClick={() => {
-                      // Clicking a server switches to it: use its first alias
-                      // (or the current id if it's already active) so re-clicking
-                      // its running model keeps it.
-                      const parts = sv.alias.split(",").map((a) => a.trim()).filter(Boolean);
-                      const pick = active && cfg.state.model.id ? cfg.state.model.id : parts[0] || sv.model || sv.name;
-                      void applyServer(pick, sv.status.remote);
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg hover:bg-raised"
-                  >
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
-                    <span className="truncate">{sv.name}</span>
-                    <span className="shrink-0 font-mono text-[10px] text-fg-faint">
-                      {sv.host ? sv.host : "local"}:{sv.port}
-                    </span>
-                    {active && <span className="ml-auto text-[10px] text-ok">running</span>}
-                  </button>
+                  <div key={sv.name} className="rounded-lg">
+                    {/* Server header */}
+                    <div className="flex items-center gap-2 px-2 py-1 text-sm text-fg">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
+                      <span className="truncate font-medium">{sv.name}</span>
+                      <span className="shrink-0 font-mono text-[10px] text-fg-faint">
+                        {sv.host ? sv.host : "local"}:{sv.port}
+                      </span>
+                      {svActive && <span className="ml-auto text-[10px] text-ok">running</span>}
+                    </div>
+                    {/* The models on this server — select server : model. */}
+                    <div className="mb-1 space-y-0.5">
+                      {list.map((modelId) => {
+                        const active = (cfg.state.model.id === modelId &&
+                          cfg.state.model.provider === (sv.status.remote ? "remote" : "local"));
+                        return (
+                          <button
+                            key={`${sv.name}:${modelId}`}
+                            type="button"
+                            title={`Use ${modelId} on ${sv.name}${
+                              sv.status.running && sv.status.healthy ? ` (${sv.status.state})` : ""
+                            }`}
+                            onClick={() => void applyServer(modelId, sv.status.remote)}
+                            className={`flex w-full items-center gap-2 rounded-md px-2 py-1 pl-7 text-left text-sm transition ${
+                              active ? "bg-fg/10 text-fg" : "text-fg-muted hover:bg-raised hover:text-fg"
+                            }`}
+                          >
+                            <LuCornerUpRight className="h-3 w-3 shrink-0 text-fg-faint" />
+                            <span className="truncate font-mono text-[11px]">{modelId}</span>
+                            {active && <span className="ml-auto text-[10px] text-ok">✓</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 );
               })}
               <div className="my-1 border-t border-line" />
