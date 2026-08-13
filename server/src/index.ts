@@ -32,7 +32,8 @@ import { filesRouter } from "./api/files.js";
 import { threadsRouter } from "./api/threads.js";
 import { stashesRouter } from "./api/stashes.js";
 import { modelsRouter } from "./api/models.js";
-import { startEnabled, shutdownModelServers, startIdleSweeper, stopIdleSweeper } from "./model-server.js";
+import { startEnabled, shutdownModelServers, startIdleSweeper, stopIdleSweeper, status as modelServerStatus } from "./model-server.js";
+import { listModelServers } from "./db.js";
 import { mcpRouter } from "./api/mcp.js";
 import { peopleRouter } from "./api/people.js";
 import { routineSupervisor } from "./routines/supervisor.js";
@@ -392,7 +393,22 @@ app.get("/api/sessions/:id/models", async (req, res) => {
       client.getModels(),
       client.getStats(),
     ]);
-    res.json({ live: true, state, thinking: { levels }, models: { models }, stats });
+    // The portal's own model servers (local llama + remote), with live status,
+    // so the picker can show "your servers" with a running indicator instead
+    // of only pi's hardcoded catalogue.
+    const servers = await Promise.all(
+      listModelServers().map(async (s) => ({
+        name: s.name,
+        host: s.host,
+        port: s.port,
+        model: s.model,
+        alias: s.alias,
+        ctx: s.ctx,
+        enabled: !!s.enabled,
+        status: await modelServerStatus(s),
+      }))
+    );
+    res.json({ live: true, state, thinking: { levels }, models: { models }, servers, stats });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }

@@ -690,12 +690,33 @@ export interface PiState {
   messageCount?: number;
 }
 
+/** A portal model server (local llama or remote) for the picker's "your servers". */
+export interface ModelServerChoice {
+  name: string;
+  host: string;
+  port: number;
+  model: string;
+  alias: string;
+  ctx: number;
+  enabled: boolean;
+  status: {
+    remote: boolean;
+    running: boolean;
+    healthy: boolean;
+    state: ServerState;
+    host: string;
+    port: number;
+  };
+}
+
 export interface PiConfig {
   /** False when pi is not running: model and effort are the stored ones. */
   live: boolean;
   state: PiState;
   thinking: { levels: string[] };
   models: { models: PiModel[] };
+  /** The portal's own model servers, so the picker can show which are running. */
+  servers?: ModelServerChoice[];
   stats: null | {
     tokens: { input: number; output: number; total: number };
     cost: number;

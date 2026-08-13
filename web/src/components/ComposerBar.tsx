@@ -167,6 +167,21 @@ export function ComposerBar({
     }
   };
 
+  /** Switch to one of the portal's own model servers by name/alias. */
+  const applyServer = async (modelId: string, remote: boolean) => {
+    setBusy(true);
+    try {
+      await api.setConfig(sessionId, { provider: remote ? "remote" : "local", modelId });
+      setRecents(pushRecent(modelId));
+      await load();
+      setOpen(null);
+      setShowAll(false);
+      setFilter("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const levels = cfg.thinking.levels ?? [];
   const serverEffort = Math.max(0, levels.indexOf(cfg.state.thinkingLevel));
   // While dragging, the slider follows the pointer rather than the server. It
@@ -232,6 +247,49 @@ export function ComposerBar({
       {open === "model" && (
         <div className="absolute bottom-full right-0 mb-2 w-72 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-pop">
           <p className="px-3 py-1 text-[11px] text-fg-subtle">Models</p>
+
+          {/* Your own model servers (local llama + remote), with live status. */}
+          {cfg.servers && cfg.servers.length > 0 && (
+            <div className="px-1 pb-1">
+              <p className="px-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-fg-faint">
+                Your servers
+              </p>
+              {cfg.servers.map((sv) => {
+                const active =
+                  (cfg.state.model.provider === "local" && sv.alias.split(",").includes(cfg.state.model.id)) ||
+                  (sv.status.remote && cfg.state.model.provider === "remote");
+                const dot =
+                  sv.status.running && sv.status.healthy ? "bg-ok" : sv.status.running ? "bg-warn" : "bg-fg/30";
+                return (
+                  <button
+                    key={sv.name}
+                    type="button"
+                    title={`${sv.host ? sv.host + ":" : ""}${sv.port} · ${sv.status.state}${
+                      active ? " · running now" : ""
+                    }`}
+                    onClick={() => {
+                      // Clicking a server switches to it: use its first alias
+                      // (or the current id if it's already active) so re-clicking
+                      // its running model keeps it.
+                      const parts = sv.alias.split(",").map((a) => a.trim()).filter(Boolean);
+                      const pick = active && cfg.state.model.id ? cfg.state.model.id : parts[0] || sv.model || sv.name;
+                      void applyServer(pick, sv.status.remote);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg hover:bg-raised"
+                  >
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
+                    <span className="truncate">{sv.name}</span>
+                    <span className="shrink-0 font-mono text-[10px] text-fg-faint">
+                      {sv.host ? sv.host : "local"}:{sv.port}
+                    </span>
+                    {active && <span className="ml-auto text-[10px] text-ok">running</span>}
+                  </button>
+                );
+              })}
+              <div className="my-1 border-t border-line" />
+            </div>
+          )}
+
           {!showAll ? (
             <>
               {quick.map((m) => (
@@ -255,7 +313,7 @@ export function ComposerBar({
                 onClick={() => setShowAll(true)}
                 className="flex w-full items-center px-3 py-1.5 text-left text-sm text-fg-muted transition hover:bg-fg/5 disabled:opacity-50"
               >
-                {models.length ? "More models" : "Loading models…"}
+                {models.length ? "All models" : "Loading models…"}
                 {models.length > 0 && <span className="ml-auto text-fg-subtle">›</span>}
               </button>
             </>
