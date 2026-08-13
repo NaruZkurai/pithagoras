@@ -43,6 +43,12 @@ function buildArgs(s: ModelServerRow): string[] {
     if (s.parallel) args.push("--parallel", String(s.parallel));
     if (s.no_kv_offload) args.push("--no-kv-offload");
   }
+  // Speculative decoding: a small drafter model guesses tokens for the big one
+  // to verify. Only the stock llama-server supports it.
+  if (!isRs && s.draft_model && s.draft_model.trim()) {
+    args.push("-md", s.draft_model.trim());
+    if (s.draft_ngl > 0) args.push("--draft-ngl", String(s.draft_ngl));
+  }
   args.push("--port", String(s.port));
   if (s.extra_args) args.push(...s.extra_args.split(/\s+/).filter(Boolean));
   return args;

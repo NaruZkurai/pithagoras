@@ -85,6 +85,8 @@ export interface ModelServer {
   parallel: number;
   no_kv_offload: number;
   extra_args: string;
+  draft_model: string;
+  draft_ngl: number;
   enabled: number;
   /** True for the server pi talks to (the one LLAMA_BASE_URL points at). */
   main?: boolean;
@@ -97,6 +99,22 @@ export interface ModelServer {
     pid: number | null;
     state: ServerState;
   };
+}
+
+/** A folder listing for the model/bin picker. */
+export interface ModelFsEntry {
+  name: string;
+  path: string;
+}
+/** The filesystem picker result for choosing a model or llama binary. */
+export interface ModelFs {
+  path: string;
+  parent: string;
+  home: string;
+  defaultModelDir: string;
+  dirs: ModelFsEntry[];
+  models: ModelFsEntry[];
+  bins: ModelFsEntry[];
 }
 
 /** Work the agent does on a schedule. */
@@ -372,12 +390,17 @@ export const api = {
     parallel?: number;
     no_kv_offload?: boolean;
     extra_args?: string;
+    draft_model?: string;
+    draft_ngl?: number;
     enabled?: boolean;
   }) =>
     json<{ ok: true; server?: ModelServer }>("/api/models/servers", {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  // Browse a folder on disk for the model/bin picker.
+  modelFs: (path?: string) =>
+    json<ModelFs>(`/api/models/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   startModelServer: (name: string) =>
     json<{ ok: true }>(`/api/models/servers/${encodeURIComponent(name)}/start`, {
       method: "POST",

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  LuArrowLeft,
+  LuChevronRight,
   LuCircleAlert,
+  LuFileCode2,
+  LuFolderOpen,
   LuPencil,
   LuPlay,
   LuPlus,
@@ -9,7 +13,7 @@ import {
   LuSquare,
   LuTrash2,
 } from "react-icons/lu";
-import { api, type ModelServer } from "../api";
+import { api, type ModelFs, type ModelFsEntry, type ModelServer } from "../api";
 
 const DEFAULT_BIN = "/nzk/bin/llama-turbo-latest/llama-server";
 
@@ -18,6 +22,131 @@ const CTX_PRESETS = [2048, 8192, 16384, 32768, 65536, 131072];
 const CTX_MIN = 2048;
 const CTX_MAX = 131072;
 const CTX_STEP = 1024;
+
+/**
+ * A filesystem picker for the model server form — browse folders to pick a
+ * model file or a llama binary instead of typing a path by hand.
+ */
+function FolderPicker({
+  label,
+  value,
+  mode,
+  onPick,
+}: {
+  label: string;
+  value: string;
+  /** "model" lists .gguf files; "bin" lists llama-server binaries. */
+  mode: "model" | "bin";
+  onPick: (path: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [fs, setFs] = useState<ModelFs | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const browse = async (path?: string) => {
+    setError(null);
+    try {
+      setFs(await api.modelFs(path));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const openPicker = () => {
+    setOpen((v) => !v);
+    if (!open) void browse(value ? undefined : undefined);
+  };
+
+  const pick = (entry: ModelFsEntry) => {
+    onPick(entry.path);
+    setOpen(false);
+  };
+
+  const nav = (dir: ModelFsEntry) => void browse(dir.path);
+
+  if (!open) {
+    return (
+      <label className="block">
+        <span className="mb-0.5 block text-[11px] font-medium text-fg-subtle">{label}</span>
+        <div className="flex gap-1.5">
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => onPick(e.target.value)}
+            placeholder={mode === "bin" ? "path to llama-server" : "path to model .gguf"}
+            className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] text-fg outline-none focus:border-accent"
+          />
+          <button
+            type="button"
+            onClick={openPicker}
+            title={`Browse folders for a ${mode === "bin" ? "llama binary" : "model file"}`}
+            className="flex shrink-0 items-center gap-1 rounded-lg border border-line px-2 py-1 text-[11px] text-fg-muted hover:text-fg"
+          >
+            <LuFolderOpen className="h-3.5 w-3.5" /> Browse
+          </button>
+        </div>
+      </label>
+    );
+  }
+
+  return (
+    <label className="block">
+      <span className="mb-0.5 block text-[11px] font-medium text-fg-subtle">{label}</span>
+      <div className="rounded-lg border border-line bg-surface p-2">
+        <div className="mb-1.5 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={openPicker}
+            title="Close picker"
+            className="rounded px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-fg/5 hover:text-fg"
+          >
+            ✕
+          </button>
+          {fs?.parent && (
+            <button
+              type="button"
+              onClick={() => void browse(fs.parent)}
+              title="Up one folder"
+              className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-fg/5 hover:text-fg"
+            >
+              <LuArrowLeft className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-fg-subtle" title={fs?.path}>
+            {fs?.path}
+          </span>
+        </div>
+        {error && <p className="mb-1 text-[11px] text-danger">{error}</p>}
+        {fs && fs.dirs.length === 0 && fs.models.length === 0 && fs.bins.length === 0 && (
+          <p className="py-2 text-center text-[11px] text-fg-faint">(empty folder)</p>
+        )}
+        <div className="max-h-48 space-y-0.5 overflow-y-auto">
+          {fs?.dirs.map((d) => (
+            <div
+              key={d.path}
+              className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-[11px] text-fg hover:bg-fg/5"
+              onClick={() => nav(d)}
+            >
+              <LuFolderOpen className="h-3.5 w-3.5 shrink-0 text-accent" />
+              <span className="truncate">{d.name}</span>
+              <LuChevronRight className="ml-auto h-3 w-3 shrink-0 text-fg-faint" />
+            </div>
+          ))}
+          {(mode === "bin" ? fs?.bins ?? [] : fs?.models ?? []).map((f) => (
+            <div
+              key={f.path}
+              className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-[11px] text-fg hover:bg-fg/5"
+              onClick={() => pick(f)}
+            >
+              <LuFileCode2 className="h-3.5 w-3.5 shrink-0 text-ok" />
+              <span className="truncate">{f.name}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </label>
+  );
+}
 
 const empty = {
   name: "",
@@ -28,7 +157,11 @@ const empty = {
   ngl: "0",
   ctx: "65536",
   threads: "12",
-  parallel: "2",
+  parallel: "1",
+  draft_model: "",
+  draft_ngl: "0",
+  no_kv_offload: true,
+  extra_args: "",
   enabled: true,
 };
 
@@ -81,7 +214,11 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
         ngl: Number(form.ngl) || 0,
         ctx: Number(form.ctx) || 2048,
         threads: Number(form.threads) || 12,
-        parallel: Number(form.parallel) || 2,
+        parallel: Number(form.parallel) || 1,
+        draft_model: form.draft_model.trim(),
+        draft_ngl: Number(form.draft_ngl) || 0,
+        no_kv_offload: form.no_kv_offload,
+        extra_args: form.extra_args,
         enabled: form.enabled,
       });
       setForm(empty);
@@ -137,6 +274,10 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
       ctx: String(s.ctx),
       threads: String(s.threads),
       parallel: String(s.parallel),
+      draft_model: s.draft_model ?? "",
+      draft_ngl: String(s.draft_ngl ?? 0),
+      no_kv_offload: !!s.no_kv_offload,
+      extra_args: s.extra_args ?? "",
       enabled: !!s.enabled,
     });
     setShowForm(true);
@@ -179,8 +320,6 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
           {(
             [
               ["name", "Name", "text"],
-              ["bin", "Binary path", "text"],
-              ["model", "Model file (.gguf)", "text"],
               ["alias", "Alias / model id", "text"],
               ["port", "Port", "number"],
               ["ngl", "GPU layers (-ngl)", "number"],
@@ -199,6 +338,22 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
               />
             </label>
           ))}
+
+          {/* Pick a model file by browsing a folder — no manual path typing. */}
+          <FolderPicker
+            label="Model file (.gguf)"
+            mode="model"
+            value={form.model}
+            onPick={(p) => setForm((f) => ({ ...f, model: p }))}
+          />
+          {/* Pick the llama binary by browsing a folder. */}
+          <FolderPicker
+            label="Binary path (llama-server)"
+            mode="bin"
+            value={form.bin}
+            onPick={(p) => setForm((f) => ({ ...f, bin: p }))}
+          />
+
           <div>
             <div className="mb-1 flex items-center justify-between gap-2">
               <span className="text-[11px] font-medium text-fg-subtle">Context (-c)</span>
@@ -246,6 +401,54 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
               )}
             </div>
           </div>
+
+          {/* Speculative decoding — a small "drafter" that guesses tokens. */}
+          <div className="rounded-lg border border-line bg-surface/50 p-2">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-[11px] font-medium text-fg-subtle">Drafter model (speculative)</span>
+              <span className="text-[10px] text-fg-faint">optional — boosts speed</span>
+            </div>
+            <FolderPicker
+              label="Drafter model file (.gguf)"
+              mode="model"
+              value={form.draft_model}
+              onPick={(p) => setForm((f) => ({ ...f, draft_model: p }))}
+            />
+            <label className="mt-2 block">
+              <span className="mb-0.5 block text-[11px] font-medium text-fg-subtle">
+                Drafter GPU layers (--draft-ngl)
+              </span>
+              <input
+                type="number"
+                value={String(form.draft_ngl)}
+                onChange={set("draft_ngl")}
+                placeholder="0"
+                className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs text-fg outline-none focus:border-accent"
+              />
+            </label>
+          </div>
+
+          {/* Advanced / scuff-but-works flags. */}
+          <label className="flex items-center gap-2 py-1 text-xs text-fg-muted">
+            <input
+              type="checkbox"
+              checked={form.no_kv_offload}
+              onChange={(e) => setForm((f) => ({ ...f, no_kv_offload: e.target.checked }))}
+            />
+            Keep KV cache on CPU (--no-kv-offload)
+          </label>
+          <label className="block">
+            <span className="mb-0.5 block text-[11px] font-medium text-fg-subtle">
+              Extra args (advanced)
+            </span>
+            <input
+              type="text"
+              value={form.extra_args}
+              onChange={(e) => setForm((f) => ({ ...f, extra_args: e.target.value }))}
+              placeholder="--reasoning off --mlock etc."
+              className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] text-fg outline-none focus:border-accent"
+            />
+          </label>
           <label className="flex items-center gap-2 py-1 text-xs text-fg-muted">
             <input type="checkbox" checked={form.enabled} onChange={set("enabled")} />
             Start with the portal

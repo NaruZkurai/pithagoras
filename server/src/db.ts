@@ -342,6 +342,8 @@ export function getDb(): Database.Database {
       parallel INTEGER NOT NULL DEFAULT 2,
       no_kv_offload INTEGER NOT NULL DEFAULT 1,
       extra_args TEXT NOT NULL DEFAULT '',
+      draft_model TEXT NOT NULL DEFAULT '',
+      draft_ngl INTEGER NOT NULL DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -500,6 +502,19 @@ function migrate(d: Database.Database): void {
   // no model marker. The library search is pure lexical over the token mirrors.
   d.exec("DELETE FROM model_servers WHERE name = 'bonsai-embed'");
   d.exec("DELETE FROM settings WHERE key = 'skill_embed_model'");
+
+  // Speculative decoding: an optional small "drafter" model that guesses the
+  // next tokens while the big model verifies them. Mirrors llama.cpp's
+  // -md / --model-draft and --draft-ngl flags.
+  const msCols = (d.prepare("PRAGMA table_info(model_servers)").all() as { name: string }[]).map(
+    (c) => c.name
+  );
+  if (msCols.length && !msCols.includes("draft_model")) {
+    d.exec("ALTER TABLE model_servers ADD COLUMN draft_model TEXT NOT NULL DEFAULT ''");
+  }
+  if (msCols.length && !msCols.includes("draft_ngl")) {
+    d.exec("ALTER TABLE model_servers ADD COLUMN draft_ngl INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 export function createSession(row: {
@@ -1072,6 +1087,8 @@ export interface ModelServerRow {
   parallel: number;
   no_kv_offload: number;
   extra_args: string;
+  draft_model: string;
+  draft_ngl: number;
   enabled: number;
 }
 
@@ -1092,8 +1109,8 @@ export function upsertModelServer(
   getDb()
     .prepare(
       `INSERT INTO model_servers
-        (name, bin, model, alias, port, ngl, ctx, threads, parallel, no_kv_offload, extra_args, enabled, updated_at)
-       VALUES (@name, @bin, @model, @alias, @port, @ngl, @ctx, @threads, @parallel, @no_kv_offload, @extra_args, @enabled, datetime('now'))
+        (name, bin, model, alias, port, ngl, ctx, threads, parallel, no_kv_offload, extra_args, draft_model, draft_ngl, enabled, updated_at)
+       VALUES (@name, @bin, @model, @alias, @port, @ngl, @ctx, @threads, @parallel, @no_kv_offload, @extra_args, @draft_model, @draft_ngl, @enabled, datetime('now'))
        ON CONFLICT(name) DO UPDATE SET
          bin = excluded.bin,
          model = excluded.model,
@@ -1105,6 +1122,8 @@ export function upsertModelServer(
          parallel = excluded.parallel,
          no_kv_offload = excluded.no_kv_offload,
          extra_args = excluded.extra_args,
+         draft_model = excluded.draft_model,
+         draft_ngl = excluded.draft_ngl,
          enabled = excluded.enabled,
          updated_at = datetime('now')`
     )
