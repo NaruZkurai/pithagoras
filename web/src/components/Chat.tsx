@@ -296,7 +296,6 @@ export function Chat({
    * locks up while a reply is being generated (which can take minutes).
    */
   const continueBranchSend = (seq: number, text: string) => {
-    if (replySeq !== null) return; // a branch reply is already in flight
     void sendReply(seq, text);
   };
 
@@ -385,9 +384,8 @@ export function Chat({
     // Branch continuation: dispatch into the branch's thread WITHOUT holding
     // the composer's `sending` lock. The thread agent can take minutes, and
     // blocking on it here froze the composer so Enter did nothing. The reply
-    // shows up in the ThreadsPanel side panel.
+    // shows inline under the branch message.
     if (branchSeq !== null) {
-      if (replySeq !== null) return; // a branch reply is already in flight
       setInput("");
       setShowThreads(false);
       continueBranchSend(branchSeq, msg);

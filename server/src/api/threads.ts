@@ -99,7 +99,16 @@ export function threadsRouter(): Router {
       executor: EXECUTOR_KIND,
       kind: "thread",
     });
-    res.json(toApi(getThread(id)!, listThreadMessages(id)));
+    const created = getThread(id) ?? {
+      id,
+      session_id: session.id,
+      parent_seq: parentSeq,
+      parent_role: parentRole,
+      parent_text: parentText,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    res.json(toApi(created, listThreadMessages(id)));
   });
 
   router.get("/threads/:id", (req, res) => {
@@ -167,7 +176,11 @@ export function threadsRouter(): Router {
         content: `(error) ${(e as Error).message}`,
       });
     }
-    res.json(toApi(getThread(thread.id)!, listThreadMessages(thread.id)));
+    // The thread row can disappear while the ask above blocks (e.g. a delete
+    // raced in), so fall back to the thread we resolved up front rather than
+    // crashing `toApi` on `getThread(...)!`.
+    const fresh = getThread(thread.id);
+    res.json(toApi(fresh ?? thread, listThreadMessages(thread.id)));
   });
 
   router.delete("/threads/:id", async (req, res) => {
