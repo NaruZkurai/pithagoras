@@ -113,6 +113,10 @@ export function Chat({
   // Edit an existing user message in place, then resend it.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState("");
+  // The message being edited (id + seq + kind). Editing forks the timeline at
+  // this message: the original stays an immutable callable atom, and the edited
+  // text continues a branch seeded here, folding the old future.
+  const [editTarget, setEditTarget] = useState<{ id: string; seq: number } | null>(null);
   // Branch overview (Obsidian-style branching of messages -> stash threads).
   const [showBranches, setShowBranches] = useState(false);
   // When branching a message, anything at or after this seq is hidden, so the
@@ -504,31 +508,48 @@ export function Chat({
     void onSend(item.text);
   };
 
-  /** Start editing a message in place; saving re-issues it so the agent
-   *  responds again (in the branch when one is active). Works for both user
-   *  and assistant messages. */
+  /** Start editing a message in place; saving forks the timeline at it so the
+   *  agent responds again (in the branch when one is active). Works for both
+   *  user and assistant messages. */
   const startEdit = (item: Extract<Item, { kind: "user" | "assistant" }>) => {
     if (sending || running) return;
     setEditingId(item.id);
     // Strip framing blocks for user messages so you edit just what you wrote;
     // assistant messages are already the model's own words.
     setEditingText(item.kind === "user" ? splitContext(item.text).text : item.text);
+    setEditTarget({ id: item.id, seq: seqOf(item) });
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setEditingText("");
+    setEditTarget(null);
   };
 
-  /** Save an edited message and re-issue it so the agent responds again.  */
+  /**
+   * Save an edited message and re-issue it so the agent responds again.
+   *
+   * Editing FORKS the timeline: the edited message's original content stays in
+   * place as an immutable, callable atom, but the future of the conversation
+   * folds away (cutoff) and the corrected prompt continues a fresh branch
+   * seeded at the edited message. The old replies are not destroyed — they're
+   * the fork's "would-have-been" future, restorable via the full timeline.
+   */
   const applyEdit = () => {
     const msg = editingText.trim();
     if (!msg || sending || running) return;
+    const target = editTarget;
     setEditingId(null);
     setEditingText("");
-    // In a branch, editing re-runs the agent inside the branch (same tools and
-    // context); otherwise it resumes the session with the edited prompt.
-    if (branchSeq !== null) {
+    setEditTarget(null);
+    // Fork at the edited message (fold the old future + continue a fresh
+    // branch from it). A composer-only send keeps today's behaviour.
+    if (target) {
+      setShowFiles(false);
+      setCutoff(target.seq);
+      setBranchSeq(target.seq);
+      void sendReply(target.seq, msg);
+    } else if (branchSeq !== null) {
       void sendReply(branchSeq, msg);
     } else {
       void onSend(msg);
