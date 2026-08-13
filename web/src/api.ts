@@ -208,6 +208,21 @@ export interface StashMeta extends Stash {
   sessionTitle: string;
 }
 
+/** A callable chat variable: one chat atom (message/thought/tool/shell). */
+export interface Ccv {
+  id: string;
+  sessionId: string;
+  seq: number;
+  idx: number;
+  type: "message" | "thinking" | "tool_call" | "tool_result" | "shell";
+  owner: "user" | "assistant" | "tool";
+  content: string;
+  memory: boolean;
+  edited: boolean;
+  createdAt: string;
+  sessionTitle?: string;
+}
+
 /** Whether the background memory hub daemon is reachable. */
 export interface MemoryHubStatus {
   running: boolean;
@@ -518,6 +533,13 @@ export const api = {
   // Everything the memory hub is holding.
   memories: () =>
     json<{ atoms: MemoryAtom[]; stashes: StashMeta[]; error?: string }>(`/api/nk/memories`),
+
+  // CCVs — callable chat variables (hashed chat atoms).
+  ccvs: (sessionId: string) => json<{ ccvs: Ccv[] }>(`/api/sessions/${sessionId}/ccvs`),
+  ccv: (id: string) => json<{ ccv: Ccv }>(`/api/ccvs/${id}`),
+  ccvMemories: () => json<{ ccvs: Ccv[] }>(`/api/ccvs/memories`),
+  updateCcv: (id: string, patch: { content?: string; memory?: boolean }) =>
+    json<{ ccv: Ccv }>(`/api/ccvs/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
 
   agentSetup: () => json<AgentSetup>("/api/agent/setup"),
   runAgentWizard: (input: {

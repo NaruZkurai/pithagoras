@@ -8,8 +8,9 @@ import {
   LuPencil,
   LuRotateCcw,
   LuSquare,
+  LuStar,
 } from "react-icons/lu";
-import { api, type PiCommand, type PortalEvent, type Session, type Thread } from "../api";
+import { api, type Ccv, type PiCommand, type PortalEvent, type Session, type Thread } from "../api";
 import { buildTranscript, type Item } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
 import { FileExplorer } from "./FileExplorer";
@@ -339,6 +340,38 @@ export function Chat({
       cancelled = true;
     };
   }, [session.id]);
+
+  // Callable chat variables (CCVs) for this session, loaded so a message can
+  // be "remembered" as a memory by matching its timeline seq.
+  const [sessionCcvs, setSessionCcvs] = useState<Ccv[]>([]);
+  const [ccvFlag, setCcvFlag] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () =>
+      api
+        .ccvs(session.id)
+        .then((r) => !cancelled && setSessionCcvs(r.ccvs))
+        .catch(() => {});
+    refresh();
+    const t = setInterval(refresh, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [session.id]);
+
+  /** Mark the message at `seq` as a remembered memory CCV. */
+  const rememberCcv = async (seq: number) => {
+    if (ccvFlag !== null) return;
+    const ccv = sessionCcvs.find((c) => c.seq === seq);
+    if (!ccv) return;
+    setCcvFlag(seq);
+    try {
+      await api.updateCcv(ccv.id, { memory: true });
+    } finally {
+      setCcvFlag(null);
+    }
+  };
 
   // A task just finished: open a thread on the final assistant message so the
   // follow-up can happen in an isolated context. Fires on the running→idle
@@ -671,6 +704,35 @@ export function Chat({
                   >
                     #{seqOf(item)}
                   </button>
+                  <Tooltip
+                    label={
+                      ccvFlag === seqOf(item)
+                        ? "Remembering…"
+                        : sessionCcvs.some((c) => c.seq === seqOf(item) && c.memory)
+                          ? "Remembered as a memory"
+                          : "Save as a callable memory"
+                    }
+                    side="top"
+                  >
+                    <button
+                      onClick={() => rememberCcv(seqOf(item))}
+                      disabled={ccvFlag !== null}
+                      title="Save as a callable memory"
+                      className={`self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 group-hover:opacity-100 ${
+                        sessionCcvs.some((c) => c.seq === seqOf(item) && c.memory)
+                          ? "text-warn hover:bg-warn/10"
+                          : "hover:text-warn disabled:opacity-30"
+                      }`}
+                    >
+                      <LuStar
+                        className={`h-3.5 w-3.5 ${
+                          sessionCcvs.some((c) => c.seq === seqOf(item) && c.memory)
+                            ? "fill-current"
+                            : ""
+                        }`}
+                      />
+                    </button>
+                  </Tooltip>
                   <Tooltip label="Edit this message and resend it" side="top">
                     <button
                       onClick={() => startEdit(item)}
@@ -813,6 +875,35 @@ export function Chat({
                   >
                     #{seqOf(item)}
                   </button>
+                  <Tooltip
+                    label={
+                      ccvFlag === seqOf(item)
+                        ? "Remembering…"
+                        : sessionCcvs.some((c) => c.seq === seqOf(item) && c.memory)
+                          ? "Remembered as a memory"
+                          : "Save as a callable memory"
+                    }
+                    side="top"
+                  >
+                    <button
+                      onClick={() => rememberCcv(seqOf(item))}
+                      disabled={ccvFlag !== null}
+                      className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] transition ${
+                        sessionCcvs.some((c) => c.seq === seqOf(item) && c.memory)
+                          ? "text-warn hover:bg-warn/10"
+                          : "text-fg-faint hover:bg-fg/5 hover:text-warn disabled:opacity-50"
+                      }`}
+                    >
+                      <LuStar
+                        className={`h-3 w-3 ${
+                          sessionCcvs.some((c) => c.seq === seqOf(item) && c.memory)
+                            ? "fill-current"
+                            : ""
+                        }`}
+                      />{" "}
+                      Remember
+                    </button>
+                  </Tooltip>
                   <Tooltip label="Edit this message and ask the agent to respond again" side="top">
                     <button
                       onClick={() => startEdit(item)}

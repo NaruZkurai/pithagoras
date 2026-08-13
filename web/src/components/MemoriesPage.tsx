@@ -4,14 +4,24 @@ import {
   LuBrain,
   LuCircleAlert,
   LuDatabase,
+  LuHash,
   LuRefreshCw,
+  LuTrash2,
 } from "react-icons/lu";
-import { api, type MemoryAtom, type MemoryHubStatus, type StashMeta } from "../api";
+import { api, type Ccv, type MemoryAtom, type MemoryHubStatus, type StashMeta } from "../api";
 
 const TYPE_META: Record<MemoryAtom["type"], { label: string; cls: string }> = {
   persona: { label: "Persona", cls: "bg-accent/15 text-accent" },
   episodic: { label: "Episodic", cls: "bg-warn/15 text-warn" },
   instruction: { label: "Instruction", cls: "bg-ok/15 text-ok" },
+};
+
+const CCV_META: Record<Ccv["type"], { label: string; cls: string }> = {
+  message: { label: "Message", cls: "bg-accent/15 text-accent" },
+  thinking: { label: "Thought", cls: "bg-warn/15 text-warn" },
+  tool_call: { label: "Tool call", cls: "bg-fg/10 text-fg-subtle" },
+  tool_result: { label: "Tool result", cls: "bg-fg/10 text-fg-subtle" },
+  shell: { label: "Shell", cls: "bg-ok/15 text-ok" },
 };
 
 function fmtTime(iso?: string): string {
@@ -55,14 +65,16 @@ function AtomCard({ atom }: { atom: MemoryAtom }) {
 export function MemoriesPage() {
   const [atoms, setAtoms] = useState<MemoryAtom[] | null>(null);
   const [stashes, setStashes] = useState<StashMeta[]>([]);
+  const [ccvs, setCcvs] = useState<Ccv[]>([]);
   const [status, setStatus] = useState<MemoryHubStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [m, s] = await Promise.all([api.memories(), api.memoryStatus()]);
+      const [m, s, c] = await Promise.all([api.memories(), api.memoryStatus(), api.ccvMemories()]);
       setAtoms(m.atoms);
       setStashes(m.stashes);
+      setCcvs(c.ccvs);
       setStatus(s);
       if (m.error) setError(m.error);
       else setError(null);
@@ -128,13 +140,62 @@ export function MemoriesPage() {
         <p className="py-10 text-center text-sm text-fg-faint">Loading memories…</p>
       )}
 
-      {atoms !== null && groups.length === 0 && stashes.length === 0 && (
+      {ccvs.length > 0 && (
+        <section className="mb-6">
+          <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-fg-subtle">
+            <LuHash className="h-3.5 w-3.5" />
+            Callable chat variables
+            <span className="rounded-full bg-fg/10 px-1.5 py-0.5 text-[10px] text-fg-faint">
+              {ccvs.length}
+            </span>
+          </h2>
+          <div className="space-y-2">
+            {ccvs.map((c) => {
+              const meta = CCV_META[c.type] ?? CCV_META.message;
+              return (
+                <div key={c.id} className="rounded-xl border border-line bg-raised/40 p-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded-full px-2 py-0.5 text-[9px] font-medium ${meta.cls}`}>
+                      {meta.label}
+                    </span>
+                    <span className="truncate font-mono text-[10px] text-fg-faint" title={c.id}>
+                      {c.id}
+                    </span>
+                    <span className="ml-auto font-mono text-[10px] text-fg-faint">
+                      {fmtTime(c.createdAt)}
+                    </span>
+                    <button
+                      onClick={async () => {
+                        await api.updateCcv(c.id, { memory: false });
+                        load();
+                      }}
+                      title="Forget this memory"
+                      className="rounded-md p-1 text-fg-faint transition hover:bg-danger/10 hover:text-danger"
+                    >
+                      <LuTrash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-fg">
+                    {c.content}
+                  </p>
+                  <p className="mt-1 font-mono text-[10px] text-fg-faint">
+                    {c.sessionTitle || c.sessionId} · {c.owner}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {atoms !== null && groups.length === 0 && stashes.length === 0 && ccvs.length === 0 && (
         <div className="rounded-xl border border-dashed border-line px-6 py-12 text-center">
           <LuDatabase className="mx-auto mb-2 h-6 w-6 text-fg-faint" />
           <p className="text-sm text-fg-muted">No memories stored yet.</p>
           <p className="mx-auto mt-1 max-w-sm text-[11px] leading-relaxed text-fg-faint">
             Memories appear here as the agent records them (persona / episodic /
-            instruction) and when you stash a conversation into a thread.
+            instruction), when you stash a conversation, and when you remember a
+            chat message or thought as a callable variable.
           </p>
         </div>
       )}

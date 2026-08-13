@@ -6,19 +6,8 @@ import path from "node:path";
 import type { PiClient } from "./pi/types.js";
 import { findServerBuiltin, runBuiltin } from "./pi/builtins.js";
 import { buildExecutor, type Executor, type ExecutorKind } from "./executors/index.js";
-import {
-  appendEvent,
-  appendThreadMessage,
-  createSession,
-  createThread,
-  getSession,
-  getSettings,
-  getThread,
-  listThreadMessages,
-  listThreads,
-  markOrphanedSessionsInterrupted,
-  updateSession,
-} from "./db.js";
+import { appendEvent, appendThreadMessage, createSession, createThread, getSession, getSettings, getThread, listThreadMessages, listThreads, markOrphanedSessionsInterrupted, updateSession } from "./db.js";
+import { ingestMessageCcvs } from "./ccv.js";
 import { ensureMainModelServer } from "./model-server.js";
 
 /**
@@ -205,17 +194,28 @@ class SessionManager extends EventEmitter {
       // A completed agent message wakes message-triggered routines. Routine
       // sessions are skipped inside the supervisor, so a run can never loop on
       // its own output.
-      if (msg.type === "message_end" && msg.message?.role === "assistant") {
-        const text = extractMessageText(msg.message);
-        if (text) {
-          this.emit("message_complete", sessionId, session.kind, text);
-          // Log every agent message into the thread attached to it, not just
-          // the last one when a run finishes.
-          if (currentAssistantSeq !== null) {
-            this.logAgentMessageToThread(sessionId, currentAssistantSeq, text);
+      if (msg.type === "message_end" && msg.message) {
+        // Ingest this message's atoms as callable chat variables (CCVs) so
+        // every thought, message, tool call and shell output is hashed and
+        // callable/rememberable. Assistant messages use currentAssistantSeq so
+        // a CCV's seq matches the timeline key the UI shows for that message.
+        const ccvSeq =
+          msg.message.role === "assistant" && currentAssistantSeq !== null
+            ? currentAssistantSeq
+            : seq;
+        ingestMessageCcvs({ sessionId, seq: ccvSeq, role: msg.message.role, message: msg.message });
+        if (msg.message.role === "assistant") {
+          const text = extractMessageText(msg.message);
+          if (text) {
+            this.emit("message_complete", sessionId, session.kind, text);
+            // Log every agent message into the thread attached to it, not just
+            // the last one when a run finishes.
+            if (currentAssistantSeq !== null) {
+              this.logAgentMessageToThread(sessionId, currentAssistantSeq, text);
+            }
           }
+          currentAssistantSeq = null;
         }
-        currentAssistantSeq = null;
       }
       // agent_end marks the end of a run — the task is done whether or not
       // anyone was watching.
@@ -341,7 +341,16 @@ class SessionManager extends EventEmitter {
     }
 
     updateSession(sessionId, { status: "running", last_error: null });
-    if (!isCommand) this.record(sessionId, "portal_prompt", { message });
+    if (!isCommand) {
+      const seq = this.record(sessionId, "portal_prompt", { message });
+      // The user's own message is a CCV too.
+      ingestMessageCcvs({
+        sessionId,
+        seq,
+        role: "user",
+        message: { role: "user", content: [{ type: "text", text: message }] },
+      });
+    }
     this.record(sessionId, "portal_status", { status: "running" });
     try {
       await client.prompt(message);

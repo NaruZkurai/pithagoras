@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { piSetting } from "./pi-settings.js";
+import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -519,6 +520,26 @@ function migrate(d: Database.Database): void {
   if (msCols.length && !msCols.includes("host")) {
     d.exec("ALTER TABLE model_servers ADD COLUMN host TEXT NOT NULL DEFAULT ''");
   }
+
+  // Callable chat variables (CCVs): every chat atom — a message, a thought, a
+  // tool call, a shell command, an output — becomes a first-class, hashed,
+  // callable memory. Keyed by a stable hash so it can be linked/called from
+  // anywhere (URL, memory hub, a prompt). `memory` flags one as remembered.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS ccvs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      idx INTEGER NOT NULL DEFAULT 0,
+      type TEXT NOT NULL,
+      owner TEXT NOT NULL DEFAULT 'assistant',
+      content TEXT NOT NULL DEFAULT '',
+      memory INTEGER NOT NULL DEFAULT 0,
+      edited INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_ccvs_session ON ccvs(session_id, seq, idx);
+  `);
 }
 
 export function createSession(row: {
@@ -809,6 +830,90 @@ export function appendEvent(sessionId: string, type: string, payload: unknown): 
     payload: JSON.stringify(payload),
     created_at: new Date().toISOString(),
   };
+}
+
+// --- CCVs: callable chat variables --------------------------------------
+// Every chat atom (message / thought / tool call / shell output) is stored as a
+// hashed, callable memory. The hash is stable for a (session, seq, type, idx)
+// slot, so the same atom always resolves to the same id and can be linked or
+// called from anywhere.
+
+export interface CcvRow {
+  id: string;
+  session_id: string;
+  seq: number;
+  idx: number;
+  type: "message" | "thinking" | "tool_call" | "tool_result" | "shell";
+  owner: "user" | "assistant" | "tool";
+  content: string;
+  memory: 0 | 1;
+  edited: 0 | 1;
+  created_at: string;
+}
+
+/** Derive the callable hash for a chat-atom slot. Stable + content-addressed. */
+export function ccvHash(sessionId: string, seq: number, type: string, idx: number): string {
+  const h = createHash("sha256")
+    .update(`${sessionId}:${seq}:${type}:${idx}`)
+    .digest("hex");
+  return `ccv_${h.slice(0, 14)}`;
+}
+
+/** Insert a CCV if it does not already exist (idempotent ingestion). */
+export function upsertCcv(
+  row: Pick<CcvRow, "id" | "session_id" | "seq" | "idx" | "type" | "owner" | "content">
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO ccvs (id, session_id, seq, idx, type, owner, content)
+       VALUES (@id, @session_id, @seq, @idx, @type, @owner, @content)
+       ON CONFLICT(id) DO NOTHING`
+    )
+    .run(row);
+}
+
+export function listCcvs(sessionId: string, limit = 5000): CcvRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM ccvs WHERE session_id = ? ORDER BY seq ASC, idx ASC LIMIT ?`
+    )
+    .all(sessionId, limit) as CcvRow[];
+}
+
+export function getCcv(id: string): CcvRow | undefined {
+  return getDb().prepare("SELECT * FROM ccvs WHERE id = ?").get(id) as CcvRow | undefined;
+}
+
+export function updateCcv(
+  id: string,
+  patch: { content?: string; memory?: 0 | 1 }
+): void {
+  const cols: string[] = [];
+  const vals: (string | number)[] = [];
+  if (typeof patch.content === "string") {
+    cols.push("content = ?");
+    vals.push(patch.content);
+    cols.push("edited = 1");
+  }
+  if (patch.memory !== undefined) {
+    cols.push("memory = ?");
+    vals.push(patch.memory);
+  }
+  if (!cols.length) return;
+  vals.push(id);
+  getDb().prepare(`UPDATE ccvs SET ${cols.join(", ")} WHERE id = ?`).run(...vals);
+}
+
+/** CCVs the user chose to remember, newest first. */
+export function listMemoryCcvs(limit = 200): (CcvRow & { session_title: string })[] {
+  return getDb()
+    .prepare(
+      `SELECT c.*, sess.title AS session_title FROM ccvs c
+       LEFT JOIN sessions sess ON sess.id = c.session_id
+       WHERE c.memory = 1
+       ORDER BY c.created_at DESC LIMIT ?`
+    )
+    .all(limit) as (CcvRow & { session_title: string })[];
 }
 
 /** Events after `since`, for replaying what a disconnected browser missed. */
