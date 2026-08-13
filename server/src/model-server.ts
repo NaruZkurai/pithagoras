@@ -54,9 +54,21 @@ function buildArgs(s: ModelServerRow): string[] {
   return args;
 }
 
-async function health(port: number): Promise<boolean> {
+/** A server is "remote" when it has a host other than localhost — it runs on
+ * its own host (e.g. another box on the LAN), and the portal never spawns or
+ * kills it. Treat blank host as localhost, matching existing rows. */
+function hostOf(s: ModelServerRow): string {
+  return s.host && s.host.trim() ? s.host.trim() : "127.0.0.1";
+}
+
+function isRemote(s: ModelServerRow): boolean {
+  const h = hostOf(s);
+  return h !== "127.0.0.1" && h !== "localhost" && h !== "::1";
+}
+
+async function health(host: string, port: number): Promise<boolean> {
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/health`);
+    const res = await fetch(`http://${host}:${port}/health`);
     return res.ok;
   } catch {
     return false;
@@ -80,9 +92,14 @@ export function touchModelServer(name: string): void {
  */
 export async function ensureModelServer(port: number): Promise<boolean> {
   const s = listModelServers().find((x) => x.port === port);
-  if (!s) return health(port);
+  if (!s) return health("127.0.0.1", port);
+  const host = hostOf(s);
+  if (isRemote(s)) {
+    // External/remote: nothing to spawn — just report whether it's reachable.
+    return health(host, port);
+  }
   try {
-    if (!isRunning(s.name) && !(await health(s.port))) {
+    if (!isRunning(s.name) && !(await health(host, s.port))) {
       await start(s.name);
       console.log(`[portal] model server up (lazy): ${s.name} on :${s.port}`);
     }
@@ -91,7 +108,7 @@ export async function ensureModelServer(port: number): Promise<boolean> {
       r.lazy = true;
       touchModelServer(s.name);
     }
-    return await health(s.port);
+    return await health(host, s.port);
   } catch {
     return false;
   }
@@ -113,9 +130,9 @@ export type ServerState = "down" | "starting" | "idle" | "busy";
  * Read /slots — answers "is the server up with a model loaded" and "is it
  * mid-request right now" in one probe, for the sidebar status dot.
  */
-async function slotsInfo(port: number): Promise<{ alive: boolean; busy: boolean }> {
+async function slotsInfo(host: string, port: number): Promise<{ alive: boolean; busy: boolean }> {
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/slots`, { signal: AbortSignal.timeout(1500) });
+    const res = await fetch(`http://${host}:${port}/slots`, { signal: AbortSignal.timeout(1500) });
     if (!res.ok) return { alive: false, busy: false };
     const slots = (await res.json()) as Array<{ is_processing?: boolean; processing_prompt?: boolean }>;
     if (!Array.isArray(slots)) return { alive: false, busy: false };
@@ -130,7 +147,9 @@ async function slotsInfo(port: number): Promise<{ alive: boolean; busy: boolean 
 
 export async function status(s: ModelServerRow): Promise<{
   name: string;
+  host: string;
   port: number;
+  remote: boolean;
   running: boolean;
   healthy: boolean;
   managed: boolean;
@@ -138,17 +157,22 @@ export async function status(s: ModelServerRow): Promise<{
   /** Sidebar dot: down / starting (no model yet) / idle (model loaded) / busy (processing). */
   state: ServerState;
 }> {
+  const host = hostOf(s);
+  const remote = isRemote(s);
   const r = running.get(s.name);
-  const managed = !!r && r.proc.exitCode === null;
-  const healthy = await health(s.port);
-  const slots = await slotsInfo(s.port);
+  // Remote servers are never managed by the portal — they run on their own host.
+  const managed = !remote && !!r && r.proc.exitCode === null;
+  const healthy = await health(host, s.port);
+  const slots = await slotsInfo(host, s.port);
   const alive = managed || healthy || slots.alive;
   const loaded = healthy || slots.alive;
   let state: ServerState = "down";
   if (alive) state = loaded ? (slots.busy ? "busy" : "idle") : "starting";
   return {
     name: s.name,
+    host,
     port: s.port,
+    remote,
     running: managed || healthy,
     healthy,
     managed,
@@ -161,10 +185,17 @@ export async function status(s: ModelServerRow): Promise<{
 export async function start(name: string): Promise<void> {
   const s = getModelServer(name);
   if (!s) throw new Error(`no model server '${name}'`);
+  const host = hostOf(s);
+  if (isRemote(s)) {
+    // Remote servers are external — we can't spawn them; just report reachability.
+    const up = await health(host, s.port);
+    if (up) return;
+    throw new Error(`remote server ${host}:${s.port} is not reachable`);
+  }
   if (isRunning(name)) return;
   if (!existsSync(s.bin)) throw new Error(`binary not found: ${s.bin}`);
   if (!existsSync(s.model)) throw new Error(`model file not found: ${s.model}`);
-  if (await health(s.port))
+  if (await health(host, s.port))
     throw new Error(`port ${s.port} is already serving — stop it first or pick another port`);
 
   const proc = spawn(s.bin, buildArgs(s), { stdio: "ignore" });
@@ -174,7 +205,7 @@ export async function start(name: string): Promise<void> {
   });
 
   for (let i = 0; i < 90; i++) {
-    if (await health(s.port)) return;
+    if (await health(host, s.port)) return;
     if (proc.exitCode !== null)
       throw new Error(`model server exited (code ${proc.exitCode}) — check the model path`);
     await new Promise((r) => setTimeout(r, 1000));
@@ -183,6 +214,8 @@ export async function start(name: string): Promise<void> {
 }
 
 export async function stop(name: string): Promise<void> {
+  const s = getModelServer(name);
+  if (s && isRemote(s)) return; // remote servers run on their own host — nothing to kill
   const r = running.get(name);
   if (!r) return;
   const p = r.proc;

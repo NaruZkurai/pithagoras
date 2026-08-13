@@ -150,6 +150,7 @@ function FolderPicker({
 
 const empty = {
   name: "",
+  host: "",
   bin: DEFAULT_BIN,
   model: "",
   alias: "",
@@ -207,6 +208,7 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
     try {
       await api.saveModelServer({
         name: form.name.trim(),
+        host: form.host.trim(),
         bin: form.bin.trim() || DEFAULT_BIN,
         model: form.model.trim(),
         alias: form.alias.trim(),
@@ -266,6 +268,7 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
   const edit = (s: ModelServer) => {
     setForm({
       name: s.name,
+      host: s.host ?? "",
       bin: s.bin,
       model: s.model,
       alias: s.alias ?? "",
@@ -317,6 +320,21 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
 
       {showForm && (
         <div className="space-y-2 rounded-xl border border-line bg-raised/40 p-3">
+          <label className="block">
+            <span className="mb-0.5 block text-[11px] font-medium text-fg-subtle">Host</span>
+            <input
+              type="text"
+              value={form.host}
+              onChange={set("host")}
+              placeholder="leave blank for this machine, or e.g. 192.168.2.64 for a remote server"
+              className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] text-fg outline-none focus:border-accent"
+            />
+            {form.host.trim() && (
+              <span className="mt-0.5 block text-[10px] text-accent">
+                Remote — probed from the portal, never launched/stopped here.
+              </span>
+            )}
+          </label>
           {(
             [
               ["name", "Name", "text"],
@@ -491,12 +509,19 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
         const up = s.status.running;
         const healthy = s.status.healthy;
         const managed = s.status.managed;
+        const remote = s.status.remote || !!s.host;
+        const where = remote ? s.status.host || s.host : "127.0.0.1";
         return (
           <div key={s.name} className="rounded-xl border border-line bg-raised/40 p-3">
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-fg">{s.name}</span>
+                  {remote && (
+                    <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[9px] font-medium text-accent">
+                      remote
+                    </span>
+                  )}
                   <span className="flex items-center gap-1.5">
                     <span
                       className={`h-2 w-2 rounded-full ${
@@ -509,7 +534,7 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
                         up ? (healthy ? "text-ok" : "text-warn") : "text-fg-faint"
                       }`}
                     >
-                      {up ? (healthy ? (managed ? "up" : "up · external") : "starting…") : "down"}
+                      {up ? (healthy ? (remote || !managed ? (remote ? "up · remote" : "up · external") : "up") : "starting…") : "down"}
                     </span>
                   </span>
                   {managed && s.status.pid && (
@@ -520,7 +545,7 @@ export function ModelServersPanel({ onError }: { onError: (msg: string) => void 
                   {s.model}
                 </p>
                 <p className="mt-0.5 text-[11px] text-fg-faint">
-                  :{s.port}
+                  {where}:{s.port}
                   {s.alias ? ` · ${s.alias}` : ""} · ngl {s.ngl} · ctx {s.ctx}
                 </p>
               </div>

@@ -332,6 +332,7 @@ export function getDb(): Database.Database {
     -- can be added and managed the same way.
     CREATE TABLE IF NOT EXISTS model_servers (
       name TEXT PRIMARY KEY,
+      host TEXT NOT NULL DEFAULT '',
       bin TEXT NOT NULL,
       model TEXT NOT NULL,
       alias TEXT NOT NULL DEFAULT '',
@@ -514,6 +515,9 @@ function migrate(d: Database.Database): void {
   }
   if (msCols.length && !msCols.includes("draft_ngl")) {
     d.exec("ALTER TABLE model_servers ADD COLUMN draft_ngl INTEGER NOT NULL DEFAULT 0");
+  }
+  if (msCols.length && !msCols.includes("host")) {
+    d.exec("ALTER TABLE model_servers ADD COLUMN host TEXT NOT NULL DEFAULT ''");
   }
 }
 
@@ -1077,6 +1081,7 @@ export function usedSkills(sessionId: string): (SkillRow & { used_at: string })[
 
 export interface ModelServerRow {
   name: string;
+  host: string;
   bin: string;
   model: string;
   alias: string;
@@ -1109,9 +1114,10 @@ export function upsertModelServer(
   getDb()
     .prepare(
       `INSERT INTO model_servers
-        (name, bin, model, alias, port, ngl, ctx, threads, parallel, no_kv_offload, extra_args, draft_model, draft_ngl, enabled, updated_at)
-       VALUES (@name, @bin, @model, @alias, @port, @ngl, @ctx, @threads, @parallel, @no_kv_offload, @extra_args, @draft_model, @draft_ngl, @enabled, datetime('now'))
+        (name, host, bin, model, alias, port, ngl, ctx, threads, parallel, no_kv_offload, extra_args, draft_model, draft_ngl, enabled, updated_at)
+       VALUES (@name, @host, @bin, @model, @alias, @port, @ngl, @ctx, @threads, @parallel, @no_kv_offload, @extra_args, @draft_model, @draft_ngl, @enabled, datetime('now'))
        ON CONFLICT(name) DO UPDATE SET
+         host = excluded.host,
          bin = excluded.bin,
          model = excluded.model,
          alias = excluded.alias,

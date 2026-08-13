@@ -44,6 +44,7 @@ export function modelsRouter(): Router {
     if (!name) return res.status(400).json({ error: "name required" });
     upsertModelServer({
       name,
+      host: String(b.host ?? "").trim(),
       bin: String(b.bin ?? "").trim() || "/nzk/bin/llama-turbo-latest/llama-server",
       model: String(b.model ?? "").trim(),
       alias: String(b.alias ?? "").trim(),

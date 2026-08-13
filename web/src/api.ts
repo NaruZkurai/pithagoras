@@ -75,6 +75,7 @@ export type ServerState = "down" | "starting" | "idle" | "busy";
 /** A llama.cpp server the portal can launch / stop from the UI. */
 export interface ModelServer {
   name: string;
+  host: string;
   bin: string;
   model: string;
   alias: string;
@@ -92,7 +93,9 @@ export interface ModelServer {
   main?: boolean;
   status: {
     name: string;
+    host: string;
     port: number;
+    remote: boolean;
     running: boolean;
     healthy: boolean;
     managed: boolean;
@@ -380,6 +383,7 @@ export const api = {
   modelServers: () => json<{ servers: ModelServer[] }>("/api/models/servers"),
   saveModelServer: (input: {
     name: string;
+    host?: string;
     bin?: string;
     model?: string;
     alias?: string;
