@@ -72,7 +72,9 @@ function fsEscaped(toolName: string, input: Record<string, unknown>, workspace: 
   const candidates = [input.path, input.file_path, input.dest];
   for (const c of candidates) {
     if (typeof c !== "string" || !c) continue;
-    const resolved = path.resolve(c);
+    // Relative paths are relative to the agent's cwd, which IS the workspace
+    // (the same anchor pi itself uses), never the portal's own cwd.
+    const resolved = path.isAbsolute(c) ? path.resolve(c) : path.resolve(ws, c);
     if (!inside(resolved, ws)) return c;
   }
   return "";
