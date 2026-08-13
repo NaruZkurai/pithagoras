@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import path from "node:path";
 import { listToolRules, useGrant, type ToolRule } from "../db.js";
 
 /**
@@ -46,6 +47,69 @@ const target = (input: Record<string, unknown>) =>
     : typeof input.file_path === "string"
       ? (input.file_path as string)
       : "";
+
+/** Bash verbs whose operand is (or includes) a destination/target path. */
+const WRITE_VERBS = /(?:^|[\s;&|])(python3?\s+-m\s+venv|pip\s+install|mkdir\s+-p?\s+|touch\s+|rm(?:dir)?\s+-[a-z]*r?[a-z]*\s+|cp\s+|mv\s+|install\s+|tee\s+|chmod\s+|chown\s+|ln\s+)/;
+
+/** Anchor-relative: is `p` strictly inside `ws` (either `p` == `ws` or p starts with ws + /)? */
+function inside(p: string, ws: string): boolean {
+  if (p === ws) return true;
+  return p.startsWith(ws.endsWith("/") ? ws : ws + "/");
+}
+
+/**
+ * If a write would touch an absolute path outside the workspace, return that
+ * path (else empty). Covers the write-capable tools and, for bash, both POSIX
+ * redirections and WRITE_VERBS whose operand is a target. `../` is only a real
+ * escape when the resolved result lands outside the workspace. Best-effort: a
+ * blast-radius limiter, not a sandbox.
+ */
+function escapedWrite(toolName: string, input: Record<string, unknown>, workspace: string): string {
+  const ws = path.resolve(workspace);
+  const check = (p: string): string => {
+    const resolved = path.resolve(p);
+    return inside(resolved, ws) ? "" : p;
+  };
+
+  if (toolName !== "bash") {
+    return check(target(input));
+  }
+
+  const command = cmd(input);
+  if (!command) return "";
+
+  // POSIX redirections: `> file`, `>> file`, `2> file` — the operand is a write.
+  // `2>&1` and `>&2` are fd-fd redirects, not files, so operands starting with
+  // `&` are skipped.
+  for (const m of command.matchAll(/(?<![<>])(>>?|2>|2>>)\s*(\S+)/g)) {
+    const f = m[2];
+    if (f && !f.startsWith("&") && !/^\$/.test(f) && !/^["']/.test(f)) {
+      const bad = check(f);
+      if (bad) return bad;
+    }
+  }
+
+  // A write verb: every absolute path operand must stay inside the workspace.
+  // Checking all of them (not just the first) catches `cp src /outside/dest`,
+  // where the destination is the last operand and the first is a source.
+  const verbMatch = command.match(WRITE_VERBS);
+  if (verbMatch) {
+    // Everything after the verb, up to the next `;`, `&` or `|` (a fresh
+    // command or pipeline stage). Trim so a leading space doesn't split into
+    // an empty first token.
+    const tail = command.slice((verbMatch.index ?? 0) + verbMatch[0].length).trimStart();
+    const segment = tail.split(/[;&|]/)[0] ?? "";
+    for (const word of segment.split(/\s+/)) {
+      const operand = word.replace(/^["']|["']$/g, "");
+      if (operand && path.isAbsolute(operand)) {
+        const bad = check(operand);
+        if (bad) return bad;
+      }
+    }
+  }
+
+  return "";
+}
 
 /** Directories on PATH: a file here is executed later, by something else. */
 const PATH_DIRS = /(^|[^\w/])(\/data\/bin|\/usr\/local\/bin|\/usr\/bin|\/usr\/local\/sbin)\//;
@@ -200,7 +264,8 @@ export function ruleAllows(
 export function guardExtension(
   sessionId: string,
   whoNow: () => { role: string; key?: string } = () => ({ role: "primary" }),
-  portalSessionId?: string
+  portalSessionId?: string,
+  workspacePath?: string
 ) {
   return (pi: any): void => {
     // Per session, not global: a taint belongs to the conversation that read the
@@ -236,6 +301,27 @@ export function guardExtension(
           portalSessionId &&
             useGrant(portalSessionId, event.toolName, subjectOf(event.toolName, event.input ?? {}).trim())
         );
+
+      // A workspace is a hard boundary, applied to every session that has one —
+      // not just tainted ones. Sandboxes live INSIDE their repo (data/workspaces
+      // under the working tree), so without this a model that decides to set up
+      // a .venv or touch config at the repo root writes straight into the real
+      // project. Once written, shell escaping into CRLF / echo re-writes is too
+      // easy to chase — refuse the write outright, with the escaped path named.
+      if (workspacePath) {
+        const escape = escapedWrite(event.toolName, event.input ?? {}, workspacePath);
+        if (escape) {
+          console.warn(`[guard ${sessionId}] blocked ${event.toolName}: outside workspace ${escape}`);
+          return {
+            block: true,
+            reason:
+              `Refused: that ${event.toolName} write targets a path outside your workspace ` +
+              `(${escape}). You work inside ${workspacePath}. If something outside the ` +
+              `workspace genuinely must change, a human has to do it — hand your user the ` +
+              `path instead of trying to reach it differently.`,
+          };
+        }
+      }
 
       if (
         role !== "primary" &&

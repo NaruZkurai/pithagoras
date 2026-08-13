@@ -179,7 +179,12 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       // after it reads something untrusted, and any session can read something.
       factories.push({
         name: "guard",
-        factory: guardExtension(opts.sessionDir, opts.whoNow ?? (() => ({ role: "primary" })), opts.sessionId),
+        factory: guardExtension(
+          opts.sessionDir,
+          opts.whoNow ?? (() => ({ role: "primary" })),
+          opts.sessionId,
+          opts.cwd
+        ),
       });
       if (opts.routineTools)
         factories.push({ name: "routines", factory: routineTools(opts.sessionId) });

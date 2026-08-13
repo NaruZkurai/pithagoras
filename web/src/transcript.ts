@@ -135,12 +135,14 @@ export function buildTranscript(events: PortalEvent[]): Item[] {
 function summarizeToolInput(p: any): string | undefined {
   const input = p.input ?? p.args ?? p.parameters;
   if (!input) return undefined;
-  if (typeof input === "string") return truncate(input);
+  if (typeof input === "string") return input;
   if (typeof input === "object") {
+    // The command is kept in full — truncation is a presentation concern in
+    // the renderer, so a long shell chain is never lost here.
     const first =
       input.command ?? input.file_path ?? input.path ?? input.pattern ?? input.query;
-    if (typeof first === "string") return truncate(first);
-    return truncate(JSON.stringify(input));
+    if (typeof first === "string") return first;
+    return JSON.stringify(input);
   }
   return undefined;
 }
