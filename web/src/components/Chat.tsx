@@ -132,6 +132,11 @@ export function Chat({
   const [checkpoint, setCheckpoint] = useState<Checkpoint | null>(null);
   const [showCheckpoint, setShowCheckpoint] = useState(false);
   const [cpError, setCpError] = useState<string | null>(null);
+  // Inline editing of a thinking (thought) CCV: edit the reasoning text in
+  // place and PATCH the CCV, which flags it edited=1 and overrides the render.
+  const [thoughtEdit, setThoughtEdit] = useState<{ id: string; seq: number; text: string } | null>(null);
+  const [thoughtText, setThoughtText] = useState("");
+  const [thoughtError, setThoughtError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
 
@@ -392,6 +397,29 @@ export function Chat({
       await api.updateCcv(ccv.id, { memory: true });
     } finally {
       setCcvFlag(null);
+    }
+  };
+
+  /** The thinking (thought) CCV for a message seq, if one exists. */
+  const thinkingCcv = (seq: number) =>
+    sessionCcvs.find((c) => c.seq === seq && c.type === "thinking");
+
+  /** Save an inline thought edit: PATCH the CCV, flag it edited, re-render. */
+  const saveThought = async () => {
+    const t = thoughtEdit;
+    if (!t) return;
+    const text = thoughtText.trim();
+    setThoughtEdit(null);
+    setThoughtText("");
+    if (!text) return;
+    setThoughtError(null);
+    try {
+      await api.updateCcv(t.id, { content: text });
+      // Re-fetch so the edited thought re-renders with the edited marker.
+      const r = await api.ccvs(session.id).catch(() => null);
+      if (r) setSessionCcvs(r.ccvs);
+    } catch (e) {
+      setThoughtError((e as Error).message);
     }
   };
 
@@ -870,10 +898,65 @@ export function Chat({
               >
                 {item.thinking && (
                   <details className="mb-1 text-xs text-fg-subtle">
-                    <summary className="cursor-pointer hover:text-fg-muted">thinking</summary>
-                    <div className="mt-1 whitespace-pre-wrap border-l border-line pl-2">
-                      {item.thinking}
-                    </div>
+                    <summary className="flex cursor-pointer items-center gap-1.5 hover:text-fg-muted">
+                      <span>thinking</span>
+                      {thinkingCcv(seqOf(item))?.edited && (
+                        <span className="rounded-full bg-warn/15 px-1.5 text-[9px] font-medium text-warn">
+                          edited
+                        </span>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          // Stop both the summary toggle and default so the
+                          // details stays open while editing this thought.
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const ccv = thinkingCcv(seqOf(item));
+                          if (!ccv) return;
+                          setThoughtText(ccv.edited ? ccv.content : item.thinking);
+                          setThoughtEdit({ id: ccv.id, seq: seqOf(item), text: ccv.content });
+                        }}
+                        title="Edit this thought"
+                        className="rounded-md p-0.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                      >
+                        <LuPencil className="h-3 w-3" />
+                      </button>
+                    </summary>
+                    {thoughtEdit && thoughtEdit.seq === seqOf(item) ? (
+                      <div className="mt-1 space-y-1.5">
+                        <textarea
+                          autoFocus
+                          value={thoughtText}
+                          onChange={(e) => setThoughtText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveThought();
+                            if (e.key === "Escape") setThoughtEdit(null);
+                          }}
+                          rows={Math.max(2, Math.min(10, thoughtText.split("\n").length + 1))}
+                          className="w-full resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-fg outline-none focus:border-accent"
+                        />
+                        <div className="flex justify-end gap-1.5">
+                          <button
+                            onClick={() => setThoughtEdit(null)}
+                            className="rounded-md px-2 py-1 text-fg-faint hover:bg-fg/5"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={saveThought}
+                            className="rounded-md bg-accent px-2 py-1 text-white"
+                          >
+                            Save thought
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-1 whitespace-pre-wrap border-l border-line pl-2">
+                        {thinkingCcv(seqOf(item))?.edited
+                          ? thinkingCcv(seqOf(item))!.content
+                          : item.thinking}
+                      </div>
+                    )}
                   </details>
                 )}
                 {editingId === item.id ? (
@@ -1337,6 +1420,13 @@ export function Chat({
         <div className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-lg bg-danger/10 px-3 py-1.5 text-xs text-danger ring-1 ring-inset ring-danger/20">
           Couldn't load git state: {cpError}{" "}
           <button onClick={() => setCpError(null)} className="ml-1 opacity-70 hover:opacity-100">✕</button>
+        </div>
+      )}
+
+      {thoughtError && (
+        <div className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-lg bg-danger/10 px-3 py-1.5 text-xs text-danger ring-1 ring-inset ring-danger/20">
+          Couldn't save thought: {thoughtError}{" "}
+          <button onClick={() => setThoughtError(null)} className="ml-1 opacity-70 hover:opacity-100">✕</button>
         </div>
       )}
     </div>
