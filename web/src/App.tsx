@@ -11,6 +11,7 @@ import { AgentPage } from "./components/AgentPage";
 import { RoutinesPage } from "./components/RoutinesPage";
 import { FilesPage } from "./components/FilesPage";
 import { MemoriesPage } from "./components/MemoriesPage";
+import { ReposPage } from "./components/ReposPage";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
 
 // Legacy routes ("session", "global") still resolve — old links stay valid.
@@ -52,6 +53,7 @@ export default function App() {
       <Route path="/routines" element={<Shell view="routines" />} />
       <Route path="/files" element={<Shell view="files" />} />
       <Route path="/memories" element={<Shell view="memories" />} />
+      <Route path="/repos" element={<Shell view="repos" />} />
       <Route path="/s/:sessionId" element={<Shell />} />
       <Route path="/s/:sessionId/settings" element={<Shell settings />} />
       <Route path="/s/:sessionId/settings/:tab" element={<Shell settings />} />
@@ -67,7 +69,7 @@ function Shell({
   view = "chat",
 }: {
   settings?: boolean;
-  view?: "chat" | "sessions" | "agent" | "routines" | "files" | "memories";
+  view?: "chat" | "sessions" | "agent" | "routines" | "files" | "memories" | "repos";
 }) {
   const { sessionId, tab } = useParams<{ sessionId?: string; tab?: string }>();
   const navigate = useNavigate();
@@ -261,6 +263,14 @@ function Shell({
           <FilesPage workspaces={workspaces} />
         ) : view === "memories" ? (
           <MemoriesPage />
+        ) : view === "repos" ? (
+          <ReposPage
+            onOpenWorkspace={async (repoPath) => {
+              const s = await api.createSession(repoPath);
+              await refreshSessions();
+              navigate(`/s/${s.id}`);
+            }}
+          />
         ) : active ? (
           <Chat
             session={active}

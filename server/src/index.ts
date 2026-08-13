@@ -34,9 +34,10 @@ import { stashesRouter } from "./api/stashes.js";
 import { ccvsRouter } from "./api/ccvs.js";
 import { modelsRouter } from "./api/models.js";
 import { startEnabled, shutdownModelServers, startIdleSweeper, stopIdleSweeper, status as modelServerStatus } from "./model-server.js";
-import { listModelServers } from "./db.js";
+import { listModelServers, listRepos } from "./db.js";
 import { mcpRouter } from "./api/mcp.js";
 import { peopleRouter } from "./api/people.js";
+import { reposRouter, seedPithagorasRepo } from "./api/repos.js";
 import { routineSupervisor } from "./routines/supervisor.js";
 import { channelSupervisor } from "./channels/supervisor.js";
 import { piSettingsPath } from "./pi-settings.js";
@@ -258,9 +259,13 @@ app.post("/api/sessions", (req, res) => {
   if (typeof workspace !== "string" || !workspace) {
     return res.status(400).json({ error: "workspace required" });
   }
-  // Keep pi inside the mounted workspace area — no escaping to the rest of the FS.
+  // Keep pi inside the mounted workspace area — no escaping to the rest of the
+  // FS — unless the path is a registered repo (trusted, curated on the Repos
+  // tab), so the app's own repo can be opened as a workspace in place.
   const resolved = path.resolve(workspace);
-  if (resolved !== WORKSPACE_ROOT && !resolved.startsWith(WORKSPACE_ROOT + path.sep)) {
+  const inRoot = resolved !== WORKSPACE_ROOT && resolved.startsWith(WORKSPACE_ROOT + path.sep);
+  const isRepo = listRepos().some((r) => path.resolve(r.path) === resolved);
+  if (!inRoot && !isRepo) {
     return res.status(400).json({ error: "workspace must be inside the workspace root" });
   }
   if (!existsSync(resolved)) return res.status(400).json({ error: "workspace does not exist" });
@@ -510,6 +515,7 @@ app.use("/api", ccvsRouter());
 app.use("/api", modelsRouter());
 app.use("/api", mcpRouter());
 app.use("/api", peopleRouter());
+app.use("/api", reposRouter());
 
 // --- event stream ---
 
@@ -587,6 +593,8 @@ try {
 
 // Seed the second portal user (narukurai) so it can log in.
 seedUsers();
+// Seed the portal's own repo in the Repos tab.
+seedPithagorasRepo();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`pithagoras listening on :${PORT}`);

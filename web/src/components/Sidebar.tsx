@@ -5,6 +5,7 @@ import {
   LuBrain,
   LuClock,
   LuFolder,
+  LuGitBranch,
   LuMessagesSquare,
   LuPin,
   LuPinOff,
@@ -68,7 +69,7 @@ export function Sidebar({
   executor: string;
   activeId: string | null;
   /** Which top-level destination is showing, so the nav can mark it. */
-  view: "chat" | "sessions" | "agent" | "routines" | "files" | "memories";
+  view: "chat" | "sessions" | "agent" | "routines" | "files" | "memories" | "repos";
   modelState: ServerState;
   onSelect: (id: string) => void;
   onCreate: (workspacePath: string) => Promise<void>;
@@ -78,7 +79,7 @@ export function Sidebar({
   onCreateWorkspace: (name: string) => Promise<Workspace>;
   onOpenSettings: () => void;
   onOpenModels: () => void;
-  onNavigate: (to: "sessions" | "agent" | "routines" | "files" | "memories") => void;
+  onNavigate: (to: "sessions" | "agent" | "routines" | "files" | "memories" | "repos") => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [choice, setChoice] = useState<string>(NEW);
@@ -195,6 +196,13 @@ export function Sidebar({
           onClick={() => onNavigate("memories")}
           active={view === "memories"}
           tip="Everything the memory hub is holding — persona, episodic and instruction memories, plus stashed conversations."
+        />
+        <NavItem
+          icon={<LuGitBranch />}
+          label="Repos"
+          onClick={() => onNavigate("repos")}
+          active={view === "repos"}
+          tip="Source repositories the portal can work on — open one as a workspace."
         />
 
         {creating && (

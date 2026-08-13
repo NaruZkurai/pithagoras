@@ -1,6 +1,7 @@
 node_modules/
 dist/
 data/
+data-1338/
 .env
 .env.local
 *.tsbuildinfo

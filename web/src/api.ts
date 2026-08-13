@@ -208,6 +208,15 @@ export interface StashMeta extends Stash {
   sessionTitle: string;
 }
 
+/** A repository the portal can open as a workspace. */
+export interface Repo {
+  id: string;
+  name: string;
+  path: string;
+  git: { branch: string; commit: string; dirty: boolean };
+  createdAt: string;
+}
+
 /** A callable chat variable: one chat atom (message/thought/tool/shell). */
 export interface Ccv {
   id: string;
@@ -544,6 +553,11 @@ export const api = {
   ccvMemories: () => json<{ ccvs: Ccv[] }>(`/api/ccvs/memories`),
   updateCcv: (id: string, patch: { content?: string; memory?: boolean }) =>
     json<{ ccv: Ccv }>(`/api/ccvs/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+
+  // Repositories the portal can open as workspaces.
+  repos: () => json<{ repos: Repo[] }>(`/api/repos`),
+  addRepo: (path: string, name?: string) =>
+    json<{ repo: Repo }>(`/api/repos`, { method: "POST", body: JSON.stringify({ path, name }) }),
 
   agentSetup: () => json<AgentSetup>("/api/agent/setup"),
   runAgentWizard: (input: {

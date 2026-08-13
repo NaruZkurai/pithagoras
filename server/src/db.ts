@@ -188,6 +188,16 @@ export function getDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- Repositories the portal knows about (for the Repos tab). Lightweight:
+    -- just a path the app can open as a workspace; git info is read live from
+    -- the filesystem, not stored.
+    CREATE TABLE IF NOT EXISTS repos (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      path TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Questions a colleague's session could not answer, waiting on the primary
     -- user. The id is short because a human types it back in a chat.
     CREATE TABLE IF NOT EXISTS questions (
@@ -1398,5 +1408,33 @@ export function upsertUser(username: string, password: string, displayName = "")
        ON CONFLICT(username) DO NOTHING`
     )
     .run(username.toLowerCase(), displayName || username, password);
+}
+
+// --- repos ---------------------------------------------------------------
+
+export interface RepoRow {
+  id: string;
+  name: string;
+  path: string;
+  created_at: string;
+}
+
+export function listRepos(): RepoRow[] {
+  return getDb().prepare("SELECT * FROM repos ORDER BY created_at ASC").all() as RepoRow[];
+}
+
+export function getRepo(id: string): RepoRow | undefined {
+  return getDb().prepare("SELECT * FROM repos WHERE id = ?").get(id) as RepoRow | undefined;
+}
+
+/** Register a repo by path; no-op if it is already known. Returns the row. */
+export function upsertRepo(id: string, name: string, path: string): RepoRow {
+  getDb()
+    .prepare(
+      `INSERT INTO repos (id, name, path) VALUES (?, ?, ?)
+       ON CONFLICT(path) DO NOTHING`
+    )
+    .run(id, name, path);
+  return getRepo(id) ?? { id, name, path, created_at: new Date().toISOString() };
 }
 
