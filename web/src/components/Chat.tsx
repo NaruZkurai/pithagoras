@@ -4,6 +4,7 @@ import {
   LuBookOpen,
   LuFolderOpen,
   LuGitBranch,
+  LuMessagesSquare,
   LuPencil,
   LuRotateCcw,
   LuSquare,
@@ -13,7 +14,6 @@ import { buildTranscript, type Item } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
 import { FileExplorer } from "./FileExplorer";
 import { ChatSkillsPanel } from "./ChatSkillsPanel";
-import { InlineThread } from "./InlineThread";
 import { ThreadsPanel } from "./ThreadsPanel";
 import { Tooltip } from "./Tooltip";
 
@@ -96,6 +96,10 @@ export function Chat({
   const [panelRequest, setPanelRequest] = useState<"model" | "effort" | null>(null);
   const [showFiles, setShowFiles] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
+  // A dedicated "Threads" side drawer: every message-thread on this session.
+  // Distinct from Branches (which are stash forks) even though both are backed
+  // by the same thread machinery.
+  const [showThreads, setShowThreads] = useState(false);
   const [thread, setThread] = useState<Thread | null>(null);
   const [threadError, setThreadError] = useState<string | null>(null);
   const [stashError, setStashError] = useState<string | null>(null);
@@ -422,6 +426,23 @@ export function Chat({
     return out;
   }, [items, inlineThreads]);
 
+  // Every thread on this session, for the dedicated "Threads" side drawer.
+  const threadsList = useMemo(() => {
+    const all = items.filter((it) => it.kind === "user" || it.kind === "assistant");
+    return Object.entries(inlineThreads)
+      .map(([seqStr, t]) => {
+        const seq = Number(seqStr);
+        const parent = all.find((it) => Number(it.id.slice(1)) === seq);
+        return {
+          seq,
+          role: parent?.kind === "user" ? "user" : "assistant",
+          parent: (parent as Extract<Item, { kind: "user" | "assistant" }>)?.text?.trim() || t.parentText,
+          thread: t,
+        };
+      })
+      .sort((a, b) => a.seq - b.seq);
+  }, [items, inlineThreads]);
+
   return (
     <div className="relative flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -457,8 +478,28 @@ export function Chat({
           </button>
           <button
             onClick={() => {
+              setShowThreads((v) => !v);
+              setShowFiles(false);
+              setShowBranches(false);
+            }}
+            title="Threads — open a message's thread in the side panel"
+            className={`flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs transition hover:bg-fg/5 ${
+              showThreads ? "text-accent" : "text-fg-muted hover:text-fg"
+            }`}
+          >
+            <LuMessagesSquare className="h-3.5 w-3.5" />
+            Threads
+            {threadsList.length > 0 && (
+              <span className="rounded-full bg-fg/10 px-1.5 text-[10px] text-fg-faint">
+                {threadsList.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => {
               setShowBranches((v) => !v);
               setShowFiles(false);
+              setShowThreads(false);
             }}
             title="Branches — every stashed/threaded sub-conversation on this chat"
             className={`flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs transition hover:bg-fg/5 ${
@@ -607,13 +648,6 @@ export function Chat({
                     )}
                   </div>
                 </div>
-                {inlineThreads[seqOf(item)]?.messages.length > 0 && (
-                  <InlineThread
-                    thread={inlineThreads[seqOf(item)]}
-                    busy={replySeq === seqOf(item)}
-                    onSend={(t) => sendReply(seqOf(item), t)}
-                  />
-                )}
               </div>
             );
           }
@@ -684,13 +718,6 @@ export function Chat({
                     </button>
                   </Tooltip>
                 </div>
-                {inlineThreads[seqOf(item)]?.messages.length > 0 && (
-                  <InlineThread
-                    thread={inlineThreads[seqOf(item)]}
-                    busy={replySeq === seqOf(item)}
-                    onSend={(t) => sendReply(seqOf(item), t)}
-                  />
-                )}
               </div>
             );
           }
@@ -819,6 +846,68 @@ export function Chat({
 
       {showSkills && (
         <ChatSkillsPanel sessionId={session.id} onClose={() => setShowSkills(false)} />
+      )}
+
+      {showThreads && (
+        <aside className="flex w-80 shrink-0 flex-col border-l border-line bg-surface">
+          {/* Header */}
+          <div className="flex items-center gap-2 border-b border-line px-3 py-2.5">
+            <LuMessagesSquare className="h-4 w-4 shrink-0 text-accent" />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium text-fg">Threads</div>
+              <div className="text-[10px] text-fg-faint">
+                message threads on this chat
+              </div>
+            </div>
+            <button
+              onClick={() => setShowThreads(false)}
+              title="Close threads"
+              className="rounded-md p-1 text-fg-faint hover:bg-fg/5 hover:text-fg-muted"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="flex-1 space-y-2 overflow-y-auto p-3">
+            {threadsList.length === 0 && (
+              <p className="pt-6 text-center text-xs leading-relaxed text-fg-faint">
+                No threads yet. Reply to a message or branch one to start a thread.
+              </p>
+            )}
+            {threadsList.map((b) => (
+              <div key={b.seq} className="rounded-xl border border-line bg-raised/40 p-2.5">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
+                      b.role === "user" ? "bg-accent/15 text-accent" : "bg-ok/15 text-ok"
+                    }`}
+                  >
+                    {b.role === "user" ? "you" : "agent"}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-fg-faint">
+                    message {b.seq}
+                  </span>
+                  <span className="shrink-0 rounded-full bg-fg/10 px-1.5 text-[10px] text-fg-faint">
+                    {b.thread.messages.length}
+                  </span>
+                </div>
+                <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-fg-subtle">
+                  {b.parent}
+                </p>
+                <button
+                  onClick={() => {
+                    setThread(b.thread);
+                    setShowThreads(false);
+                  }}
+                  title="Open this thread in the side panel"
+                  className="mt-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint hover:bg-fg/5 hover:text-accent"
+                >
+                  Open thread →
+                </button>
+              </div>
+            ))}
+          </div>
+        </aside>
       )}
 
       {showBranches && (
