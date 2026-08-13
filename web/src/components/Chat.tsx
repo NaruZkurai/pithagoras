@@ -243,9 +243,10 @@ export function Chat({
 
   /**
    * Reply to a specific message — continue from that point. Uses a thread on
-   * the message (one per message), and shows the exchange inline underneath it.
+   * the message (one per message) and opens it in the side panel so the
+   * exchange is visible there (thread messages stay out of the main chat).
    */
-  const sendReply = async (seq: number, text: string) => {
+  const sendReply = async (seq: number, text: string, openPanel = true) => {
     const t = text.trim();
     if (!t || (replySeq === seq && replyBusy)) return;
     setReplySeq(seq);
@@ -262,13 +263,25 @@ export function Chat({
       if (!thread) {
         thread = await api.createThread(session.id, { seq, role, text: parentText });
       }
+      if (openPanel) setThread(thread);
       const updated = await api.sendThreadMessage(thread.id, t);
       setInlineThreads((m) => ({ ...m, [seq]: updated }));
+      if (openPanel) setThread(updated);
     } catch (e) {
       setReplyError((e as Error).message);
     } finally {
       setReplySeq(null);
     }
+  };
+
+  /**
+   * Continue a branch from the composer: dispatch the message into the branch
+   * message's thread without waiting on the thread agent, so the composer never
+   * locks up while a reply is being generated (which can take minutes).
+   */
+  const continueBranchSend = (seq: number, text: string) => {
+    if (replySeq !== null) return; // a branch reply is already in flight
+    void sendReply(seq, text);
   };
 
   // Load every thread on this session so replies render inline under their
@@ -338,7 +351,7 @@ export function Chat({
 
   const send = async () => {
     const msg = input.trim();
-    if (!msg || sending) return;
+    if (!msg) return;
 
     // Some builtins are UI, not prompts: /model opens the picker the pill uses,
     // /settings opens the modal. Sending them to pi would just be a chat line.
@@ -353,17 +366,23 @@ export function Chat({
       return;
     }
 
+    // Branch continuation: dispatch into the branch's thread WITHOUT holding
+    // the composer's `sending` lock. The thread agent can take minutes, and
+    // blocking on it here froze the composer so Enter did nothing. The reply
+    // shows up in the ThreadsPanel side panel.
+    if (branchSeq !== null) {
+      if (replySeq !== null) return; // a branch reply is already in flight
+      setInput("");
+      setShowThreads(false);
+      continueBranchSend(branchSeq, msg);
+      return;
+    }
+
+    if (sending) return;
     setSending(true);
     setInput("");
     try {
-      // In a branch fold, the next message continues that branch through its
-      // thread (isolated context rooted at the branch message), so it really
-      // continues from that timeline instead of appending to the folded future.
-      if (branchSeq !== null) {
-        await sendReply(branchSeq, msg);
-      } else {
-        await onSend(msg);
-      }
+      await onSend(msg);
     } finally {
       setSending(false);
     }
