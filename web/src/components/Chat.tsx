@@ -729,15 +729,35 @@ export function Chat({
                   ? "text-accent"
                   : "text-fg-faint";
             return (
-              <div
-                key={item.id}
-                className="flex items-center gap-2 py-0.5 font-mono text-[11px] text-fg-faint"
-              >
-                <span className={`shrink-0 ${tone}`}>
-                  {item.status === "running" ? "◇" : item.status === "error" ? "✕" : "◆"}
-                </span>
-                <span className="shrink-0 text-fg-subtle">{item.name}</span>
-                {item.detail && <span className="truncate opacity-60">{item.detail}</span>}
+              <div key={item.id} className="py-0.5">
+                <div className="flex items-center gap-2 font-mono text-[11px] text-fg-faint">
+                  <span className={`shrink-0 ${tone}`}>
+                    {item.status === "running" ? "◇" : item.status === "error" ? "✕" : "◆"}
+                  </span>
+                  <span className="shrink-0 text-fg-subtle">{item.name}</span>
+                  {item.detail && <span className="truncate opacity-60">{item.detail}</span>}
+                  {item.output && (
+                    <span className="ml-auto shrink-0 text-[10px] text-fg-faint/60">
+                      {item.status === "running" ? "running…" : item.status === "error" ? "error" : "✓"}
+                    </span>
+                  )}
+                </div>
+                {item.output && (
+                  <details className="group/tool ml-5 mt-1">
+                    <summary
+                      className="cursor-pointer select-none font-mono text-[10px] text-fg-faint hover:text-fg-muted"
+                    >
+                      output
+                    </summary>
+                    <pre
+                      className={`mt-1 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-fg/5 p-2 font-mono text-[11px] leading-relaxed ${
+                        item.status === "error" ? "text-danger" : "text-fg-muted"
+                      }`}
+                    >
+                      {item.output}
+                    </pre>
+                  </details>
+                )}
               </div>
             );
           }

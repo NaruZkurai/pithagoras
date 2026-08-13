@@ -3,7 +3,15 @@ import type { PortalEvent } from "./api";
 export type Item =
   | { kind: "user"; id: string; text: string }
   | { kind: "assistant"; id: string; text: string; thinking: string; done: boolean }
-  | { kind: "tool"; id: string; name: string; status: "running" | "done" | "error"; detail?: string }
+  | {
+      kind: "tool";
+      id: string;
+      name: string;
+      status: "running" | "done" | "error";
+      detail?: string;
+      /** Raw tool output (e.g. command stdout), captured on completion. */
+      output?: string;
+    }
   | { kind: "notice"; id: string; text: string; tone: "info" | "error" };
 
 /**
@@ -62,12 +70,30 @@ export function buildTranscript(events: PortalEvent[]): Item[] {
         break;
 
       case "tool_execution_end": {
-        // Close the most recent still-running tool of the same name.
+        // Close the most recent still-running tool of the same name and attach
+        // the raw output it produced (stdout+stderr) so it can be shown.
         const name = String(p.toolName ?? p.name ?? "tool");
         for (let i = items.length - 1; i >= 0; i--) {
           const it = items[i];
           if (it.kind === "tool" && it.status === "running" && it.name === name) {
             it.status = p.isError || p.error ? "error" : "done";
+            const output = resultText(p.result);
+            if (output) it.output = output;
+            break;
+          }
+        }
+        break;
+      }
+
+      case "tool_execution_update": {
+        // Stream partial output into the open tool row while it runs.
+        const name = String(p.toolName ?? p.name ?? "tool");
+        const partial = resultText(p.partialResult);
+        if (!partial) break;
+        for (let i = items.length - 1; i >= 0; i--) {
+          const it = items[i];
+          if (it.kind === "tool" && it.status === "running" && it.name === name) {
+            it.output = it.output ? it.output + partial : partial;
             break;
           }
         }
@@ -117,6 +143,15 @@ function summarizeToolInput(p: any): string | undefined {
     return truncate(JSON.stringify(input));
   }
   return undefined;
+}
+
+/** The plain text pi returned from a tool — its stdout+stderr for bash. */
+function resultText(result: any): string {
+  if (!result || !Array.isArray(result.content)) return "";
+  return result.content
+    .map((c: any) => (c?.type === "text" && typeof c.text === "string" ? c.text : ""))
+    .join("\n")
+    .trim();
 }
 
 function truncate(s: string, n = 160): string {
