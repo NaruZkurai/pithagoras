@@ -108,8 +108,20 @@ export function Chat({
   const [editingText, setEditingText] = useState("");
   // Branch overview (Obsidian-style branching of messages -> stash threads).
   const [showBranches, setShowBranches] = useState(false);
+  // When branching a message, anything at or after this seq is hidden, so the
+  // conversation reads as a focused fork ending at the branch point.
+  const [cutoff, setCutoff] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
+
+  // After a branch, only show messages up to and including the branch point
+  // (the "stash all future" behaviour) unless the user continues past it.
+  const visibleItems = useMemo(() => {
+    if (cutoff === null) return items;
+    const i = items.findIndex((it) => it.id === `a${cutoff}` || it.id === `u${cutoff}`);
+    return i >= 0 ? items.slice(0, i + 1) : items;
+  }, [items, cutoff]);
+
   const running = session.status === "running";
 
   /** User messages with no assistant response after them (e.g. a run died). */
@@ -142,23 +154,39 @@ export function Chat({
   };
 
   /**
-   * Stash the whole conversation into a thread on this message (and push it
-   * to the memory hub), then continue the conversation in that thread.
+   * Branch: stash the conversation at this message and fold the timeline here
+   * — everything below this point is hidden (it becomes the branch's future),
+   * and you "continue from here" to extend from this fork.
    */
   const stashMessage = async (item: Item) => {
     if (item.kind === "tool" || item.kind === "notice") return;
     setShowFiles(false);
     setStashError(null);
+    const seq = seqOf(item);
     try {
       const { thread } = await api.stashSession(session.id, {
-        seq: Number(item.id.slice(1)),
+        seq,
         role: item.kind === "user" ? "user" : "assistant",
         text: item.text,
       });
       setThread(thread);
+      // Fold the timeline: hide everything at/after this message.
+      setCutoff(seq);
     } catch (e) {
       setStashError((e as Error).message);
     }
+  };
+
+  /** Clear the branch fold so the conversation shows the full timeline again. */
+  const continueFrom = () => {
+    setCutoff(null);
+    setShowBranches(false);
+  };
+
+  /** Focused fork continuation: clear the fold and send a new message. */
+  const continueBranch = async (text: string, seq: number) => {
+    await sendReply(seq, text);
+    setCutoff(null);
   };
 
   /** The numeric id a message's thread is keyed on (its event seq). */
@@ -416,7 +444,23 @@ export function Chat({
           </div>
         )}
 
-        {items.map((item) => {
+        {cutoff !== null && (
+          <div className="flex items-center gap-2 rounded-lg border border-dashed border-accent/30 bg-accent/5 px-3 py-2 text-xs text-fg-subtle">
+            <LuGitBranch className="h-3.5 w-3.5 shrink-0 text-accent" />
+            <span className="min-w-0 flex-1">
+              Branching from this message — future conversation is folded.
+            </span>
+            <button
+              onClick={continueFrom}
+              title="Unfold the full conversation"
+              className="shrink-0 rounded-md bg-accent/15 px-2 py-1 text-[10px] font-medium text-accent hover:bg-accent/25"
+            >
+              Show full timeline
+            </button>
+          </div>
+        )}
+
+        {visibleItems.map((item) => {
           if (item.kind === "user") {
             const noResponse = !running && unanswered.has(item.id);
             const { text, blocks } = splitContext(item.text);
@@ -581,6 +625,24 @@ export function Chat({
             </div>
           );
         })}
+
+          {cutoff !== null && (
+            <div className="flex justify-center pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  continueFrom();
+                  // Focus the composer so the next typed message continues the branch.
+                  const el = document.querySelector<HTMLInputElement>('input[placeholder^="Describe the task"]');
+                  el?.focus();
+                }}
+                title="Continue the conversation from this branch point"
+                className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20"
+              >
+                <LuGitBranch className="h-3.5 w-3.5" /> Continue from here
+              </button>
+            </div>
+          )}
 
           {running && (
             <div className="flex items-center gap-1.5 py-1 text-xs text-fg-subtle">
