@@ -40,9 +40,16 @@ refused:
 | `pipe-to-shell` | Downloading something and running it unseen |
 | `write-to-path` | A file on `PATH` runs later, without anyone asking |
 | `upload` | `curl`/`wget` carrying data out |
-| `read-credentials` | `auth.json`, `.env`, `.ssh/`, tokens |
+| `read-credentials` | Host `auth.json`, `.env`, `.ssh/`, `tokens` *outside* the workspace |
 | `publish` | `git push` is not undoable from here |
 | `persist` | Scheduling outlives the conversation |
+
+`read-credentials` is workspace-aware: a `tokens.json` or `credentials` file
+inside the agent's own workspace is its own data and stays readable. Only the
+same names resolved **outside** the sandbox (host secrets like `~/.ssh`,
+`/etc/...`, a sibling repo's `.env`) are refused, and the refusal names the
+exact banned directory and suggests reading the file via its workspace-relative
+`$workspace/...` path when it legitimately belongs to the session.
 
 Enforcement is **tainted-only** on purpose. A session writing code in a
 repository never meets any of this; the rules apply exactly where the risk

@@ -80,6 +80,53 @@ function fsEscaped(toolName: string, input: Record<string, unknown>, workspace: 
   return "";
 }
 
+/** Paths that look like credentials the agent was never asked about. */
+const CREDENTIAL_RE = /(auth\.json|\.secrets|\.env\b|id_[re]d?sa|\.ssh\/|credentials|\.netrc|token)/i;
+
+/**
+ * If a tool read targets a credential-looking path OUTSIDE the workspace,
+ * return details for a helpful refusal: the exact path, its banned directory,
+ * and the workspace-relative path to recommend instead. Files like tokens.json
+ * or config/credentials INSIDE the agent's own workspace are its own data and
+ * are allowed — only host/secret reads outside the sandbox are refused.
+ */
+function credentialEscape(
+  toolName: string,
+  input: Record<string, unknown>,
+  workspace: string
+): { path: string; bannedDir: string; relative: string } | null {
+  const ws = path.resolve(workspace);
+  const candidates: string[] = [];
+  if (toolName === "bash") {
+    // Absolute / ~ paths in the command that carry a credential marker, and
+    // redirects to one. Best-effort: only literal absolute-ish paths count.
+    for (const m of String(input.command ?? "").matchAll(/(~{1,2}\/[^\s"';&|]+|\/[^\s"';&|]+)/g)) {
+      const p = m[1];
+      if (CREDENTIAL_RE.test(path.basename(p)) || CREDENTIAL_RE.test(p)) candidates.push(p);
+    }
+  } else {
+    const p = target(input);
+    if (p && CREDENTIAL_RE.test(p)) candidates.push(p);
+  }
+
+  for (const raw of candidates) {
+    // Relative paths in a structured file tool are relative to the agent's
+    // cwd, which IS the workspace (the same anchor fsEscaped uses), never the
+    // portal's own cwd.
+    const expanded = raw.replace(/^~(?:\/|$)/, (process.env.HOME || "/root") + "/");
+    const resolved = path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(ws, expanded);
+    if (inside(resolved, ws)) continue; // the agent's own sandbox data — allowed
+    // Host paths (and anything else outside the workspace) are refused.
+    const rel = path.relative(ws, resolved);
+    return {
+      path: raw,
+      bannedDir: path.dirname(resolved),
+      relative: rel && !rel.startsWith("..") ? rel : `$workspace/${path.basename(resolved)}`,
+    };
+  }
+  return null;
+}
+
 /** Directories on PATH: a file here is executed later, by something else. */
 const PATH_DIRS = /(^|[^\w/])(\/data\/bin|\/usr\/local\/bin|\/usr\/bin|\/usr\/local\/sbin)\//;
 
@@ -109,16 +156,6 @@ const RULES: Rule[] = [
       /(\s-d\b|--data|\s-F\b|--form|--upload-file|\s-T\b|-X\s*(POST|PUT|PATCH)|--post-file)/.test(
         cmd(input),
       ),
-  },
-  {
-    name: "read-credentials",
-    why: "reading secrets it was not asked about",
-    hit: (tool, input) => {
-      const where = tool === "bash" ? cmd(input) : target(input);
-      return /(auth\.json|\.secrets|\.env\b|id_[re]d?sa|\.ssh\/|credentials|\.netrc|token)/i.test(
-        where,
-      );
-    },
   },
   {
     name: "publish",
@@ -291,6 +328,24 @@ export function guardExtension(
               `(\`${workspacePath}\`). Memories, skills and threads are always available ` +
               `— they are not files. If a path outside the sandbox genuinely must change, ` +
               `hand it to your user; do not try to reach it around the sandbox.`,
+          };
+        }
+
+        // Credential-looking files OUTSIDE the workspace (host secrets) are
+        // refused with a helpful pointer. Files like tokens.json INSIDE the
+        // agent's own workspace are its own data and stay readable.
+        const cred = credentialEscape(event.toolName, event.input ?? {}, workspacePath);
+        if (cred) {
+          console.warn(`[guard ${sessionId}] blocked ${event.toolName}: read-credentials ${cred.path}`);
+          return {
+            block: true,
+            reason:
+              `Refused (read-credentials): \`${cred.path}\` looks like a secret and is ` +
+              `outside your filesystem sandbox (banned directory \`${cred.bannedDir}\`). ` +
+              `If the file belongs to your workspace, read it via its workspace-relative ` +
+              `path instead, e.g. \`${cred.relative}\` — or \`$workspace/<relative/path>\`. ` +
+              `Host secrets like .env, id_rsa, ~/.ssh, auth.json or credentials are off ` +
+              `limits; hand your user the path if it genuinely must be read.`,
           };
         }
       }
