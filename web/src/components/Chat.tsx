@@ -101,6 +101,8 @@ export function Chat({
   // When the agent is mid-turn and the user hits Enter with a message, hold it
   // here and ask how to send it: stop-and-send, add-to-queue, or steer.
   const [sendChoice, setSendChoice] = useState<string | null>(null);
+  // A message being re-sent (resend button) — ask whether to send or steer.
+  const [resendChoice, setResendChoice] = useState<string | null>(null);
   const [sendBusy, setSendBusy] = useState(false);
   // Dropdown next to the send button: pick Stop / Queue / Steer explicitly.
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
@@ -619,10 +621,25 @@ export function Chat({
     };
   }, [sendMenuOpen]);
 
-  /** Re-issue a prompt that never got an answer. */
+  /** Re-issue a prompt that never got an answer — offer send vs steer. */
   const resend = (item: Extract<Item, { kind: "user" }>) => {
-    if (sending || running) return;
-    void onSend(item.text);
+    if (sending) return;
+    setResendChoice(item.text);
+  };
+
+  /** Resolve a held resend choice: "send" queues normally, "steer" steers. */
+  const commitResend = async (kind: "send" | "steer") => {
+    const text = resendChoice;
+    setResendChoice(null);
+    if (!text || sendBusy) return;
+    setSendBusy(true);
+    try {
+      await onSend(text, kind === "steer" ? "steer" : "followUp");
+    } catch {
+      // Surface via the session error state.
+    } finally {
+      setSendBusy(false);
+    }
   };
 
 
@@ -1302,13 +1319,29 @@ export function Chat({
               Steer choices inline. Positioned at right-8 so the textarea's own
               scrollbar (far-right edge) sits to its right, never underneath. */}
           <div ref={sendMenuRef} className="absolute bottom-2 right-8 flex items-center">
+            {/* Stop — aborts the running agent. Only shown while it's working,
+                and sits to the LEFT of the send (enter) button. */}
+            {running && (
+              <button
+                type="button"
+                onClick={() => onAbort()}
+                disabled={sendBusy}
+                title="Stop the agent"
+                className="flex h-8 w-8 items-center justify-center rounded-l-lg bg-transparent text-fg-muted transition hover:bg-danger/15 hover:text-danger active:bg-danger active:text-white disabled:opacity-50"
+              >
+                <LuSquare className="h-3.5 w-3.5 fill-current" />
+              </button>
+            )}
             <button
               type="submit"
               disabled={!input.trim() || sendBusy}
               title={running ? "Send — queues after the current reply if the agent is busy" : "Send"}
               // Transparent when idle with a darker grey arrow. Hover is a
               // lighter grey; the accent (blue) appears ONLY while clicked.
-              className="flex h-8 w-8 items-center justify-center rounded-l-lg bg-transparent text-fg-muted transition hover:bg-fg/10 hover:text-fg active:bg-accent active:text-white disabled:text-fg-faint disabled:hover:bg-transparent disabled:hover:text-fg-faint"
+              // Left corners round only when there's no stop button to its left.
+              className={`flex h-8 w-8 items-center justify-center bg-transparent text-fg-muted transition hover:bg-fg/10 hover:text-fg active:bg-accent active:text-white disabled:text-fg-faint disabled:hover:bg-transparent disabled:hover:text-fg-faint ${
+                running ? "rounded-none" : "rounded-l-lg"
+              }`}
             >
               <LuCornerDownLeft className="h-4 w-4" />
             </button>
@@ -1593,6 +1626,51 @@ export function Chat({
             <div className="flex items-center justify-between border-t border-line px-4 py-2">
               <span className="text-[10px] text-fg-faint/60">Esc to cancel</span>
               {sendBusy && <span className="text-[10px] text-accent">sending…</span>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Resend a message — choose how to put it back in. */}
+      {resendChoice && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+          onClick={() => setResendChoice(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setResendChoice(null);
+          }}
+        >
+          <div
+            className="w-full max-w-sm overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl outline-none"
+            onClick={(e) => e.stopPropagation()}
+            ref={(el) => el?.focus()}
+            tabIndex={-1}
+          >
+            <div className="border-b border-line px-4 py-3">
+              <div className="text-sm font-medium text-fg">Resend this message</div>
+              <p className="mt-0.5 truncate text-xs text-fg-faint" title={resendChoice}>
+                “{resendChoice}”
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 p-3">
+              <button
+                onClick={() => commitResend("send")}
+                disabled={sendBusy}
+                className="rounded-xl border border-line bg-raised/40 px-2 py-2.5 text-center hover:border-accent/40 hover:bg-accent/10"
+                title="Send it now (queues behind the current reply if the agent is busy)"
+              >
+                <div className="text-[11px] font-medium text-fg">Send</div>
+                <div className="mt-0.5 text-[9px] text-fg-faint">queue after reply</div>
+              </button>
+              <button
+                onClick={() => commitResend("steer")}
+                disabled={sendBusy}
+                className="rounded-xl border border-line bg-accent/10 px-2 py-2.5 text-center hover:border-accent/40 hover:bg-accent/15"
+                title="Interrupt the running turn and steer it with this message"
+              >
+                <div className="text-[11px] font-medium text-accent">Steer</div>
+                <div className="mt-0.5 text-[9px] text-fg-faint">interrupt now</div>
+              </button>
             </div>
           </div>
         </div>
