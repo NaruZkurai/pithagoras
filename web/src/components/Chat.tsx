@@ -1268,86 +1268,94 @@ export function Chat({
             ))}
           </div>
         )}
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              // Alt+Enter always adds to queue (even when the agent is away);
-              // Enter while running asks (popup); otherwise it just sends.
-              if (e.altKey) {
-                void sendAs("queue");
-              } else {
-                send();
+        {/* The send affordance lives inside the text box, anchored bottom-right,
+            just left of the textarea's own scrollbar so the two never overlap. */}
+        <div className="relative">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                // Alt+Enter always adds to queue (even when the agent is away);
+                // Enter while running asks (popup); otherwise it just sends.
+                if (e.altKey) {
+                  void sendAs("queue");
+                } else {
+                  send();
+                }
               }
+            }}
+            rows={2}
+            placeholder={
+              branchSeq !== null
+                ? "Continuing this branch — reply goes under this message…"
+                : running
+                  ? "pi is working — send to queue a follow-up…"
+                  : "Describe the task…"
             }
-          }}
-          rows={2}
-          placeholder={
-            branchSeq !== null
-              ? "Continuing this branch — reply goes under this message…"
-              : running
-                ? "pi is working — send to queue a follow-up…"
-                : "Describe the task…"
-          }
-          title="Describe the task. pi works on it server-side — closing this tab doesn't stop it."
-          className="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
-        />
-        {/* Send button + chevron: the chevron opens the same Stop / Queue /
-            Steer choices inline, matching how the popup asks. */}
-        <div ref={sendMenuRef} className="absolute bottom-2 right-1.5 flex items-center">
-          <button
-            type="submit"
-            disabled={!input.trim() || sendBusy}
-            title={running ? "Send — queues after the current reply if the agent is busy" : "Send"}
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-white transition hover:bg-accent/90 disabled:opacity-40"
-          >
-            <LuCornerUpRight className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setSendMenuOpen((v) => !v)}
-            title="Choose how to send — Stop, Queue, or Steer"
-            className={`flex h-8 w-6 items-center justify-center rounded-r-lg transition ${
-              sendMenuOpen ? "bg-accent/20 text-accent" : "text-fg-faint hover:bg-fg/5 hover:text-fg"
-            }`}
-          >
-            <LuChevronDown className="h-3.5 w-3.5" />
-          </button>
-          {sendMenuOpen && (
-            <div className="absolute bottom-full right-0 mb-1 w-56 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-pop">
-              <p className="px-3 py-1 text-[10px] uppercase tracking-wider text-fg-faint">
-                How to send
-              </p>
-              <button
-                onClick={() => sendAs("stop")}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
-                title="Abort the running turn, then send this as a fresh prompt"
-              >
-                <LuSquare className="h-3.5 w-3.5 shrink-0 text-danger" />
-                <span className="flex-1">Stop and Send</span>
-              </button>
-              <button
-                onClick={() => sendAs("queue")}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
-                title="Queue to send after the current reply finishes"
-              >
-                <LuPlus className="h-3.5 w-3.5 shrink-0 text-accent" />
-                <span className="flex-1">Add to Queue</span>
-                <kbd className="ml-auto rounded bg-fg/10 px-1 font-mono text-[9px]">Alt+Enter</kbd>
-              </button>
-              <button
-                onClick={() => sendAs("steer")}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
-                title="Interrupt the running turn and steer it with this message"
-              >
-                <LuMoveRight className="h-3.5 w-3.5 shrink-0 text-warn" />
-                <span className="flex-1">Steer with Message</span>
-                <kbd className="ml-auto rounded bg-fg/10 px-1 font-mono text-[9px]">Enter</kbd>
-              </button>
-            </div>
-          )}
+            title="Describe the task. pi works on it server-side — closing this tab doesn't stop it."
+            // pr keeps typed text and the right scrollbar clear of the send
+            // button; max-h + overflow-y-auto makes a vertical scrollbar appear
+            // at the textarea's right edge when the message grows.
+            className="block w-full resize-none rounded-lg border border-line bg-surface py-2 pl-3 pr-16 text-sm outline-none focus:border-accent max-h-48 overflow-y-auto"
+          />
+          {/* Send button + chevron: the chevron opens the same Stop / Queue /
+              Steer choices inline. Positioned at right-8 so the textarea's own
+              scrollbar (far-right edge) sits to its right, never underneath. */}
+          <div ref={sendMenuRef} className="absolute bottom-2 right-8 flex items-center">
+            <button
+              type="submit"
+              disabled={!input.trim() || sendBusy}
+              title={running ? "Send — queues after the current reply if the agent is busy" : "Send"}
+              className="flex h-8 w-8 items-center justify-center rounded-l-lg bg-accent text-white transition hover:bg-accent/90 disabled:opacity-40"
+            >
+              <LuCornerUpRight className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setSendMenuOpen((v) => !v)}
+              title="Choose how to send — Stop, Queue, or Steer"
+              className={`flex h-8 w-6 items-center justify-center rounded-r-lg transition ${
+                sendMenuOpen ? "bg-accent/20 text-accent" : "text-fg-faint hover:bg-fg/5 hover:text-fg"
+              }`}
+            >
+              <LuChevronDown className="h-3.5 w-3.5" />
+            </button>
+            {sendMenuOpen && (
+              <div className="absolute bottom-full right-0 mb-1 w-56 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-pop">
+                <p className="px-3 py-1 text-[10px] uppercase tracking-wider text-fg-faint">
+                  How to send
+                </p>
+                <button
+                  onClick={() => sendAs("stop")}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
+                  title="Abort the running turn, then send this as a fresh prompt"
+                >
+                  <LuSquare className="h-3.5 w-3.5 shrink-0 text-danger" />
+                  <span className="flex-1">Stop and Send</span>
+                </button>
+                <button
+                  onClick={() => sendAs("queue")}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
+                  title="Queue to send after the current reply finishes"
+                >
+                  <LuPlus className="h-3.5 w-3.5 shrink-0 text-accent" />
+                  <span className="flex-1">Add to Queue</span>
+                  <kbd className="ml-auto rounded bg-fg/10 px-1 font-mono text-[9px]">Alt+Enter</kbd>
+                </button>
+                <button
+                  onClick={() => sendAs("steer")}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
+                  title="Interrupt the running turn and steer it with this message"
+                >
+                  <LuMoveRight className="h-3.5 w-3.5 shrink-0 text-warn" />
+                  <span className="flex-1">Steer with Message</span>
+                  <kbd className="ml-auto rounded bg-fg/10 px-1 font-mono text-[9px]">Enter</kbd>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
           <ComposerBar
             sessionId={session.id}
