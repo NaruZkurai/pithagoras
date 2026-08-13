@@ -16,8 +16,13 @@ import {
   setStashPushed,
 } from "../db.js";
 import { EXECUTOR_KIND } from "../session-manager.js";
-import { readTranscript } from "../pi/transcript.js";
-import { memoryHubStatus, pushStashToMemory, listHubMemories } from "../memory-hub.js";
+import { readTranscript, readTypedTimeline } from "../pi/transcript.js";
+import {
+  memoryHubStatus,
+  pushStashToMemory,
+  listHubMemories,
+  typedTimelineToHubMessages,
+} from "../memory-hub.js";
 
 /**
  * Conversation stashes — archive a session's history into a thread on one of
@@ -127,12 +132,12 @@ export function stashesRouter(): Router {
       transcript: JSON.stringify(transcript),
     });
 
-    // Best-effort push to the memory hub; never blocks the response.
+    // Best-effort push to the memory hub; never blocks the response. Each chat
+    // atom (thought, message, tool call, memory retrieval) goes in as its own
+    // dedicated `{chat#:timeline#}` variable so the hub keeps them separate.
     pushStashToMemory({
       stashId,
-      messages: transcript
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({ role: m.role as "user" | "assistant", content: m.text })),
+      messages: typedTimelineToHubMessages(readTypedTimeline(session.pi_session_file, session.id)),
     })
       .then((r) => {
         if (r.ok) setStashPushed(stashId, 1);

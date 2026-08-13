@@ -78,16 +78,26 @@ export async function memoryHubStatus(): Promise<MemoryHubStatus> {
  * Push a stashed conversation into the hub's L0 (raw conversation) store so it
  * is queryable there via /recall and /conversation/search. Best-effort: the
  * caller marks the stash `pushed` on success and otherwise keeps it local.
+ *
+ * The hub's L0 schema only accepts flat `{ role, content }` strings, so the
+ * rich chat structure arrives encoded into each `content` as a dedicated
+ * variable:
+ *
+ *   {chat#:timeline#}
+ *   :
+ *   {owner,messagetype,chatmessage}
+ *
+ * `chat#` is the conversation, `timeline#` the slot within it, and the value
+ * carries who owned it (`user`/`assistant`/`tool`), what kind of atom it is
+ * (`message`/`thinking`/`tool_call`/`tool_result`/`memory_retrieval`) and the
+ * text. The hub-facing `role` stays `user`/`assistant` as it requires.
  */
 export async function pushStashToMemory(opts: {
   stashId: string;
   messages: { role: "user" | "assistant"; content: string }[];
 }): Promise<{ ok: boolean; detail?: string }> {
   const messages = opts.messages
-    .map((m) => ({
-      role: m.role === "user" ? ("user" as const) : ("assistant" as const),
-      content: m.content.slice(0, 8192),
-    }))
+    .map((m) => ({ role: m.role, content: m.content.slice(0, 8192) }))
     .slice(0, 100);
   if (messages.length === 0) return { ok: false, detail: "no user/assistant messages to push" };
 
@@ -115,6 +125,51 @@ export async function pushStashToMemory(opts: {
   } catch (e) {
     return { ok: false, detail: (e as Error).message };
   }
+}
+
+/**
+ * Render one typed chat atom as the hub variable its user asked for:
+ *
+ *   {chat#:timeline#}
+ *   :
+ *   {owner,messagetype,chatmessage}
+ *
+ * The chatmessage is JSON-escaped so it stays unambiguous inside the braces,
+ * and the whole envelope is capped well under the hub's 8192-char limit.
+ */
+export function encodeHubVariable(entry: {
+  chatId: string;
+  timeline: number;
+  owner: string;
+  messagetype: string;
+  chatmessage: string;
+}): string {
+  const chat = entry.chatId;
+  const timeline = entry.timeline;
+  const chatMessage = JSON.stringify(entry.chatmessage.slice(0, 7000));
+  return (
+    `{chat:${chat}:timeline:${timeline}}\n` +
+    `:\n` +
+    `{owner:${entry.owner},messagetype:${entry.messagetype},chatmessage:${chatMessage}}`
+  );
+}
+
+/**
+ * Convert a typed timeline (from `readTypedTimeline`) into the flat list of
+ * hub messages, encoding each atom as a dedicated variable.
+ */
+export function typedTimelineToHubMessages(entries: {
+  role: "user" | "assistant";
+  owner: "user" | "assistant" | "tool";
+  messagetype: string;
+  chatmessage: string;
+  chatId: string;
+  timeline: number;
+}[]): { role: "user" | "assistant"; content: string }[] {
+  return entries.map((e) => ({
+    role: e.role,
+    content: encodeHubVariable(e),
+  }));
 }
 
 /** A single L1 memory atom as the hub reports it. */
