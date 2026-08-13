@@ -8,9 +8,7 @@ import {
   LuGitBranch,
   LuGitCompare,
   LuMessagesSquare,
-  LuMoveRight,
   LuPencil,
-  LuPlus,
   LuRotateCcw,
   LuSquare,
   LuStar,
@@ -1308,10 +1306,10 @@ export function Chat({
               type="submit"
               disabled={!input.trim() || sendBusy}
               title={running ? "Send — queues after the current reply if the agent is busy" : "Send"}
-              // A clear grey when idle; accent (blue) only when hovered/clicked.
-              // When there's nothing to send it stays grey, just a touch fainter
-              // rather than washing out to nearly invisible.
-              className="flex h-8 w-8 items-center justify-center rounded-l-lg bg-fg/15 text-fg transition hover:bg-accent hover:text-white active:bg-accent active:text-white disabled:bg-fg/10 disabled:text-fg-faint"
+              // Transparent when idle — no fill, just the grey arrow, so it
+              // matches the text box background. A coloured (accent) background
+              // appears only on hover/click.
+              className="flex h-8 w-8 items-center justify-center rounded-l-lg bg-transparent text-fg transition hover:bg-accent hover:text-white active:bg-accent active:text-white disabled:text-fg-faint disabled:hover:bg-transparent disabled:hover:text-fg-faint"
             >
               <LuCornerDownLeft className="h-4 w-4" />
             </button>
@@ -1335,7 +1333,7 @@ export function Chat({
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
                   title="Abort the running turn, then send this as a fresh prompt"
                 >
-                  <LuSquare className="h-3.5 w-3.5 shrink-0 text-danger" />
+                  <span className="w-4 shrink-0 text-center text-fg">→</span>
                   <span className="flex-1">Stop and Send</span>
                 </button>
                 <button
@@ -1343,16 +1341,16 @@ export function Chat({
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
                   title="Queue to send after the current reply finishes"
                 >
-                  <LuPlus className="h-3.5 w-3.5 shrink-0 text-accent" />
+                  <span className="w-4 shrink-0 text-center text-accent">+</span>
                   <span className="flex-1">Add to Queue</span>
                   <kbd className="ml-auto rounded bg-fg/10 px-1 font-mono text-[9px]">Alt+Enter</kbd>
                 </button>
                 <button
                   onClick={() => sendAs("steer")}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-fg ring-1 ring-inset ring-accent/40 bg-accent/10 hover:bg-accent/15"
                   title="Interrupt the running turn and steer it with this message"
                 >
-                  <LuMoveRight className="h-3.5 w-3.5 shrink-0 text-warn" />
+                  <span className="w-4 shrink-0 text-center text-accent">↩</span>
                   <span className="flex-1">Steer with Message</span>
                   <kbd className="ml-auto rounded bg-fg/10 px-1 font-mono text-[9px]">Enter</kbd>
                 </button>
