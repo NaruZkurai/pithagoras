@@ -1308,9 +1308,10 @@ export function Chat({
               type="submit"
               disabled={!input.trim() || sendBusy}
               title={running ? "Send — queues after the current reply if the agent is busy" : "Send"}
-              // Lighter grey by default; accent (blue) only when clicked/hovered
-              // or actively engaged.
-              className="flex h-8 w-8 items-center justify-center rounded-l-lg bg-fg/10 text-fg transition hover:bg-accent hover:text-white active:bg-accent active:text-white disabled:opacity-35 disabled:hover:bg-fg/10 disabled:hover:text-fg"
+              // A clear grey when idle; accent (blue) only when hovered/clicked.
+              // When there's nothing to send it stays grey, just a touch fainter
+              // rather than washing out to nearly invisible.
+              className="flex h-8 w-8 items-center justify-center rounded-l-lg bg-fg/15 text-fg transition hover:bg-accent hover:text-white active:bg-accent active:text-white disabled:bg-fg/10 disabled:text-fg-faint"
             >
               <LuCornerDownLeft className="h-4 w-4" />
             </button>
