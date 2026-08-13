@@ -196,14 +196,15 @@ export function Chat({
     setStashError(null);
     const seq = seqOf(item);
     try {
-      const { thread } = await api.stashSession(session.id, {
+      await api.stashSession(session.id, {
         seq,
         role: item.kind === "user" ? "user" : "assistant",
         text: messageText(item),
       });
-      setThread(thread);
       // Fold the timeline to the branch point and make the next message
       // continue this branch (through its thread) rather than the old future.
+      // Deliberately do NOT open the thread side panel — branching is a
+      // timeline action, not "open this message's thread".
       setCutoff(seq);
       setBranchSeq(seq);
     } catch (e) {
@@ -370,12 +371,15 @@ export function Chat({
     void onSend(item.text);
   };
 
-  /** Start editing a user message; sending applies the edit and resends it. */
-  const startEdit = (item: Extract<Item, { kind: "user" }>) => {
+  /** Start editing a message in place; saving re-issues it so the agent
+   *  responds again (in the branch when one is active). Works for both user
+   *  and assistant messages. */
+  const startEdit = (item: Extract<Item, { kind: "user" | "assistant" }>) => {
     if (sending || running) return;
     setEditingId(item.id);
-    // Strip framing blocks so the user edits just what they actually wrote.
-    setEditingText(splitContext(item.text).text);
+    // Strip framing blocks for user messages so you edit just what you wrote;
+    // assistant messages are already the model's own words.
+    setEditingText(item.kind === "user" ? splitContext(item.text).text : item.text);
   };
 
   const cancelEdit = () => {
@@ -383,13 +387,19 @@ export function Chat({
     setEditingText("");
   };
 
-  /** Save an edited user message and re-issue it as the new prompt. */
+  /** Save an edited message and re-issue it so the agent responds again.  */
   const applyEdit = () => {
     const msg = editingText.trim();
     if (!msg || sending || running) return;
     setEditingId(null);
     setEditingText("");
-    void onSend(msg);
+    // In a branch, editing re-runs the agent inside the branch (same tools and
+    // context); otherwise it resumes the session with the edited prompt.
+    if (branchSeq !== null) {
+      void sendReply(branchSeq, msg);
+    } else {
+      void onSend(msg);
+    }
   };
 
   // Map message ids -> their stash/reply thread (a "branch"), for the overview.
@@ -572,10 +582,10 @@ export function Chat({
                         <div className="flex justify-end gap-1.5 text-[11px]">
                           <button
                             onClick={applyEdit}
-                            title="Save edit and resend (Ctrl+Enter)"
+                            title="Save and ask the agent to respond again (Ctrl+Enter)"
                             className="rounded-md bg-accent px-2 py-1 text-white"
                           >
-                            Save & resend
+                            Save & re-respond
                           </button>
                           <button
                             onClick={cancelEdit}
@@ -618,21 +628,62 @@ export function Chat({
                     </div>
                   </details>
                 )}
-                {item.text && (
-                  <div className="md text-sm leading-relaxed text-fg">
-                    {/* A reasoning model sometimes closes a thought inside the
-                        answer; the stray tag is noise to whoever is reading. */}
-                    <ReactMarkdown>{item.text.replace(/<\/?think(ing)?>/gi, "")}</ReactMarkdown>
+                {editingId === item.id ? (
+                  <div className="space-y-1.5">
+                    <textarea
+                      autoFocus
+                      value={editingText}
+                      onChange={(e) => setEditingText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) applyEdit();
+                        if (e.key === "Escape") cancelEdit();
+                      }}
+                      rows={Math.max(2, Math.min(10, editingText.split("\n").length + 1))}
+                      className="w-full resize-y rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-fg outline-none focus:border-accent"
+                    />
+                    <div className="flex justify-end gap-1.5 text-[11px]">
+                      <button
+                        onClick={applyEdit}
+                        title="Save and ask the agent to respond again (Ctrl+Enter)"
+                        className="rounded-md bg-accent px-2 py-1 text-white"
+                      >
+                        Save & re-respond
+                      </button>
+                      <button
+                        onClick={cancelEdit}
+                        className="rounded-md px-2 py-1 text-fg-muted hover:text-fg"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </div>
+                ) : (
+                  item.text && (
+                    <div className="md text-sm leading-relaxed text-fg">
+                      {/* A reasoning model sometimes closes a thought inside the
+                          answer; the stray tag is noise to whoever is reading. */}
+                      <ReactMarkdown>{item.text.replace(/<\/?think(ing)?>/gi, "")}</ReactMarkdown>
+                    </div>
+                  )
                 )}
-                <Tooltip label="Branch — stash the conversation here as a thread and push it to memory" side="top">
-                  <button
-                    onClick={() => stashMessage(item)}
-                    className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
-                  >
-                    <LuGitBranch className="h-3 w-3" /> Branch
-                  </button>
-                </Tooltip>
+                <div className="mt-1 flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+                  <Tooltip label="Edit this message and ask the agent to respond again" side="top">
+                    <button
+                      onClick={() => startEdit(item)}
+                      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint transition hover:bg-fg/5 hover:text-accent"
+                    >
+                      <LuPencil className="h-3 w-3" /> Edit
+                    </button>
+                  </Tooltip>
+                  <Tooltip label="Branch — stash the conversation here as a thread and push it to memory" side="top">
+                    <button
+                      onClick={() => stashMessage(item)}
+                      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-fg-faint transition hover:bg-fg/5 hover:text-accent"
+                    >
+                      <LuGitBranch className="h-3 w-3" /> Branch
+                    </button>
+                  </Tooltip>
+                </div>
                 {inlineThreads[seqOf(item)]?.messages.length > 0 && (
                   <InlineThread
                     thread={inlineThreads[seqOf(item)]}
