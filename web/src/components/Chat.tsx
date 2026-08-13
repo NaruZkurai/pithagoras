@@ -111,15 +111,32 @@ export function Chat({
   // When branching a message, anything at or after this seq is hidden, so the
   // conversation reads as a focused fork ending at the branch point.
   const [cutoff, setCutoff] = useState<number | null>(null);
+  // When set, the composer is in "branch continue" mode: the next message goes
+  // into the branch message's thread (not the main session), so it genuinely
+  // continues from that timeline instead of appending to the folded future.
+  const [branchSeq, setBranchSeq] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
 
   // After a branch, only show messages up to and including the branch point
   // (the "stash all future" behaviour) unless the user continues past it.
+  // Branching on a user message keeps that message's reply visible too — it
+  // reads as the end of the exchange, not a cut-off mid-turn.
   const visibleItems = useMemo(() => {
     if (cutoff === null) return items;
-    const i = items.findIndex((it) => it.id === `a${cutoff}` || it.id === `u${cutoff}`);
-    return i >= 0 ? items.slice(0, i + 1) : items;
+    let i = items.findIndex((it) => it.id === `a${cutoff}` || it.id === `u${cutoff}`);
+    if (i < 0) return items;
+    if (items[i].kind === "user") {
+      // Include the tool calls and the assistant's reply that answer this user
+      // message, so the fold lands at the end of the exchange.
+      while (
+        i + 1 < items.length &&
+        (items[i + 1].kind === "assistant" || items[i + 1].kind === "tool")
+      ) {
+        i += 1;
+      }
+    }
+    return items.slice(0, i + 1);
   }, [items, cutoff]);
 
   const running = session.status === "running";
@@ -136,6 +153,21 @@ export function Chat({
     return ids;
   }, [items]);
 
+  /**
+   * A safe, non-empty label for a message used as a stash/thread parent.
+   * Some messages have no surface text (a thinking-only assistant turn, a bare
+   * tool round-trip), and the server rejects an empty parent with
+   * "A message needs text to stash on" — so never send it an empty string.
+   */
+  const messageText = (item: Extract<Item, { kind: "user" | "assistant" }>): string => {
+    const direct = item.text?.trim();
+    if (direct) return direct;
+    if (item.kind === "assistant" && item.thinking?.trim()) {
+      return item.thinking.trim().slice(0, 120) + "…";
+    }
+    return "This message";
+  };
+
   /** Open (or reopen) the thread on a message. The thread agent sees only it. */
   const openThread = async (item: Item) => {
     if (item.kind === "tool" || item.kind === "notice") return;
@@ -145,7 +177,7 @@ export function Chat({
       const t = await api.createThread(session.id, {
         seq: Number(item.id.slice(1)),
         role: item.kind === "user" ? "user" : "assistant",
-        text: item.text,
+        text: messageText(item),
       });
       setThread(t);
     } catch (e) {
@@ -156,7 +188,7 @@ export function Chat({
   /**
    * Branch: stash the conversation at this message and fold the timeline here
    * — everything below this point is hidden (it becomes the branch's future),
-   * and you "continue from here" to extend from this fork.
+   * and the composer switches to continue the branch from this message.
    */
   const stashMessage = async (item: Item) => {
     if (item.kind === "tool" || item.kind === "notice") return;
@@ -167,27 +199,38 @@ export function Chat({
       const { thread } = await api.stashSession(session.id, {
         seq,
         role: item.kind === "user" ? "user" : "assistant",
-        text: item.text,
+        text: messageText(item),
       });
       setThread(thread);
-      // Fold the timeline: hide everything at/after this message.
+      // Fold the timeline to the branch point and make the next message
+      // continue this branch (through its thread) rather than the old future.
       setCutoff(seq);
+      setBranchSeq(seq);
     } catch (e) {
       setStashError((e as Error).message);
     }
   };
 
-  /** Clear the branch fold so the conversation shows the full timeline again. */
-  const continueFrom = () => {
+  /** Show the full original timeline again, abandoning the branch fold. */
+  const showFullTimeline = () => {
     setCutoff(null);
+    setBranchSeq(null);
     setShowBranches(false);
   };
 
-  /** Focused fork continuation: clear the fold and send a new message. */
-  const continueBranch = async (text: string, seq: number) => {
-    await sendReply(seq, text);
-    setCutoff(null);
+  /** Enter "continue this branch" mode at a message and focus the composer. */
+  const beginBranchContinue = (seq: number) => {
+    setBranchSeq(seq);
+    setShowBranches(false);
+    setReplyError(null);
+    const el = document.querySelector<HTMLTextAreaElement>(
+      'textarea[placeholder^="Describe"], textarea[placeholder^="Continuing"]'
+    );
+    el?.focus();
   };
+
+  /** Focused fork continuation is handled by `send()`, which routes into the
+   *  branch message's thread when `branchSeq` is set. */
 
   /** The numeric id a message's thread is keyed on (its event seq). */
   const seqOf = (it: Item) =>
@@ -209,7 +252,7 @@ export function Chat({
           Number(it.id.slice(1)) === seq
       ) as Extract<Item, { kind: "user" | "assistant" }> | undefined;
       const role = parent?.kind === "user" ? "user" : "assistant";
-      const parentText = parent?.text?.trim() ? parent.text : "This message";
+      const parentText = parent ? messageText(parent) : "This message";
       let thread = inlineThreads[seq];
       if (!thread) {
         thread = await api.createThread(session.id, { seq, role, text: parentText });
@@ -308,7 +351,14 @@ export function Chat({
     setSending(true);
     setInput("");
     try {
-      await onSend(msg);
+      // In a branch fold, the next message continues that branch through its
+      // thread (isolated context rooted at the branch message), so it really
+      // continues from that timeline instead of appending to the folded future.
+      if (branchSeq !== null) {
+        await sendReply(branchSeq, msg);
+      } else {
+        await onSend(msg);
+      }
     } finally {
       setSending(false);
     }
@@ -448,11 +498,12 @@ export function Chat({
           <div className="flex items-center gap-2 rounded-lg border border-dashed border-accent/30 bg-accent/5 px-3 py-2 text-xs text-fg-subtle">
             <LuGitBranch className="h-3.5 w-3.5 shrink-0 text-accent" />
             <span className="min-w-0 flex-1">
-              Branching from this message — future conversation is folded.
+              Branching from this message — new replies continue this branch;
+              the old future is folded.
             </span>
             <button
-              onClick={continueFrom}
-              title="Unfold the full conversation"
+              onClick={showFullTimeline}
+              title="Unfold the full original conversation"
               className="shrink-0 rounded-md bg-accent/15 px-2 py-1 text-[10px] font-medium text-accent hover:bg-accent/25"
             >
               Show full timeline
@@ -630,13 +681,8 @@ export function Chat({
             <div className="flex justify-center pt-1">
               <button
                 type="button"
-                onClick={() => {
-                  continueFrom();
-                  // Focus the composer so the next typed message continues the branch.
-                  const el = document.querySelector<HTMLInputElement>('input[placeholder^="Describe the task"]');
-                  el?.focus();
-                }}
-                title="Continue the conversation from this branch point"
+                onClick={() => beginBranchContinue(cutoff)}
+                title="Continue the conversation from this branch point — replies go into this message's branch"
                 className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20"
               >
                 <LuGitBranch className="h-3.5 w-3.5" /> Continue from here
@@ -691,7 +737,13 @@ export function Chat({
             }
           }}
           rows={2}
-          placeholder={running ? "pi is working — send to queue a follow-up…" : "Describe the task…"}
+          placeholder={
+            branchSeq !== null
+              ? "Continuing this branch — reply goes under this message…"
+              : running
+                ? "pi is working — send to queue a follow-up…"
+                : "Describe the task…"
+          }
           title="Describe the task. pi works on it server-side — closing this tab doesn't stop it."
           className="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
         />
