@@ -4,13 +4,14 @@ import {
   LuBookOpen,
   LuFolderOpen,
   LuGitBranch,
+  LuGitCompare,
   LuMessagesSquare,
   LuPencil,
   LuRotateCcw,
   LuSquare,
   LuStar,
 } from "react-icons/lu";
-import { api, type Ccv, type PiCommand, type PortalEvent, type Session, type Thread } from "../api";
+import { api, type Ccv, type Checkpoint, type PiCommand, type PortalEvent, type Session, type Thread } from "../api";
 import { buildTranscript, type Item } from "../transcript";
 import { ComposerBar } from "./ComposerBar";
 import { FileExplorer } from "./FileExplorer";
@@ -123,6 +124,10 @@ export function Chat({
   const [branchSeq, setBranchSeq] = useState<number | null>(null);
   // The message to scroll to + briefly highlight (deep-linked via the URL).
   const [focusSeq, setFocusSeq] = useState<number | null>(null);
+  // Git checkpoint viewer: the workspace git state a message was anchored to.
+  const [checkpoint, setCheckpoint] = useState<Checkpoint | null>(null);
+  const [showCheckpoint, setShowCheckpoint] = useState(false);
+  const [cpError, setCpError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => buildTranscript(events), [events]);
 
@@ -230,6 +235,19 @@ export function Chat({
       setBranchSeq(seq);
     } catch (e) {
       setStashError((e as Error).message);
+    }
+  };
+
+  /** Fetch and show the git checkpoint a message was anchored to. */
+  const viewCheckpoint = async (item: Item) => {
+    setShowFiles(false);
+    setCpError(null);
+    try {
+      const c = await api.checkpoint(session.id, seqOf(item));
+      setCheckpoint(c.checkpoint);
+      setShowCheckpoint(true);
+    } catch (e) {
+      setCpError((e as Error).message);
     }
   };
 
@@ -749,6 +767,14 @@ export function Chat({
                       <LuGitBranch className="h-3.5 w-3.5" />
                     </button>
                   </Tooltip>
+                  <Tooltip label="Git state — the workspace checkout this message was anchored to" side="top">
+                    <button
+                      onClick={() => viewCheckpoint(item)}
+                      className="self-center rounded-md p-1.5 text-fg-faint opacity-0 transition hover:bg-fg/5 hover:text-accent group-hover:opacity-100"
+                    >
+                      <LuGitCompare className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
                   {noResponse && (
                     <Tooltip label="Resend this message (it got no reply)" side="top">
                       <button
@@ -1233,6 +1259,64 @@ export function Chat({
 
       {thread && (
         <ThreadsPanel thread={thread} onClose={() => setThread(null)} />
+      )}
+
+      {showCheckpoint && checkpoint && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowCheckpoint(false)}
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-line bg-surface p-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center gap-2">
+              <LuGitCompare className="h-4 w-4 shrink-0 text-accent" />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-fg">Git state @ message {checkpoint.seq}</div>
+                <div className="font-mono text-[10px] text-fg-faint">HEAD {checkpoint.head || "(no commits)"}</div>
+              </div>
+              <button
+                onClick={() => setShowCheckpoint(false)}
+                title="Close"
+                className="rounded-md p-1 text-fg-faint hover:bg-fg/5 hover:text-fg-muted"
+              >
+                ✕
+              </button>
+            </div>
+
+            {checkpoint.dirty.length === 0 && !checkpoint.diff ? (
+              <p className="py-6 text-center text-xs text-fg-faint">
+                The workspace was clean at this point — no uncommitted changes.
+              </p>
+            ) : (
+              <>
+                <div className="mb-2 space-y-1">
+                  {checkpoint.dirty.map((d) => (
+                    <div
+                      key={d}
+                      className="truncate rounded-md bg-raised/40 px-2 py-1 font-mono text-[10px] text-fg-subtle"
+                    >
+                      {d}
+                    </div>
+                  ))}
+                </div>
+                {checkpoint.diff && (
+                  <pre className="max-h-72 overflow-auto rounded-lg bg-black/30 p-3 font-mono text-[10px] leading-relaxed text-fg-subtle">
+                    {checkpoint.diff}
+                  </pre>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {cpError && (
+        <div className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-lg bg-danger/10 px-3 py-1.5 text-xs text-danger ring-1 ring-inset ring-danger/20">
+          Couldn't load git state: {cpError}{" "}
+          <button onClick={() => setCpError(null)} className="ml-1 opacity-70 hover:opacity-100">✕</button>
+        </div>
       )}
     </div>
   );

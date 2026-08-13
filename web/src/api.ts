@@ -232,6 +232,17 @@ export interface Ccv {
   sessionTitle?: string;
 }
 
+/**
+ * The git checkpoint a message was anchored to: the workspace git state at
+ * that timeline point.
+ */
+export interface Checkpoint {
+  seq: number;
+  head: string;
+  dirty: string[];
+  diff: string;
+}
+
 /** Whether the background memory hub daemon is reachable. */
 export interface MemoryHubStatus {
   running: boolean;
@@ -553,6 +564,8 @@ export const api = {
   ccvMemories: () => json<{ ccvs: Ccv[] }>(`/api/ccvs/memories`),
   updateCcv: (id: string, patch: { content?: string; memory?: boolean }) =>
     json<{ ccv: Ccv }>(`/api/ccvs/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  checkpoint: (sessionId: string, seq: number) =>
+    json<{ checkpoint: Checkpoint }>(`/api/sessions/${sessionId}/checkpoints/${seq}`),
 
   // Repositories the portal can open as workspaces.
   repos: () => json<{ repos: Repo[] }>(`/api/repos`),

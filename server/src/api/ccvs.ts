@@ -1,5 +1,5 @@
 import express, { type Router } from "express";
-import { getCcv, listCcvs, listMemoryCcvs, updateCcv } from "../db.js";
+import { getCcv, getCheckpoint, listCcvs, listMemoryCcvs, updateCcv } from "../db.js";
 
 /**
  * Callable chat variables (CCVs) — every chat atom (message, thought, tool
@@ -27,6 +27,24 @@ export function ccvsRouter(): Router {
   /** All CCVs in a session, in timeline order. */
   router.get("/sessions/:id/ccvs", (req, res) => {
     res.json({ ccvs: listCcvs(req.params.id).map(api) });
+  });
+
+  /**
+   * The git checkpoint at one timeline point: the workspace git state the
+   * message at that seq was anchored to (HEAD, changed files, captured diff).
+   */
+  router.get("/sessions/:id/checkpoints/:seq", (req, res) => {
+    const seq = Number(req.params.seq);
+    if (!Number.isFinite(seq)) return res.status(400).json({ error: "bad seq" });
+    const c = getCheckpoint(req.params.id, seq);
+    if (!c) return res.status(404).json({ error: "No checkpoint" });
+    let dirty: string[] = [];
+    try {
+      dirty = JSON.parse(c.dirty);
+    } catch {
+      dirty = [];
+    }
+    res.json({ checkpoint: { seq: c.seq, head: c.head, dirty, diff: c.diff } });
   });
 
   /** Everything the user chose to remember across all sessions. */

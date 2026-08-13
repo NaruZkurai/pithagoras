@@ -559,6 +559,21 @@ function migrate(d: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_ccvs_session ON ccvs(session_id, seq, idx);
+
+    -- Git checkpoints: the workspace git state a chat atom/message was anchored
+    -- to. Keyed by (session_id, seq) so each timeline point knows what code it
+    -- was sitting on. head is the git HEAD it was captured at, dirty is the
+    -- JSON list of changed file paths, and diff is the captured unstaged diff
+    -- patch (accurate to that moment even as the repo moves on).
+    CREATE TABLE IF NOT EXISTS checkpoints (
+      session_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      head TEXT NOT NULL DEFAULT '',
+      dirty TEXT NOT NULL DEFAULT '[]',
+      diff TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (session_id, seq)
+    );
   `);
 }
 
@@ -934,6 +949,40 @@ export function listMemoryCcvs(limit = 200): (CcvRow & { session_title: string }
        ORDER BY c.created_at DESC LIMIT ?`
     )
     .all(limit) as (CcvRow & { session_title: string })[];
+}
+
+// --- Git checkpoints -----------------------------------------------------
+// The workspace git state a chat atom/message was anchored to, keyed by
+// (session_id, seq). `head` is the git HEAD it was captured at, `dirty` is the
+// JSON array of changed file paths, and `diff` is a captured patch (unstaged)
+// accurate to that moment even as the repo moves on. Idempotent per
+// (session, seq): a later capture at the same seq is a no-op.
+
+export interface CheckpointRow {
+  session_id: string;
+  seq: number;
+  head: string;
+  dirty: string;
+  diff: string;
+  created_at: string;
+}
+
+export function upsertCheckpoint(
+  row: { session_id: string; seq: number; head: string; dirty: string; diff: string }
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO checkpoints (session_id, seq, head, dirty, diff)
+       VALUES (@session_id, @seq, @head, @dirty, @diff)
+       ON CONFLICT(session_id, seq) DO NOTHING`
+    )
+    .run(row);
+}
+
+export function getCheckpoint(sessionId: string, seq: number): CheckpointRow | undefined {
+  return getDb()
+    .prepare("SELECT * FROM checkpoints WHERE session_id = ? AND seq = ?")
+    .get(sessionId, seq) as CheckpointRow | undefined;
 }
 
 /** Events after `since`, for replaying what a disconnected browser missed. */

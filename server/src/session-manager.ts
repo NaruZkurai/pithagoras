@@ -8,6 +8,7 @@ import { findServerBuiltin, runBuiltin } from "./pi/builtins.js";
 import { buildExecutor, type Executor, type ExecutorKind } from "./executors/index.js";
 import { appendEvent, appendThreadMessage, createSession, createThread, getSession, getSettings, getThread, listThreadMessages, listThreads, markOrphanedSessionsInterrupted, updateSession } from "./db.js";
 import { ingestMessageCcvs } from "./ccv.js";
+import { captureCheckpoint } from "./checkpoint.js";
 import { ensureMainModelServer } from "./model-server.js";
 
 /**
@@ -204,6 +205,9 @@ class SessionManager extends EventEmitter {
             ? currentAssistantSeq
             : seq;
         ingestMessageCcvs({ sessionId, seq: ccvSeq, role: msg.message.role, message: msg.message });
+        // Anchor this completed agent message to the workspace git state.
+        const ws = getSession(sessionId)?.workspace;
+        if (ws) void captureCheckpoint(sessionId, ccvSeq, ws);
         if (msg.message.role === "assistant") {
           const text = extractMessageText(msg.message);
           if (text) {
@@ -350,6 +354,9 @@ class SessionManager extends EventEmitter {
         role: "user",
         message: { role: "user", content: [{ type: "text", text: message }] },
       });
+      // Anchor this user message to the workspace git state at this point.
+      const ws = getSession(sessionId)?.workspace;
+      if (ws) void captureCheckpoint(sessionId, seq, ws);
     }
     this.record(sessionId, "portal_status", { status: "running" });
     try {
