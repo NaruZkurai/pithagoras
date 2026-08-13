@@ -2,11 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   LuBookOpen,
+  LuChevronDown,
+  LuCornerUpRight,
   LuFolderOpen,
   LuGitBranch,
   LuGitCompare,
   LuMessagesSquare,
+  LuMoveRight,
   LuPencil,
+  LuPlus,
   LuRotateCcw,
   LuSquare,
   LuStar,
@@ -100,6 +104,9 @@ export function Chat({
   // here and ask how to send it: stop-and-send, add-to-queue, or steer.
   const [sendChoice, setSendChoice] = useState<string | null>(null);
   const [sendBusy, setSendBusy] = useState(false);
+  // Dropdown next to the send button: pick Stop / Queue / Steer explicitly.
+  const [sendMenuOpen, setSendMenuOpen] = useState(false);
+  const sendMenuRef = useRef<HTMLDivElement>(null);
   const [panelRequest, setPanelRequest] = useState<"model" | "effort" | null>(null);
   const [showFiles, setShowFiles] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
@@ -569,11 +576,57 @@ export function Chat({
     }
   };
 
+  /**
+   * Send the composer's current text with an explicit behavior (via the send
+   * button dropdown). "queue" is the default / Enter action; "stop" aborts
+   * first then sends; "steer" interrupts with the message. Used by the chevron
+   * menu so each choice sends immediately without a second popup.
+   */
+  const sendAs = async (kind: "stop" | "queue" | "steer") => {
+    setSendMenuOpen(false);
+    const msg = input.trim();
+    if (!msg || sendBusy) return;
+    setSendBusy(true);
+    setInput("");
+    try {
+      if (kind === "queue") {
+        await onSend(msg, "followUp");
+      } else if (kind === "steer") {
+        await onSend(msg, "steer");
+      } else {
+        await onAbort();
+        await onSend(msg);
+      }
+    } catch {
+      // Surface via the session error state.
+    } finally {
+      setSendBusy(false);
+    }
+  };
+
+  // Close the send menu on outside click or Esc.
+  useEffect(() => {
+    if (!sendMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!sendMenuRef.current?.contains(e.target as Node)) setSendMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSendMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [sendMenuOpen]);
+
   /** Re-issue a prompt that never got an answer. */
   const resend = (item: Extract<Item, { kind: "user" }>) => {
     if (sending || running) return;
     void onSend(item.text);
   };
+
 
   /** Start editing a message in place; saving forks the timeline at it so the
    *  agent responds again (in the branch when one is active). Works for both
@@ -1221,7 +1274,13 @@ export function Chat({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              send();
+              // Alt+Enter always adds to queue (even when the agent is away);
+              // Enter while running asks (popup); otherwise it just sends.
+              if (e.altKey) {
+                void sendAs("queue");
+              } else {
+                send();
+              }
             }
           }}
           rows={2}
@@ -1235,6 +1294,61 @@ export function Chat({
           title="Describe the task. pi works on it server-side — closing this tab doesn't stop it."
           className="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
         />
+        {/* Send button + chevron: the chevron opens the same Stop / Queue /
+            Steer choices inline, matching how the popup asks. */}
+        <div ref={sendMenuRef} className="absolute bottom-2 right-1.5 flex items-center">
+          <button
+            type="submit"
+            disabled={!input.trim() || sendBusy}
+            title={running ? "Send — queues after the current reply if the agent is busy" : "Send"}
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-white transition hover:bg-accent/90 disabled:opacity-40"
+          >
+            <LuCornerUpRight className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSendMenuOpen((v) => !v)}
+            title="Choose how to send — Stop, Queue, or Steer"
+            className={`flex h-8 w-6 items-center justify-center rounded-r-lg transition ${
+              sendMenuOpen ? "bg-accent/20 text-accent" : "text-fg-faint hover:bg-fg/5 hover:text-fg"
+            }`}
+          >
+            <LuChevronDown className="h-3.5 w-3.5" />
+          </button>
+          {sendMenuOpen && (
+            <div className="absolute bottom-full right-0 mb-1 w-56 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-pop">
+              <p className="px-3 py-1 text-[10px] uppercase tracking-wider text-fg-faint">
+                How to send
+              </p>
+              <button
+                onClick={() => sendAs("stop")}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
+                title="Abort the running turn, then send this as a fresh prompt"
+              >
+                <LuSquare className="h-3.5 w-3.5 shrink-0 text-danger" />
+                <span className="flex-1">Stop and Send</span>
+              </button>
+              <button
+                onClick={() => sendAs("queue")}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
+                title="Queue to send after the current reply finishes"
+              >
+                <LuPlus className="h-3.5 w-3.5 shrink-0 text-accent" />
+                <span className="flex-1">Add to Queue</span>
+                <kbd className="ml-auto rounded bg-fg/10 px-1 font-mono text-[9px]">Alt+Enter</kbd>
+              </button>
+              <button
+                onClick={() => sendAs("steer")}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-fg hover:bg-fg/5"
+                title="Interrupt the running turn and steer it with this message"
+              >
+                <LuMoveRight className="h-3.5 w-3.5 shrink-0 text-warn" />
+                <span className="flex-1">Steer with Message</span>
+                <kbd className="ml-auto rounded bg-fg/10 px-1 font-mono text-[9px]">Enter</kbd>
+              </button>
+            </div>
+          )}
+        </div>
           <ComposerBar
             sessionId={session.id}
             session={session}

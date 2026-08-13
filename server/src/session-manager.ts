@@ -317,6 +317,10 @@ class SessionManager extends EventEmitter {
     // reused client never talks to a dead port.
     const promptSession = getSession(sessionId);
     const promptProvider = promptSession?.provider || getSettings().provider || "local";
+    // Whether the agent was already mid-turn before this message arrived. Only
+    // a genuinely queued/steered message gets the context framing below — a
+    // plain send to an idle agent is just a normal message.
+    const wasRunning = promptSession?.status === "running";
     if (promptProvider === "local") await ensureMainModelServer();
 
     // A slash command is an instruction to the agent, not something said in the
@@ -364,7 +368,16 @@ class SessionManager extends EventEmitter {
     }
     this.record(sessionId, "portal_status", { status: "running" });
     try {
-      await client.prompt(message, behavior);
+      // Frame queued / steered messages so the model understands the context —
+      // only when the agent was actually mid-turn. The user's own transcript
+      // copy is kept untouched (recorded above).
+      const framed =
+        wasRunning && behavior === "steer"
+          ? `[The user interrupted you with this message — treat it as a priority instruction and redirect your attention to it now]\n\n${message}`
+          : wasRunning && behavior === "followUp"
+            ? `[This message was queued by the user while you were working; your previous reply is done and this is the follow-up to it]\n\n${message}`
+            : message;
+      await client.prompt(framed, behavior);
       // A slash command completes inside prompt() without starting an agent
       // turn, so no agent_end arrives to clear the status. Settle it here
       // rather than leaving "working" on screen forever.
