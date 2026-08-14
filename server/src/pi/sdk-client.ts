@@ -12,6 +12,7 @@ import { reportTool, reportToFor } from "./report-tool.js";
 import { guardExtension } from "./guard.js";
 import { askPrimaryTool } from "./ask-primary.js";
 import { sandboxBashOperations, sandboxLimits } from "./sandbox-fs.js";
+import { sandboxedFileToolDefinitions } from "./file-tools.js";
 import { listMemoryCcvs } from "../db.js";
 
 function asArray(v: any): any[] {
@@ -342,6 +343,21 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       } catch (e) {
         console.warn(
           `[sandbox] container-backed bash unavailable, falling back to local: ${(e as Error).message}`
+        );
+      }
+      // The structured file tools run in-process with the host workspace as
+      // cwd, so a `/workspace/...` path an agent learned from bash would either
+      // ENOENT on the host or be refused as "outside the sandbox". Override
+      // them to translate the container's `/workspace` mount point to the
+      // workspace root (the guard knows the same alias) and then do the real
+      // local read/write/edit/grep.
+      try {
+        for (const { tool } of sandboxedFileToolDefinitions(pi, opts.cwd)) {
+          customTools.push(tool);
+        }
+      } catch (e) {
+        console.warn(
+          `[sandbox] file-tool path translation unavailable: ${(e as Error).message}`
         );
       }
     }

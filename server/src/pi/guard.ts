@@ -54,6 +54,9 @@ function inside(p: string, ws: string): boolean {
   return p.startsWith(ws.endsWith("/") ? ws : ws + "/");
 }
 
+/** Where the bash sandbox mounts the workspace, as the agent sees it. */
+const WORKSPACE_MOUNT = "/workspace";
+
 /**
  * The filesystem sandbox: return the first path a structured file tool touches
  * that resolves OUTSIDE the workspace (else "").
@@ -73,11 +76,31 @@ function fsEscaped(toolName: string, input: Record<string, unknown>, workspace: 
   for (const c of candidates) {
     if (typeof c !== "string" || !c) continue;
     // Relative paths are relative to the agent's cwd, which IS the workspace
-    // (the same anchor pi itself uses), never the portal's own cwd.
-    const resolved = path.isAbsolute(c) ? path.resolve(c) : path.resolve(ws, c);
+    // (the same anchor pi itself uses), never the portal's own cwd. Absolute
+    // container paths (`/workspace/...`) are the workspace viewed from inside
+    // the bash sandbox and map to the workspace root too.
+    const resolved = toWorkspacePath(c, ws);
     if (!inside(resolved, ws)) return c;
   }
   return "";
+}
+
+/**
+ * Resolve a path the agent used to the corresponding host path inside the
+ * workspace.
+ *
+ * The bash sandbox mounts the workspace at `/workspace`, so an agent that ran
+ * `pwd` in bash has been shown `/workspace` and naturally writes file paths as
+ * `/workspace/...`. The structured file tools run in-process with the host
+ * workspace as cwd, so that leading `/workspace` must be translated to the
+ * workspace root for them (and for the guard) to agree on what is inside.
+ * Relative paths and any other absolute path are left to resolve normally.
+ */
+function toWorkspacePath(p: string, ws: string): string {
+  const abs = path.isAbsolute(p) ? p : path.resolve(ws, p);
+  if (abs === WORKSPACE_MOUNT) return ws;
+  if (abs.startsWith(WORKSPACE_MOUNT + "/")) return path.join(ws, abs.slice(WORKSPACE_MOUNT.length));
+  return abs;
 }
 
 /** Paths that look like credentials the agent was never asked about. */
@@ -112,9 +135,10 @@ function credentialEscape(
   for (const raw of candidates) {
     // Relative paths in a structured file tool are relative to the agent's
     // cwd, which IS the workspace (the same anchor fsEscaped uses), never the
-    // portal's own cwd.
+    // portal's own cwd. A `/workspace/...` container path maps to the workspace
+    // root, so `/workspace/config/secrets.json` is the agent's own data too.
     const expanded = raw.replace(/^~(?:\/|$)/, (process.env.HOME || "/root") + "/");
-    const resolved = path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(ws, expanded);
+    const resolved = toWorkspacePath(expanded, ws);
     if (inside(resolved, ws)) continue; // the agent's own sandbox data — allowed
     // Host paths (and anything else outside the workspace) are refused.
     const rel = path.relative(ws, resolved);
