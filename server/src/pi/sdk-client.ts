@@ -6,11 +6,13 @@ import { randomUUID } from "node:crypto";
 import type { PiClient, PiCommand, PiState, PiStats } from "./types.js";
 import { routineTools } from "./routine-tools.js";
 import { skillTools, skillHint } from "./skill-tools.js";
+import { memoryTools } from "./memory-tools.js";
 import { threadTools, threadFraming } from "./thread-tools.js";
 import { reportTool, reportToFor } from "./report-tool.js";
 import { guardExtension } from "./guard.js";
 import { askPrimaryTool } from "./ask-primary.js";
 import { sandboxBashOperations, sandboxLimits } from "./sandbox-fs.js";
+import { listMemoryCcvs } from "../db.js";
 
 function asArray(v: any): any[] {
   const resolved = typeof v === "function" ? v() : v;
@@ -44,12 +46,46 @@ function extraContextFiles(cwd: string, role?: string): { path: string; content:
   for (const name of filesFor(role)) {
     const file = path.join(cwd, name);
     try {
-      if (existsSync(file)) out.push({ path: file, content: readFileSync(file, "utf8") });
+      if (existsSync(file)) {
+        let content = readFileSync(file, "utf8");
+        // Link MEMORY.md to the memory DB at session start: the durable file
+        // on disk stays the user's, but the copy handed to the agent also
+        // carries every remembered memory from the DB, so nothing it was asked
+        // to remember earlier is forgotten just because the file lost a line.
+        if (name === "MEMORY.md") content = withDbMemories(content);
+        out.push({ path: file, content });
+      }
     } catch {
       // Unreadable is the same as absent here; the session should still start.
     }
   }
   return out;
+}
+
+/**
+ * Append the DB's remembered memories to the MEMORY.md content given to the
+ * agent at session start. Keeps the on-disk file untouched — this only augments
+ * what pi loads — so the file and the database stay in sync without fighting
+ * over who owns the bytes. Empty when nothing has been remembered.
+ */
+function withDbMemories(content: string): string {
+  try {
+    const mems = listMemoryCcvs(50);
+    if (!mems.length) return content;
+    const rendered = mems
+      .map((m) => `- ${m.content}`)
+      .join("\n");
+    return (
+      content.replace(/\s*$/, "") +
+      `\n\n## Remembered (from the memory database)\n` +
+      `_These are memories you have been asked to keep. They live in the DB; ` +
+      `memory_search also returns them. Newest first._\n` +
+      rendered +
+      `\n`
+    );
+  } catch {
+    return content;
+  }
 }
 
 /**
@@ -180,6 +216,19 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       // confirmation tools are for thread sessions.
       const factories: { name: string; factory: (pi: any) => void }[] = [
         { name: "skills", factory: (pi: any) => skillTools(pi, { sessionId: opts.sessionId! }) },
+        // Durable memory + recall for every session: search what was remembered
+        // or said before. MEMORY.md linking kicks in only when this session's
+        // cwd is an agent home that actually carries a MEMORY.md.
+        {
+          name: "memory",
+          factory: (pi: any) =>
+            memoryTools(pi, {
+              sessionId: opts.sessionId!,
+              memoryMdPath: existsSync(path.join(opts.cwd, "MEMORY.md"))
+                ? path.join(opts.cwd, "MEMORY.md")
+                : undefined,
+            }),
+        },
       ];
       // Every session, unconditionally: the point is to limit what a turn can do
       // after it reads something untrusted, and any session can read something.

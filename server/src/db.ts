@@ -951,6 +951,60 @@ export function listMemoryCcvs(limit = 200): (CcvRow & { session_title: string }
     .all(limit) as (CcvRow & { session_title: string })[];
 }
 
+/**
+ * Search remembered memories across all sessions by content.
+ *
+ * `needle` is a plain substring (case-insensitive LIKE), so the agent can recall
+ * a specific fact it was asked to remember without loading the whole store.
+ */
+export function searchMemoryCcvs(
+  needle?: string | null,
+  limit = 20
+): (CcvRow & { session_title: string })[] {
+  const stmt = getDb().prepare(
+    `SELECT c.*, sess.title AS session_title FROM ccvs c
+     LEFT JOIN sessions sess ON sess.id = c.session_id
+     WHERE c.memory = 1
+       AND (? IS NULL OR c.content LIKE '%' || ? || '%')
+     ORDER BY c.created_at DESC LIMIT ?`
+  );
+  const n = (needle ?? "").trim();
+  const rows = n ? stmt.all(n, n, limit) : stmt.all(null, null, limit);
+  return rows as (CcvRow & { session_title: string })[];
+}
+
+/**
+ * Search recent chat-history atoms (surfaced messages) by content, newest first.
+ *
+ * This is what lets the agent look back at what was actually said in past
+ * conversations, not just what it explicitly remembered. Restricted to the
+ * `message` type so tool output and private thinking stay out of the recall.
+ */
+export function searchChatCcvs(
+  needle: string,
+  limit = 20,
+  sessionId?: string
+): (CcvRow & { session_title: string })[] {
+  const n = (needle ?? "").trim();
+  if (!n) return [];
+  const stmt = sessionId
+    ? getDb().prepare(
+        `SELECT c.*, sess.title AS session_title FROM ccvs c
+         LEFT JOIN sessions sess ON sess.id = c.session_id
+         WHERE c.session_id = ? AND c.type = 'message'
+           AND c.content LIKE '%' || ? || '%'
+         ORDER BY c.seq DESC, c.idx DESC LIMIT ?`
+      )
+    : getDb().prepare(
+        `SELECT c.*, sess.title AS session_title FROM ccvs c
+         LEFT JOIN sessions sess ON sess.id = c.session_id
+         WHERE c.type = 'message' AND c.content LIKE '%' || ? || '%'
+         ORDER BY c.created_at DESC LIMIT ?`
+      );
+  const rows = sessionId ? stmt.all(sessionId, n, limit) : stmt.all(n, limit);
+  return rows as (CcvRow & { session_title: string })[];
+}
+
 // --- Git checkpoints -----------------------------------------------------
 // The workspace git state a chat atom/message was anchored to, keyed by
 // (session_id, seq). `head` is the git HEAD it was captured at, `dirty` is the
