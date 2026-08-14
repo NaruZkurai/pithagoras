@@ -469,9 +469,21 @@ export function Chat({
     ? commands.filter((c) => c.name.toLowerCase().startsWith(slashQuery[1].toLowerCase())).slice(0, 8)
     : [];
 
+  // Auto-scroll only when a genuinely NEW message is added (e.g. the start of
+  // a reply), not on every streaming event. Content of an existing answer
+  // updates continuously while the agent responds — forcing the view to the
+  // bottom on each of those updates is exactly the jarring jump we avoid here.
+  const seenItemIds = useRef<Set<string>>(new Set());
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [items.length, events.length]);
+    let added = false;
+    for (const it of items) {
+      if (!seenItemIds.current.has(it.id)) {
+        seenItemIds.current.add(it.id);
+        added = true;
+      }
+    }
+    if (added) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [items]);
 
   // Deep link: opening ?/#msg{seq} lands on and highlights that message.
   useEffect(() => {
