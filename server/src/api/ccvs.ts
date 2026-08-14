@@ -1,5 +1,13 @@
 import express, { type Router } from "express";
-import { getCcv, getCheckpoint, listCcvs, listMemoryCcvs, updateCcv } from "../db.js";
+import {
+  ccvHash,
+  getCcv,
+  getCheckpoint,
+  listCcvs,
+  listMemoryCcvs,
+  updateCcv,
+  upsertCcv,
+} from "../db.js";
 
 /**
  * Callable chat variables (CCVs) — every chat atom (message, thought, tool
@@ -7,6 +15,9 @@ import { getCcv, getCheckpoint, listCcvs, listMemoryCcvs, updateCcv } from "../d
  * UI list a session's CCVs, fetch one by its hash, edit its content, and
  * mark one as a remembered memory.
  */
+
+/** Anchor session for memories the user adds by hand (not tied to a chat). */
+const MEMORIES_SESSION = "__memories__";
 
 const api = (c: any) => ({
   id: c.id,
@@ -50,6 +61,32 @@ export function ccvsRouter(): Router {
   /** Everything the user chose to remember across all sessions. */
   router.get("/ccvs/memories", (_req, res) => {
     res.json({ ccvs: listMemoryCcvs().map((c) => ({ ...api(c), sessionTitle: c.session_title })) });
+  });
+
+  /**
+   * Add a remembered memory by hand, not tied to a chat session.
+   *
+   * Writes a remembered CCV (memory=1) anchored to a reserved "__memories__"
+   * session so it surfaces everywhere remembered memories do — the Memories
+   * page, listMemoryCcvs, and the agent's memory_search.
+   */
+  router.post("/ccvs/memories", (req, res) => {
+    const text = String(req.body?.text ?? "").trim().slice(0, 12000);
+    if (!text) return res.status(400).json({ error: "text is required" });
+    const topic = String(req.body?.topic ?? "Context").trim().slice(0, 60) || "Context";
+    const seq = Date.now();
+    const id = ccvHash(MEMORIES_SESSION, seq, `memory_${topic}`, 0);
+    upsertCcv({
+      id,
+      session_id: MEMORIES_SESSION,
+      seq,
+      idx: 0,
+      type: "message",
+      owner: "user",
+      content: `[${topic}] ${text}`,
+    });
+    updateCcv(id, { memory: 1 });
+    res.json({ ccv: api(getCcv(id)) });
   });
 
   /** Fetch a single CCV by its hash (a callable memory / deep link). */

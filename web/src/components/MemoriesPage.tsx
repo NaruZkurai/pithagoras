@@ -2,9 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import {
   LuArchive,
   LuBrain,
+  LuCheck,
   LuCircleAlert,
   LuDatabase,
   LuHash,
+  LuPencil,
+  LuPlus,
   LuRefreshCw,
   LuTrash2,
 } from "react-icons/lu";
@@ -68,6 +71,13 @@ export function MemoriesPage() {
   const [ccvs, setCcvs] = useState<Ccv[]>([]);
   const [status, setStatus] = useState<MemoryHubStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // "Add a memory" composer + inline content editing.
+  const [addOpen, setAddOpen] = useState(false);
+  const [addText, setAddText] = useState("");
+  const [addTopic, setAddTopic] = useState("Context");
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -94,6 +104,47 @@ export function MemoriesPage() {
   )
     .map((type) => ({ type, items: (atoms ?? []).filter((a) => a.type === type) }))
     .filter((g) => g.items.length > 0);
+
+  const addMemory = async () => {
+    const text = addText.trim();
+    if (!text || saving) return;
+    setSaving(true);
+    try {
+      await api.addMemory({ text, topic: addTopic.trim() || undefined });
+      setAddText("");
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startEdit = (c: Ccv) => {
+    setEditingId(c.id);
+    setEditText(c.content.replace(/^\[[^\]]+\]\s*/, ""));
+  };
+
+  const saveEdit = async (c: Ccv) => {
+    const trimmed = editText.trim();
+    if (!trimmed) return;
+    try {
+      await api.updateCcv(c.id, { content: trimmed });
+      setEditingId(null);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const forget = async (c: Ccv) => {
+    try {
+      await api.updateCcv(c.id, { memory: false });
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 py-6">
@@ -136,6 +187,55 @@ export function MemoriesPage() {
         </div>
       )}
 
+      {/* Add a memory by hand — linked straight into the memory DB (and via the
+          agent's memory_remember tool, mirrored into MEMORY.md). */}
+      <section className="mb-6 rounded-xl border border-line bg-raised/40 p-3">
+        {!addOpen ? (
+          <button
+            onClick={() => setAddOpen(true)}
+            className="flex w-full items-center gap-2 rounded-lg border border-dashed border-line px-3 py-2 text-sm text-fg-muted transition hover:border-fg/30 hover:text-fg"
+          >
+            <LuPlus className="h-4 w-4" />
+            Add a memory…
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <textarea
+              value={addText}
+              onChange={(e) => setAddText(e.target.value)}
+              placeholder="What do you want to remember? (e.g. “Deploy happens with systemctl --user restart pithagoras”)"
+              rows={3}
+              autoFocus
+              className="w-full resize-none rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-fg outline-none placeholder:text-fg-faint focus:border-accent/50"
+            />
+            <div className="flex items-center gap-2">
+              <input
+                value={addTopic}
+                onChange={(e) => setAddTopic(e.target.value)}
+                placeholder="Topic (Context / Decisions / Preferences)"
+                className="min-w-0 flex-1 rounded-lg border border-line bg-canvas px-3 py-1.5 text-xs text-fg outline-none placeholder:text-fg-faint focus:border-accent/50"
+              />
+              <button
+                onClick={addMemory}
+                disabled={saving || !addText.trim()}
+                className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-on-accent transition hover:opacity-90 disabled:opacity-40"
+              >
+                {saving ? "Saving…" : "Remember"}
+              </button>
+              <button
+                onClick={() => {
+                  setAddOpen(false);
+                  setAddText("");
+                }}
+                className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition hover:text-fg"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
       {atoms === null && (
         <p className="py-10 text-center text-sm text-fg-faint">Loading memories…</p>
       )}
@@ -152,6 +252,7 @@ export function MemoriesPage() {
           <div className="space-y-2">
             {ccvs.map((c) => {
               const meta = CCV_META[c.type] ?? CCV_META.message;
+              const editing = editingId === c.id;
               return (
                 <div key={c.id} className="rounded-xl border border-line bg-raised/40 p-3">
                   <div className="flex items-center gap-2">
@@ -165,19 +266,33 @@ export function MemoriesPage() {
                       {fmtTime(c.createdAt)}
                     </span>
                     <button
-                      onClick={async () => {
-                        await api.updateCcv(c.id, { memory: false });
-                        load();
-                      }}
+                      onClick={() => (editing ? saveEdit(c) : startEdit(c))}
+                      title={editing ? "Save" : "Edit this memory"}
+                      className="rounded-md p-1 text-fg-faint transition hover:bg-fg/10 hover:text-fg"
+                    >
+                      {editing ? <LuCheck className="h-3.5 w-3.5" /> : <LuPencil className="h-3.5 w-3.5" />}
+                    </button>
+                    <button
+                      onClick={() => forget(c)}
                       title="Forget this memory"
                       className="rounded-md p-1 text-fg-faint transition hover:bg-danger/10 hover:text-danger"
                     >
                       <LuTrash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-fg">
-                    {c.content}
-                  </p>
+                  {editing ? (
+                    <textarea
+                      value={editText}
+                      onChange={(e) => setEditText(e.target.value)}
+                      rows={3}
+                      autoFocus
+                      className="mt-1.5 w-full resize-none rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-fg outline-none focus:border-accent/50"
+                    />
+                  ) : (
+                    <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-fg">
+                      {c.content}
+                    </p>
+                  )}
                   <p className="mt-1 font-mono text-[10px] text-fg-faint">
                     {c.sessionTitle || c.sessionId} · {c.owner}
                   </p>

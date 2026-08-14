@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { appendFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   ccvHash,
   getCcv,
@@ -8,6 +8,7 @@ import {
   updateCcv,
   upsertCcv,
 } from "../db.js";
+import { listHubMemories } from "../memory-hub.js";
 
 /**
  * Memory tools: the agent's durable, recalled memory.
@@ -67,20 +68,45 @@ export interface MemoryToolCtx {
 }
 
 /**
- * Append one bullet to MEMORY.md under the last ## section, or a new Context
- * section at the end. Best-effort: the DB record happens regardless. Uses the
- * per-call ctx set in memoryTools() so the file path is always the agent home.
+ * Write one durable memory into MEMORY.md under the right ## section.
+ *
+ * Better than blind-append at the end: the fact lands under the section named
+ * by `topic` (Preferences, Decisions, Context…) so the file stays organised,
+ * is created there if the section is missing, and skips the write entirely if
+ * an identical bullet is already present (no duplicate-memory drift between
+ * the file and the DB). Best-effort: the DB record happens regardless.
  */
 let mdPathForCtx = "";
-function appendToMemoryMd(text: string): string {
-  if (!mdPathForCtx || !existsSync(mdPathForCtx)) return "";
-  const bullet = `- ${text} _(remembered ${new Date().toISOString().slice(0, 10)})_`;
+function writeToMemoryMd(topic: string, text: string): string {
+  const md = mdPathForCtx;
+  if (!md || !existsSync(md)) return "";
   try {
-    appendFileSync(mdPathForCtx, "\n" + bullet + "\n");
+    let body = readFileSync(md, "utf8") ?? "";
+    const bullet = `- ${text} _(remembered ${new Date().toISOString().slice(0, 10)})_`;
+    // Dedup: if this exact memory already appears as a bullet, leave the file
+    // alone so remembering twice does not grow the same fact.
+    const plain = text.toLocaleLowerCase();
+    if (body.toLocaleLowerCase().includes(plain)) return "already recorded in MEMORY.md.";
+
+    // Find the ## <topic> section (case-insensitive) and insert under it. If it
+    // is absent, create it at the end.
+    const re = new RegExp(`^##\\s+${escapeRe(topic)}\\s*$`, "im");
+    const m = re.exec(body);
+    if (m) {
+      const headEnd = m.index + m[0].length;
+      body = body.slice(0, headEnd) + "\n" + bullet + "\n" + body.slice(headEnd);
+    } else {
+      body = body.replace(/\s*$/, "") + `\n\n## ${topic}\n${bullet}\n`;
+    }
+    writeFileSync(md, body, "utf8");
     return "Appended to MEMORY.md.";
   } catch {
     return ""; // DB record still happened; the file write is best-effort.
   }
+}
+
+function escapeRe(s: string): string {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function memoryTools(pi: any, ctx: MemoryToolCtx): void {
@@ -90,7 +116,7 @@ export function memoryTools(pi: any, ctx: MemoryToolCtx): void {
     name: "memory_search",
     label: "Search memories & chat history",
     description:
-      "Search what you (or the conversation) have remembered or said before. Scope 'memories' searches the durable remembered-memory DB, 'history' searches the plain text of past chat messages, 'all' (default) does both. Returns light snippets so you can recall a fact without re-reading whole sessions.",
+      "Search what you (or the conversation) have remembered or said before. Scope 'memories' searches the durable remembered-memory DB plus the long-term memory hub (persona / episodic / instruction atoms), 'history' searches the plain text of past chat messages, 'all' (default) does both. Returns light snippets so you can recall a fact without re-reading whole sessions.",
     promptSnippet: "memory_search — recall a remembered memory or past message",
     parameters: Type.Object({
       query: Type.String({
@@ -112,12 +138,11 @@ export function memoryTools(pi: any, ctx: MemoryToolCtx): void {
       const limit = Math.min(Math.max(Number(args?.limit) || 8, 1), 25);
       if (!query) return bad("memory_search needs a query.");
 
+      const q = query.toLocaleLowerCase();
       const out: string[] = [];
       if (scope === "memories" || scope === "all") {
         const mems = searchMemoryCcvs(query, limit);
-        if (!mems.length) {
-          out.push("Memories: none match.");
-        } else {
+        if (mems.length) {
           out.push(
             "Memories (remembered, newest first):\n" +
               mems
@@ -125,6 +150,23 @@ export function memoryTools(pi: any, ctx: MemoryToolCtx): void {
                 .join("\n")
           );
         }
+        // Long-term hub atoms (persona / episodic / instruction), when the hub
+        // is up. Best-effort and non-blocking.
+        try {
+          const hub = await listHubMemories();
+          const hits = hub.atoms.filter(
+            (a) => a.content.toLocaleLowerCase().includes(q)
+          );
+          if (hits.length) {
+            out.push(
+              "Long-term memory hub:\n" +
+                hits.slice(0, limit).map((a) => `• (${a.type}) ${clip(a.content)}`).join("\n")
+            );
+          }
+        } catch {
+          // hub unreachable — the DB results above already answered.
+        }
+        if (!mems.length && out.length === 0) out.push("Memories: none match.");
       }
       if (scope === "history" || scope === "all") {
         const hist = searchChatCcvs(query, limit, ctx.sessionId);
@@ -165,6 +207,15 @@ export function memoryTools(pi: any, ctx: MemoryToolCtx): void {
       const topic = queryArg(p?.topic) ?? "Context";
       const clipped = text.slice(0, MAX_CONTENT);
 
+      // 0) Dedup: if this exact fact is already remembered, don't create a
+      //    second copy — just confirm the existing one.
+      const existing = searchMemoryCcvs(clipped, 1);
+      if (existing.length && existing[0].content.includes(clipped)) {
+        return ok(
+          `Already remembered (${existing[0].id}). Nothing new to save.`
+        );
+      }
+
       // 1) DB record, flagged as a remembered memory (linked to this session).
       const seq = ctx.sessionSeq ?? Date.now();
       const ccv = {
@@ -179,10 +230,13 @@ export function memoryTools(pi: any, ctx: MemoryToolCtx): void {
       upsertCcv(ccv);
       updateCcv(ccv.id, { memory: 1 });
 
-      // 2) MEMORY.md, when this is an agent session with a durable file.
-      appendToMemoryMd(clipped);
+      // 2) MEMORY.md, when this is an agent session with a durable file —
+      //    written under the right ## section, deduped against the file.
+      const fileNote = writeToMemoryMd(topic, clipped);
 
-      return ok(`Remembered (${ccv.id}). Searchable later with memory_search.`);
+      return ok(
+        `Remembered (${ccv.id}). Searchable later with memory_search. ${fileNote}`
+      );
     },
   });
 

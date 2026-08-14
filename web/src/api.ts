@@ -562,6 +562,11 @@ export const api = {
   ccvs: (sessionId: string) => json<{ ccvs: Ccv[] }>(`/api/sessions/${sessionId}/ccvs`),
   ccv: (id: string) => json<{ ccv: Ccv }>(`/api/ccvs/${id}`),
   ccvMemories: () => json<{ ccvs: Ccv[] }>(`/api/ccvs/memories`),
+  addMemory: (payload: { text: string; topic?: string }) =>
+    json<{ ccv: Ccv }>(`/api/ccvs/memories`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   updateCcv: (id: string, patch: { content?: string; memory?: boolean }) =>
     json<{ ccv: Ccv }>(`/api/ccvs/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   checkpoint: (sessionId: string, seq: number) =>
