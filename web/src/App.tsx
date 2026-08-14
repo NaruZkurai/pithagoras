@@ -141,6 +141,11 @@ function Shell({
 
     let cancelled = false;
     let seq = 0;
+    // Events streamed during the replay (up to 5000 of them, each a full tool
+    // output) are batched here and applied in ONE state update on `caught-up`,
+    // so page load does not trigger thousands of separate re-renders — which is
+    // what used to make opening a long session take forever.
+    let replayBuf: PortalEvent[] | null = [];
     const connect = () => {
       if (cancelled) return;
       const es = new EventSource(`/api/sessions/${sessionId}/events?since=${seq}`);
@@ -150,6 +155,10 @@ function Shell({
         // Live-only events (dialogs) use a negative seq and must not move the
         // resume cursor, or reconnecting would skip real history.
         if (ev.seq > 0) seq = ev.seq;
+        if (replayBuf) {
+          replayBuf.push(ev);
+          return;
+        }
         setEvents((prev) => [...prev, ev]);
         if (ev.type === "portal_status") refreshSessions().catch(() => {});
         // Dialogs an extension is blocking on. notify/setStatus/setWidget are
@@ -165,6 +174,12 @@ function Shell({
           setUiQueue((q) => q.filter((x) => x.id !== id));
         }
       };
+      es.addEventListener("caught-up", () => {
+        const buffered = replayBuf;
+        replayBuf = null;
+        if (buffered && buffered.length) setEvents((prev) => [...prev, ...buffered]);
+        if (seq > 0) refreshSessions().catch(() => {});
+      });
       es.onerror = () => {
         es.close();
         setTimeout(connect, 2000);

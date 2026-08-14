@@ -25,6 +25,14 @@ export type Item =
 export function buildTranscript(events: PortalEvent[]): Item[] {
   const items: Item[] = [];
   let current: Extract<Item, { kind: "assistant" }> | null = null;
+  // Index into `items` of the still-running tool rows, by name. Kept so an
+  // `_end`/`_update` can find the matching open row in O(1) instead of scanning
+  // the whole transcript backward — the reverse scan made large transcripts
+  // rebuild in O(n^2), which is why long sessions got sluggish to open.
+  const openTools = new Map<string, number[]>();
+
+  const toolName = (p: any) => String(p.toolName ?? p.name ?? "tool");
+  const lastOpen = (name: string): number | undefined => openTools.get(name)?.at(-1);
 
   const closeCurrent = () => {
     if (current) {
@@ -63,39 +71,47 @@ export function buildTranscript(events: PortalEvent[]): Item[] {
         items.push({
           kind: "tool",
           id: `t${ev.seq}`,
-          name: String(p.toolName ?? p.name ?? "tool"),
+          name: toolName(p),
           status: "running",
           detail: summarizeToolInput(p),
         });
+        {
+          const name = toolName(p);
+          const list = openTools.get(name) ?? [];
+          list.push(items.length - 1);
+          openTools.set(name, list);
+        }
         break;
 
       case "tool_execution_end": {
         // Close the most recent still-running tool of the same name and attach
         // the raw output it produced (stdout+stderr) so it can be shown.
-        const name = String(p.toolName ?? p.name ?? "tool");
-        for (let i = items.length - 1; i >= 0; i--) {
-          const it = items[i];
-          if (it.kind === "tool" && it.status === "running" && it.name === name) {
+        const name = toolName(p);
+        const idx = lastOpen(name);
+        if (idx !== undefined) {
+          const it = items[idx];
+          if (it.kind === "tool") {
             it.status = p.isError || p.error ? "error" : "done";
             const output = resultText(p.result);
             if (output) it.output = output;
-            break;
           }
+          // Pop just this row; earlier rows of the same name stay open.
+          const list = openTools.get(name)!;
+          list.pop();
+          if (!list.length) openTools.delete(name);
         }
         break;
       }
 
       case "tool_execution_update": {
         // Stream partial output into the open tool row while it runs.
-        const name = String(p.toolName ?? p.name ?? "tool");
+        const name = toolName(p);
         const partial = resultText(p.partialResult);
         if (!partial) break;
-        for (let i = items.length - 1; i >= 0; i--) {
-          const it = items[i];
-          if (it.kind === "tool" && it.status === "running" && it.name === name) {
-            it.output = it.output ? it.output + partial : partial;
-            break;
-          }
+        const idx = lastOpen(name);
+        if (idx !== undefined && items[idx].kind === "tool") {
+          const it = items[idx];
+          it.output = it.output ? it.output + partial : partial;
         }
         break;
       }

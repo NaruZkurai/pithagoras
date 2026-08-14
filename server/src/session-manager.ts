@@ -72,6 +72,33 @@ interface LiveSession {
 }
 
 /**
+ * Per-session tracker for the auto-continue nudge.
+ *
+ * When an agent's turn ends having only run tools and delivered no final
+ * answer, it usually stopped mid-chain (the model "decided" it was done after
+ * a shell command instead of finishing the task). We nudge it to keep going,
+ * but only up to MAX_AUTO_CONTINUES per task so a genuinely stuck agent cannot
+ * spin forever.
+ */
+interface TurnState {
+  /** tool_execution_start events seen in the current turn. */
+  toolCalls: number;
+  /** A substantive assistant message closed in the current turn. */
+  answered: boolean;
+  /** Auto-continue nudges issued since the last user task began. */
+  streak: number;
+}
+
+/** How many times a stalled turn is nudged before we stop asking. */
+const MAX_AUTO_CONTINUES = 3;
+/** The nudge sent to an agent that stopped mid-chain without an answer. */
+const CONTINUE_NUDGE =
+  "You stopped in the middle of the task without producing a final answer — " +
+  "several of your last steps ran tools but no reply followed. Continue from " +
+  "where you left off and finish the task completely. If you hit a genuine " +
+  "blocker, say so plainly and stop.";
+
+/**
  * Owns every running pi process.
  *
  * The important property: a run is tied to this manager, not to any HTTP
@@ -90,6 +117,17 @@ class SessionManager extends EventEmitter {
    * is actually speaking, not whoever spoke first.
    */
   private speaker = new Map<string, PersonRow>();
+  /** Auto-continue state per session. */
+  private turn = new Map<string, TurnState>();
+
+  private turnState(sessionId: string): TurnState {
+    let t = this.turn.get(sessionId);
+    if (!t) {
+      t = { toolCalls: 0, answered: false, streak: 0 };
+      this.turn.set(sessionId, t);
+    }
+    return t;
+  }
 
   constructor() {
     super();
@@ -128,6 +166,34 @@ class SessionManager extends EventEmitter {
     const row = appendEvent(sessionId, type, payload);
     this.emit(`session:${sessionId}`, row);
     return row.seq;
+  }
+
+  /**
+   * Nudge an agent whose turn ended mid-chain.
+   *
+   * Called on `agent_end` when the finished turn ran tools but never delivered
+   * a final answer — the classic "stops responding / stops its chain" failure.
+   * Sends a `followUp` continue message through the client directly (not via
+   * prompt(), so it does not swallow the caller's task bookkeeping or reset the
+   * streak) and caps the number of nudges per user task.
+   */
+  private async maybeAutoContinue(sessionId: string): Promise<void> {
+    const live = this.live.get(sessionId);
+    if (!live) return;
+    const t = this.turnState(sessionId);
+    // Only nudge a turn that did real tool work and never answered.
+    if (t.toolCalls === 0 || t.answered || t.streak >= MAX_AUTO_CONTINUES) return;
+    t.streak += 1;
+    t.toolCalls = 0;
+    t.answered = false;
+    console.log(
+      `[auto-continue ${sessionId}] nudging stalled agent (${t.streak}/${MAX_AUTO_CONTINUES})`
+    );
+    try {
+      await live.client.prompt(CONTINUE_NUDGE, "followUp");
+    } catch (e) {
+      console.warn(`[auto-continue ${sessionId}] nudge failed: ${(e as Error).message}`);
+    }
   }
 
   private async ensureClient(sessionId: string): Promise<PiClient> {
@@ -188,6 +254,17 @@ class SessionManager extends EventEmitter {
     client.on("event", (msg) => {
       rememberSessionFile();
       const seq = this.record(sessionId, msg.type, msg);
+
+      // Track the current turn for the auto-continue stall detector.
+      const turn = this.turnState(sessionId);
+      if (msg.type === "tool_execution_start") turn.toolCalls += 1;
+      // A user message (or portal status change) starts a fresh logical task:
+      // reset the streak and turn counters so the cap applies per task.
+      if (msg.type === "portal_status" && msg.status === "running") {
+        turn.toolCalls = 0;
+        turn.answered = false;
+      }
+
       // Remember which event each assistant message starts at — its thread is
       // keyed on that seq so it lines up with the transcript's message id.
       if (msg.type === "message_update") {
@@ -215,6 +292,8 @@ class SessionManager extends EventEmitter {
         if (msg.message.role === "assistant") {
           const text = extractMessageText(msg.message);
           if (text) {
+            // A substantive assistant reply closes the turn: it is not stalled.
+            turn.answered = true;
             this.emit("message_complete", sessionId, session.kind, text);
             // Log every agent message into the thread attached to it, not just
             // the last one when a run finishes.
@@ -230,6 +309,8 @@ class SessionManager extends EventEmitter {
       if (msg.type === "agent_end") {
         updateSession(sessionId, { status: "idle" });
         this.record(sessionId, "portal_status", { status: "idle" });
+        // If it stopped mid-chain without answering, nudge it to keep going.
+        void this.maybeAutoContinue(sessionId);
       }
     });
 
