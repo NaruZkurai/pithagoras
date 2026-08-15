@@ -33,7 +33,9 @@ import { threadsRouter } from "./api/threads.js";
 import { stashesRouter } from "./api/stashes.js";
 import { ccvsRouter } from "./api/ccvs.js";
 import { modelsRouter } from "./api/models.js";
+import { fleetRouter } from "./api/fleet.js";
 import { startEnabled, shutdownModelServers, startIdleSweeper, stopIdleSweeper, status as modelServerStatus } from "./model-server.js";
+import { seedFleetFromModelServers } from "./fleet.js";
 import { listModelServers, listRepos } from "./db.js";
 import { mcpRouter } from "./api/mcp.js";
 import { peopleRouter } from "./api/people.js";
@@ -517,6 +519,7 @@ app.use("/api", threadsRouter());
 app.use("/api", stashesRouter());
 app.use("/api", ccvsRouter());
 app.use("/api", modelsRouter());
+app.use("/api", fleetRouter());
 app.use("/api", mcpRouter());
 app.use("/api", peopleRouter());
 app.use("/api", reposRouter());
@@ -599,6 +602,8 @@ try {
 seedUsers();
 // Seed the portal's own repo in the Repos tab.
 seedPithagorasRepo();
+// Base-model fleet (27B main + 4B subagents) becomes the agent registry.
+seedFleetFromModelServers();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`pithagoras listening on :${PORT}`);

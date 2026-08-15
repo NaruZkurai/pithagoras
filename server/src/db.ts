@@ -370,6 +370,26 @@ export function getDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Base-model fleet: model-server agents on the LAN that any other agent can
+    -- route to as a base for subagent / small tasks. Mirrors the model_servers
+    -- above but tracked as *agents* with a liveness/busy state the fleet monitor
+    -- refreshes, plus an optional current_task so work is attributable.
+    CREATE TABLE IF NOT EXISTS fleet_agents (
+      id TEXT PRIMARY KEY,              -- e.g. bonsai-4b-f1
+      name TEXT NOT NULL DEFAULT '',    -- human label
+      host TEXT NOT NULL DEFAULT '',    -- e.g. 192.168.2.64
+      port INTEGER NOT NULL DEFAULT 6465,
+      model TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL DEFAULT 'subagent', -- main | subagent
+      status TEXT NOT NULL DEFAULT 'unknown',-- unknown | up | busy | down
+      current_task TEXT NOT NULL DEFAULT '',
+      last_health TEXT NOT NULL DEFAULT '',
+      last_checked TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_fleet_status ON fleet_agents(status);
   `);
   migrate(db);
   return db;
@@ -1375,6 +1395,82 @@ export function upsertModelServer(
 
 export function deleteModelServer(name: string): void {
   getDb().prepare("DELETE FROM model_servers WHERE name = ?").run(name);
+}
+
+// --- fleet_agents --------------------------------------------------------
+export interface FleetAgentRow {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  model: string;
+  role: "main" | "subagent";
+  status: "unknown" | "up" | "busy" | "down";
+  current_task: string;
+  last_health: string;
+  last_checked: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Insert or update a fleet agent (upsert, keyed by id). */
+export function upsertFleetAgent(
+  a: Pick<FleetAgentRow, "id" | "name" | "host" | "port" | "model"> & {
+    role?: FleetAgentRow["role"];
+  }
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO fleet_agents (id, name, host, port, model, role)
+       VALUES (@id, @name, @host, @port, @model, @role)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name, host = excluded.host, port = excluded.port,
+         model = excluded.model,
+         updated_at = datetime('now')`
+    )
+    .run({ ...a, role: a.role ?? "subagent" });
+}
+
+/** Refresh an agent's liveness/busy state from the fleet monitor. */
+export function updateFleetAgentStatus(
+  id: string,
+  patch: { status?: FleetAgentRow["status"]; currentTask?: string; lastHealth?: string }
+): void {
+  const cols: string[] = [];
+  const vals: (string | number)[] = [];
+  if (patch.status) {
+    cols.push("status = ?");
+    vals.push(patch.status);
+  }
+  if (patch.currentTask !== undefined) {
+    cols.push("current_task = ?");
+    vals.push(patch.currentTask);
+  }
+  if (patch.lastHealth !== undefined) {
+    cols.push("last_health = ?");
+    vals.push(patch.lastHealth);
+  }
+  cols.push("last_checked = datetime('now')", "updated_at = datetime('now')");
+  vals.push(id);
+  if (!cols.length) return;
+  getDb().prepare(`UPDATE fleet_agents SET ${cols.join(", ")} WHERE id = ?`).run(...vals);
+}
+
+export function listFleetAgents(status?: FleetAgentRow["status"]): FleetAgentRow[] {
+  const base = `SELECT * FROM fleet_agents`;
+  return (status
+    ? getDb().prepare(`${base} WHERE status = ? ORDER BY port ASC`).all(status)
+    : getDb().prepare(`${base} ORDER BY port ASC`).all()) as FleetAgentRow[];
+}
+
+export function getFleetAgent(id: string): FleetAgentRow | undefined {
+  return getDb().prepare("SELECT * FROM fleet_agents WHERE id = ?").get(id) as
+    | FleetAgentRow
+    | undefined;
+}
+
+export function deleteFleetAgent(id: string): void {
+  getDb().prepare("DELETE FROM fleet_agents WHERE id = ?").run(id);
 }
 
 /** Where reports go when a routine does not name a destination of its own. */
