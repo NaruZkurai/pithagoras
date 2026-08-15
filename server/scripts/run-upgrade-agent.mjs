@@ -326,28 +326,22 @@ async function run() {
   const upgradeTask =
     projectContext +
     "\n\n" +
-    "You are upgrading this Pithagoras project. IMPORTANT: 'upgrading' means " +
-    "IMPROVING THE CODE — inspect the source, identify 2-4 concrete, low-risk " +
-    "improvements (bugs, obvious issues, small wins), implement them in the " +
-    "workspace, and run the existing build/lint/typecheck for whatever you " +
-    "touch. It does NOT mean upgrading the system or its packages.\n\n" +
-    "YOU MUST WRITE FILES: this task is only complete when you have actually " +
-    "EDITED source files in the workspace (via write/edit tools or bash) and " +
-    "verified the changes build. Reading files alone is NOT work — after you " +
-    "read enough to understand 2-4 changes, MAKE those changes. Do not stop " +
-    "after inspecting; the deliverable is modified code that passes the build. " +
-    "If you are unsure what to change, pick the clearest small bug or obvious " +
-    "improvement and fix it.\n\n" +
-    "STRICTLY DO NOT: run pacman -Syu / apt / dnf / yum / brew / pip install " +
-    "or ANY package-manager or OS updater; do NOT run npm install / npm ci / " +
-    "npm update; do NOT bump or modify dependency versions or lockfiles. The " +
-    "environment and all npm packages are already installed and correct — " +
-    "your job is to improve the application code, never to install or update " +
-    "software. If you hit a missing dependency, report it and move on rather " +
-    "than installing anything.\n\n" +
-    "Also: do NOT delete files, do NOT commit or push, do NOT restructure " +
-    "broadly. When done, summarize exactly what you changed and what you " +
-    "verified. If a build fails, fix the CODE, not the dependency tree.";
+    "You are upgrading this Pithagoras project. 'Upgrading' means IMPROVING " +
+    "THE CODE, not upgrading the system. Do exactly ONE concrete, small, " +
+    "low-risk code improvement and PROVE it with a real file edit:\n\n" +
+    "STEP 1 — Pick ONE specific, obvious improvement in this codebase. Good " +
+    "candidates: a real bug, an obvious typo, a small correctness or " +
+    "simplicity win in server/src or web/src. Be specific about the file and " +
+    "the change.\n" +
+    "STEP 2 — MAKE the edit with a write/edit tool (or bash). The deliverable " +
+    "is a changed source file. Do not stop after reading — WRITE the file.\n" +
+    "STEP 3 — Run the build/typecheck (npm run build -w server) and confirm it " +
+    "still passes. If it fails, fix your edit.\n" +
+    "When done, report exactly which file you changed, the diff, and that the " +
+    "build passes.\n\n" +
+    "Do NOT run package-manager or OS updaters (pacman/apt/npm install/npm ci). " +
+    "Do NOT delete files, commit, push, or restructure. One verified edit " +
+    "beats an unverified sweep.";
 
   if (NO_RUN) {
     console.log("(--no-run) would prompt:\n" + upgradeTask);
@@ -393,16 +387,31 @@ async function run() {
 
   // Net-negative gate: the small agent's own judgment is not enough (limited
   // context). Once idle, actually verify its changes — manifest intact +
-  // typecheck/build pass. Only then is the work an improvement.
+  // typecheck/build pass AND a real diff exists. Talking without editing is
+  // not an improvement.
   const finalStatus = await waitUntilIdle(sessionId, 15 * 60_000);
   console.log(`session ${sessionId} final status: ${finalStatus}`);
+
+  // Number of source files actually changed (must be > 0 to count).
+  let changedFiles = 0;
+  try {
+    const out = execFileSync("git", ["diff", "--name-only"], {
+      cwd: WS,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    changedFiles = (out || "").split("\n").filter(Boolean).length;
+  } catch {
+    changedFiles = 0;
+  }
 
   const verdicts = verifyChanges();
   for (const v of verdicts) {
     console.log(`  [${v.ok ? "PASS" : "FAIL"}] ${v.name}${v.detail ? " — " + v.detail : ""}`);
   }
-  const netPositive = finalStatus === "idle" && verdicts.every((v) => v.ok);
-  console.log(netPositive ? "RESULT: NET-POSITIVE (verified improvements)." : "RESULT: NET-NEGATIVE or unverified — do NOT adopt these changes.");
+  console.log(`  [${changedFiles > 0 ? "PASS" : "FAIL"}] changed source files (${changedFiles})`);
+  const netPositive = finalStatus === "idle" && changedFiles > 0 && verdicts.every((v) => v.ok);
+  console.log(netPositive ? "RESULT: NET-POSITIVE (verified code edit)." : "RESULT: NET-NEGATIVE or unverified — no verified code edit made.");
   process.exitCode = netPositive ? 0 : 1;
 }
 
