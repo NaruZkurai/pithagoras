@@ -540,6 +540,13 @@ function migrate(d: Database.Database): void {
   if (msCols.length && !msCols.includes("host")) {
     d.exec("ALTER TABLE model_servers ADD COLUMN host TEXT NOT NULL DEFAULT ''");
   }
+  // Serving runtime for this model server. "stock" (default) = llama.cpp's
+  // llama-server, "rs" = the Rust llama-rs server, "direct-token" = our own
+  // llama.cpp fork (NaruZkurai/llama-direct-token-input) that emits model
+  // tokens/actions directly for RL-style self-training.
+  if (msCols.length && !msCols.includes("runtime")) {
+    d.exec("ALTER TABLE model_servers ADD COLUMN runtime TEXT NOT NULL DEFAULT 'stock'");
+  }
 
   // Callable chat variables (CCVs): every chat atom — a message, a thought, a
   // tool call, a shell command, an output — becomes a first-class, hashed,
@@ -1322,6 +1329,7 @@ export interface ModelServerRow {
   extra_args: string;
   draft_model: string;
   draft_ngl: number;
+  runtime: string;
   enabled: number;
 }
 
@@ -1342,8 +1350,8 @@ export function upsertModelServer(
   getDb()
     .prepare(
       `INSERT INTO model_servers
-        (name, host, bin, model, alias, port, ngl, ctx, threads, parallel, no_kv_offload, extra_args, draft_model, draft_ngl, enabled, updated_at)
-       VALUES (@name, @host, @bin, @model, @alias, @port, @ngl, @ctx, @threads, @parallel, @no_kv_offload, @extra_args, @draft_model, @draft_ngl, @enabled, datetime('now'))
+        (name, host, bin, model, alias, port, ngl, ctx, threads, parallel, no_kv_offload, extra_args, draft_model, draft_ngl, runtime, enabled, updated_at)
+       VALUES (@name, @host, @bin, @model, @alias, @port, @ngl, @ctx, @threads, @parallel, @no_kv_offload, @extra_args, @draft_model, @draft_ngl, @runtime, @enabled, datetime('now'))
        ON CONFLICT(name) DO UPDATE SET
          host = excluded.host,
          bin = excluded.bin,
@@ -1358,6 +1366,7 @@ export function upsertModelServer(
          extra_args = excluded.extra_args,
          draft_model = excluded.draft_model,
          draft_ngl = excluded.draft_ngl,
+         runtime = excluded.runtime,
          enabled = excluded.enabled,
          updated_at = datetime('now')`
     )

@@ -1,0 +1,3 @@
+[submodule "gitrepos/prime-agent"]
+	path = gitrepos/prime-agent
+	url = https://github.com/PrimeIntellect-ai/prime-agent.git

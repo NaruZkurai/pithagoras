@@ -57,6 +57,7 @@ export function modelsRouter(): Router {
       extra_args: String(b.extra_args ?? ""),
       draft_model: String(b.draft_model ?? "").trim(),
       draft_ngl: Number(b.draft_ngl) || 0,
+      runtime: String(b.runtime ?? "stock").trim() || "stock",
       enabled: b.enabled ? 1 : 0,
     });
     res.json({ ok: true, server: getModelServer(name) });

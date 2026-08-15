@@ -23,6 +23,12 @@ const lastUsed = new Map<string, number>();
 /** Flags differ between the stock llama-server and the Rust llama-rs server. */
 function buildArgs(s: ModelServerRow): string[] {
   const isRs = s.bin.includes("llama-rs");
+  // Our own llama.cpp fork (NaruZkurai/llama-direct-token-input) emits model
+  // tokens/actions directly (no fragile text parsing) for RL-style training of
+  // the 4B fleet. It is still a llama.cpp server, so it takes the stock arg
+  // shape; `runtime='direct-token'` just selects it and what extra flags to
+  // push (see docs/self-training.md). Set `bin` to the fork's binary.
+  const directToken = (s.runtime ?? "stock") === "direct-token";
   const args: string[] = ["-m", s.model];
   if (s.alias) args.push("--alias", s.alias);
   if (isRs) {
@@ -50,6 +56,12 @@ function buildArgs(s: ModelServerRow): string[] {
     if (s.draft_ngl > 0) args.push("--draft-ngl", String(s.draft_ngl));
   }
   args.push("--port", String(s.port));
+  // Explicit marker for the direct-token fork, so the serving runtime is
+  // self-describing. Tweak or drop the flag name to match the fork's actual
+  // CLI once built and confirmed.
+  if (directToken && !s.extra_args.includes("direct-token")) {
+    args.push("--direct-token-input");
+  }
   if (s.extra_args) args.push(...s.extra_args.split(/\s+/).filter(Boolean));
   return args;
 }
