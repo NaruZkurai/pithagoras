@@ -163,17 +163,21 @@ async function run() {
   console.log(`session ${sessionId} on ${WS}`);
 
   const upgradeTask =
-    "You are upgrading this Pithagoras project. Work NON-DESTRUCTIVELY: " +
-    "inspect the code, identify 2-4 concrete, low-risk improvements (bugs, " +
-    "obvious issues, small wins), implement them in the workspace, and run " +
-    "the existing build/lint/typecheck for whatever you touch. Do NOT delete " +
-    "files, do NOT commit or push, do NOT restructure broadly. When done, " +
-    "summarize exactly what you changed and what you verified.\n\n" +
-    "Dependencies: node_modules is ALREADY installed and working in this " +
-    "workspace (server and web deps are present, better-sqlite3 prebuilds " +
-    "load). Do NOT run a full npm install or npm ci — it is unnecessary and " +
-    "wastes your time. You can run npm run build / tsc directly. If a build " +
-    "fails, fix the CODE, not the dependency tree.";
+    "You are upgrading this Pithagoras project. IMPORTANT: 'upgrading' means " +
+    "IMPROVING THE CODE — inspect the source, identify 2-4 concrete, low-risk " +
+    "improvements (bugs, obvious issues, small wins), implement them in the " +
+    "workspace, and run the existing build/lint/typecheck for whatever you " +
+    "touch. It does NOT mean upgrading the system or its packages.\n\n" +
+    "STRICTLY DO NOT: run pacman -Syu / apt / dnf / yum / brew / pip install " +
+    "or ANY package-manager or OS updater; do NOT run npm install / npm ci / " +
+    "npm update; do NOT bump or modify dependency versions or lockfiles. The " +
+    "environment and all npm packages are already installed and correct — " +
+    "your job is to improve the application code, never to install or update " +
+    "software. If you hit a missing dependency, report it and move on rather " +
+    "than installing anything.\n\n" +
+    "Also: do NOT delete files, do NOT commit or push, do NOT restructure " +
+    "broadly. When done, summarize exactly what you changed and what you " +
+    "verified. If a build fails, fix the CODE, not the dependency tree.";
 
   if (NO_RUN) {
     console.log("(--no-run) would prompt:\n" + upgradeTask);
