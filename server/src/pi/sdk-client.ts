@@ -11,6 +11,7 @@ import { threadTools, threadFraming } from "./thread-tools.js";
 import { reportTool, reportToFor } from "./report-tool.js";
 import { guardExtension } from "./guard.js";
 import { askPrimaryTool } from "./ask-primary.js";
+import { projectTokenTools } from "./project-token-tools.js";
 import { sandboxBashOperations, sandboxLimits } from "./sandbox-fs.js";
 import { sandboxedFileToolDefinitions } from "./file-tools.js";
 import { listMemoryCcvs } from "../db.js";
@@ -269,6 +270,10 @@ export class SdkPiClient extends EventEmitter implements PiClient {
                 : undefined,
             }),
         },
+        // Pre-tokenized project file access: the agent reads a file's token
+        // cost / pre-tokenized content via the direct-token manifest instead
+        // of re-tokenizing raw text in a slow gather loop.
+        { name: "project-tokens", factory: (pi: any) => projectTokenTools(pi, { cwd: opts.cwd }) },
       ];
       // Every session, unconditionally: the point is to limit what a turn can do
       // after it reads something untrusted, and any session can read something.
