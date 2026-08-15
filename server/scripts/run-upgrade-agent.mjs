@@ -205,6 +205,19 @@ function buildProjectContext() {
 
   const lines = ["# PROJECT SNAPSHOT (pre-loaded — do not re-discover it)", ""];
 
+  // Tell the agent exactly where it is so it never hunts for its own files
+  // (a past failure: it ran `find / -name package.json` because the inject
+  // didn't pin down its working directory). Inside its bash sandbox the
+  // workspace is mounted at /workspace; every path below is relative to that.
+  lines.push(
+    "Your working directory is `WORKSPACE_ROOT` and every file path in this " +
+      "snapshot is RELATIVE to it. In your bash shell, that root is mounted at " +
+      "`/workspace` — so `server/src/index.ts` below means `/workspace/server/src/index.ts`. " +
+      "You do not need to locate the project; it is already your cwd. Do not run " +
+      "`find`/`ls`/`pwd` to discover files listed here.",
+    ""
+  );
+
   // 1) COMPLETE file-location inventory.
   //
   // Every file in the project, as its relative path -- so the agent knows the
