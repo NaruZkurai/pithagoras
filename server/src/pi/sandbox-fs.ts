@@ -26,7 +26,18 @@ export interface SandboxLimits {
   pidsLimit: number;
 }
 
-const IMAGE = process.env.PI_IMAGE || "pithagoras-runner:latest";
+/**
+ * The sandbox image a session's bash commands run in.
+ *
+ * Resolved at call time (not module-load) so every session picks up the image
+ * configured in the portal env — scripts/run-portal.sh sets PI_IMAGE to the
+ * minimal Arch runner (pithagoras-runner-arch:latest). Evaluating it per
+ * invocation also means a session launched before an env change isn't frozen
+ * to a stale image for the life of the process.
+ */
+export function sandboxImage(): string {
+  return process.env.PI_IMAGE || "pithagoras-runner:latest";
+}
 
 /** Credentials pi needs passed through to talk to the model provider. */
 function passthroughEnv(): string[] {
@@ -82,6 +93,10 @@ export function sandboxBashOperations(workspace: string, limits: SandboxLimits) 
       if (signal?.aborted) throw new Error("aborted");
 
       const name = `pithagoras-bash-${randomBytes(5).toString("hex")}`;
+      const image = sandboxImage();
+      // Visible per session: confirms which sandbox image this workspace's
+      // commands are pinned to. Debug aid for "why is my shell running in X".
+      console.log(`[sandbox] ${name}: workspace=${ws} image=${image}`);
       const args = [
         "run",
         "-i",
@@ -117,7 +132,7 @@ export function sandboxBashOperations(workspace: string, limits: SandboxLimits) 
         String(limits.pidsLimit),
         ...(env ? Object.entries(env).flatMap(([k, v]) => (v != null ? ["-e", `${k}=${v}`] : [])) : []),
         ...passthroughEnv(),
-        IMAGE,
+        image,
         "-lc",
         command,
       ];
