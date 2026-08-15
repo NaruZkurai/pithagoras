@@ -12,6 +12,7 @@ import { appendEvent, appendThreadMessage, createSession, createThread, getSessi
 import { ingestMessageCcvs } from "./ccv.js";
 import { captureCheckpoint } from "./checkpoint.js";
 import { ensureMainModelServer } from "./model-server.js";
+import { fleetJudge } from "./fleet-judge.js";
 
 /**
  * Thinking markers that escape into the answer.
@@ -180,27 +181,52 @@ class SessionManager extends EventEmitter {
    * Called on a completed tool call and on thought milestones. Builds a SHORT,
    * FRESH nudge from the live moment (elapsed seconds, action count, file-edit
    * count) so the text is unique — never a resend of the task or of an earlier
-   * warning. One nudge per distinct action; capped so we never spam. The nudge
-   * points the model at the deliverable (a real file edit) without re-stating
-   * the whole task.
+   * warning. Also consults the 4B FLEET (independent judges) on whether the
+   * agent is actually making progress; if they say "no", the nudge escalates.
+   * One nudge per distinct action; capped so we never spam.
    */
-  private maybeWarnTimeWasted(sessionId: string, seq: number, editedFiles: () => number): void {
+  private async maybeWarnTimeWasted(
+    sessionId: string,
+    seq: number,
+    editedFiles: () => number
+  ): Promise<void> {
     const s = this.timeWarnState(sessionId);
     if (s.sent.size >= TIME_WARN_MAX) return; // never spam past the cap
     if (s.lastSeq === seq) return; // one nudge per action/milestone
     const elapsedSec = Math.round((Date.now() - s.startedAt) / 1000);
     if (elapsedSec < TIME_WARN_AFTER_MS / 1000) return; // not yet wasting time
 
-    // Build a UNIQUE warning from live state only (no duplicate content, no
-    // re-sent task). Hashing the live numbers keeps it distinct per moment.
     const edits = editedFiles();
+    let fleetLine = "";
+    let escalate = false;
+    try {
+      // Independent progress judgment from the four 4B models.
+      const verdict = await fleetJudge(
+        `Session ${sessionId}: ${s.actions} tool actions so far, ~${elapsedSec}s elapsed, ${edits} file(s) edited.`
+      );
+      if (verdict.inconclusive) {
+        fleetLine = "";
+      } else {
+        fleetLine = verdict.progress
+          ? ` (fleet says: making progress)`
+          : ` (fleet says: NOT making progress — ${verdict.reason || "stuck"})`;
+        escalate = !verdict.progress;
+      }
+    } catch {
+      fleetLine = "";
+    }
+
+    // Build a UNIQUE warning from live state only (no duplicate content, no
+    // re-sent task). Escalate when the fleet independently votes "no progress".
     const text =
       `[time-warning] You have been working for ~${elapsedSec}s (${s.actions} tool ` +
-      `actions, ${edits} file(s) edited). You are spending too long reading/` +
-      `thinking without producing a file edit. The deliverable is ONE changed ` +
-      `source file that passes the build — make the edit NOW with a write/edit ` +
-      `tool. Do not re-read the task's instructions; just make the concrete ` +
-      `edit and verify it builds.`;
+      `actions, ${edits} file(s) edited)${fleetLine}. ` +
+      (escalate
+        ? `The independent judges say you are NOT making progress — STOP reading and ` +
+          `thinking and make a concrete file edit with a write/edit tool NOW. The ` +
+          `deliverable is one changed source file that passes the build.`
+        : `You are spending too long reading/thinking without producing a file edit. ` +
+          `Make the concrete edit NOW with a write/edit tool and verify it builds.`);
     s.lastSeq = seq;
     s.actions += 1;
     if (s.sent.has(text)) return; // belt-and-braces: never repeat identical text
@@ -208,7 +234,7 @@ class SessionManager extends EventEmitter {
 
     const live = this.live.get(sessionId);
     if (!live) return;
-    void live.client
+    await live.client
       .prompt(text, "followUp")
       .catch((e) => console.warn(`[time-warn ${sessionId}] failed: ${(e as Error).message}`));
   }
@@ -368,8 +394,8 @@ class SessionManager extends EventEmitter {
           return 0;
         }
       };
-      if (msg.type === "tool_execution_end") this.maybeWarnTimeWasted(sessionId, seq, editedFiles);
-      else if (msg.type === "message_update") this.maybeWarnTimeWasted(sessionId, seq, editedFiles);
+      if (msg.type === "tool_execution_end") void this.maybeWarnTimeWasted(sessionId, seq, editedFiles);
+      else if (msg.type === "message_update") void this.maybeWarnTimeWasted(sessionId, seq, editedFiles);
 
       // Remember which event each assistant message starts at — its thread is
       // keyed on that seq so it lines up with the transcript's message id.
