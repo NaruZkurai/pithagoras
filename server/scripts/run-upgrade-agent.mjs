@@ -22,7 +22,8 @@
  */
 import Database from "better-sqlite3";
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
 const PORTAL = process.env.PORTAL_URL || "http://localhost:4100";
@@ -93,6 +94,69 @@ function usableAction(events) {
   return { tools, prose, score: tools * 2 + prose };
 }
 
+/** Wait until the session is not running (capped). Returns final status. */
+async function waitUntilIdle(sessionId, capMs, pollMs = 15_000) {
+  const start = Date.now();
+  while (Date.now() - start < capMs) {
+    const row = db
+      .prepare("SELECT status FROM sessions WHERE id = ?")
+      .get(sessionId);
+    if (row && row.status !== "running") return row.status;
+    await sleep(pollMs);
+  }
+  return "still-running";
+}
+
+/** Try to run a verification command; returns {ok, output} or throws. */
+function tryVerify(cmd, opts) {
+  try {
+    const out = execFileSync(cmd[0], cmd.slice(1), {
+      cwd: WS,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 240_000,
+      ...opts,
+    });
+    return { ok: true, output: (out || "").slice(-4000) };
+  } catch (e) {
+    return {
+      ok: false,
+      output: String(e?.stdout || e?.message || "").slice(-4000),
+    };
+  }
+}
+
+/**
+ * The net-negative gate. After the agent finishes, actually verify the changes
+ * instead of taking its word: inspect the diff for obvious destructive edits,
+ * then run typecheck/build. Only if it passes is the work an improvement.
+ */
+function verifyChanges() {
+  const verdicts = [];
+  // 1) Manifest sanity: a project root package.json must stay a real manifest.
+  const pkg = path.join(WS, "package.json");
+  if (existsSync(pkg)) {
+    try {
+      const j = JSON.parse(readFileSync(pkg, "utf8"));
+      const sane = j && typeof j.name === "string" && (Array.isArray(j.workspaces) || j.scripts);
+      verdicts.push({ name: "root manifest intact", ok: !!sane, detail: j?.name || "broken JSON" });
+    } catch {
+      verdicts.push({ name: "root manifest intact", ok: false, detail: "package.json unparseable" });
+    }
+  }
+  // 2) The repo builds / typechecks (whatever tool the project exposes).
+  const checks = [
+    ["npm", "run", "build"],
+    ["npx", "tsc", "-p", "server/tsconfig.json", "--noEmit"],
+  ];
+  for (const cmd of checks) {
+    const r = tryVerify(cmd);
+    verdicts.push({ name: cmd.join(" "), ...r });
+    if (r.ok) break; // first passing check is enough
+  }
+  return verdicts;
+}
+
 async function run() {
   const cookie = await login();
   const sessionId = await createSession(cookie);
@@ -146,7 +210,21 @@ async function run() {
       "the verification evidence. Do not push; work only in this workspace.",
     "followUp"
   );
-  console.log("600s command dispatched. session continues server-side.");
+  console.log("600s command dispatched. waiting for the run to finish...");
+
+  // Net-negative gate: the small agent's own judgment is not enough (limited
+  // context). Once idle, actually verify its changes — manifest intact +
+  // typecheck/build pass. Only then is the work an improvement.
+  const finalStatus = await waitUntilIdle(sessionId, 15 * 60_000);
+  console.log(`session ${sessionId} final status: ${finalStatus}`);
+
+  const verdicts = verifyChanges();
+  for (const v of verdicts) {
+    console.log(`  [${v.ok ? "PASS" : "FAIL"}] ${v.name}${v.detail ? " — " + v.detail : ""}`);
+  }
+  const netPositive = finalStatus === "idle" && verdicts.every((v) => v.ok);
+  console.log(netPositive ? "RESULT: NET-POSITIVE (verified improvements)." : "RESULT: NET-NEGATIVE or unverified — do NOT adopt these changes.");
+  process.exitCode = netPositive ? 0 : 1;
 }
 
 run().catch((e) => {
