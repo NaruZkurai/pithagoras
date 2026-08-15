@@ -55,6 +55,19 @@ const RUN_LONG_MS = 60_000;       // the long follow-up (600s = 600_000; use 60s
 // acts, and let the directive bound the prose. Overridable via THINK_LEVEL.
 const THINK_LEVEL = process.env.THINK_LEVEL || "medium";
 
+// The executor that actually performs edits in this harness. Empirically the
+// 27B Q1_0 DEGENERATES on normal instructions — it emits only an EOS token
+// (content:[], output:2) for a real agent turn, on both remote and local. The
+// 500MB 4B Q1_0 follows instructions and returns tool-call-shaped output
+// ("write /path 'content'"), and it is the model this whole loop exists to
+// self-augment. So default the executor to the 500MB 4B via the local-4b
+// provider. Override with EXEC_MODEL / EXEC_PROVIDER.
+const EXEC_PROVIDER = process.env.EXEC_PROVIDER || "local-4b";
+const EXEC_MODEL = process.env.EXEC_MODEL || "bonsai-4b";
+// The 4B has a small built-in context; use the COMPACT snapshot so the prompt
+// fits. Overridable (e.g. EXEC_COMPACT=0 for a big-context model).
+const EXEC_COMPACT = (process.env.EXEC_COMPACT || "1") !== "0";
+
 if (!existsSync(WS)) {
   console.error(`workspace not found: ${WS}`);
   process.exit(1);
@@ -256,7 +269,7 @@ function verifyChanges() {
  *  - the full text of the small key files (package.json, tsconfig, README,
  *    SOUL/MEMORY/agent home files) that materially shape what to change.
  */
-function buildProjectContext() {
+function buildProjectContext(compact = false) {
   const EXCLUDE = new Set(["node_modules", ".git", "dist", "build", ".venv", "data", "gitrepos", "vendor"]);
   const KEY_FILES = [
     "package.json",
@@ -281,6 +294,35 @@ function buildProjectContext() {
     "scripts/train-6gb.sh",
   ];
   const MAX_KEY_BYTES = 300_000; // cap the injected key-file text total
+
+  // COMPACT mode: for a small-context executor (the 500MB 4B, ~8-16k ctx) the
+  // full 165-file inventory + key-file dump overflows context and the model
+  // emits nothing. Instead send a tiny directed brief: point at the generated
+  // PROJECT_TOKENS.md for layout, inject 2-3 critical paths, and tell it to
+  // read only what it needs for one edit. The whole fragment must stay small.
+  if (compact) {
+    const lines = [
+      "# PROJECT (compact — small-context executor)",
+      "",
+      "cwd IS the project root; paths are RELATIVE (no /workspace mount).",
+      "Do NOT dump the whole repo into context. Read only the file(s) you " +
+        "will edit, using a read tool.",
+      "The 500 MB model (Bonsai-4B-Q1_0) is served at http://127.0.0.1:6465; " +
+        "data/PROJECT_TOKENS.md lists the repo layout as `path [tokens]` — " +
+        "open it with a read tool, not in full into context.",
+      "",
+      "Key augmentation files this project owns (read these for context, edit " +
+        "exactly one):",
+      "  - scripts/augment-500mb.mjs  (the self-augmentation runner — ALREADY " +
+        "WORKS and targets 127.0.0.1:6465)",
+      "  - server/scripts/pre-tokenize-project.mjs",
+      "  - server/src/pi/project-token-tools.ts",
+      "  - server/scripts/run-upgrade-agent.mjs",
+      "  - scripts/train-6gb.sh",
+      "",
+    ].join("\n");
+    return lines;
+  }
 
   const lines = ["# PROJECT SNAPSHOT (pre-loaded — do not re-discover it)", ""];
 
@@ -512,36 +554,17 @@ async function probeRemote() {
 }
 
 /**
- * Decide which backend to run the upgrade on:
- *   - local/bonsai-27b   PREFERRED — the box on this PC is reliable and GPU-backed
- *                        (the portal launches it on :41001 if needed);
- *   - remote/bonsai-27b  only if it is ACTUALLY serving (health + real completion)
- *                        AND local is down, so a half-alive remote is never chosen.
+ * Decide which backend runs the upgrade.
  *
- * The remote box was repeatedly preferred (health up) yet never produced output
- * (empty completions → 0 usable actions → 0 net-positive). Local is the reliable
- * path; use remote only when local is unavailable.
+ * The 27B Q1_0 (remote & local) DEGENERATES on real agent turns — it returns
+ * only an EOS token (content:[] output:2) for instructions. The 500MB 4B Q1_0
+ * (local-4b/bonsai-4b on :6465) follows instructions and returns tool-call-
+ * shaped output, and it is the model this loop exists to self-augment. So the
+ * EXECUTOR is the 500MB 4B by default; the 27B is reachable via env override
+ * for experiments. The 4B is served locally on 6465 (already running).
  */
 async function chooseModel(cookie) {
-  // Is the local 27B up and serving right now?
-  const localUp = await probeLocal();
-  if (localUp) return { provider: "local", modelId: "bonsai-27b" };
-
-  // Local is down — only then consider remote, and only if it really completes.
-  if (await probeRemote()) return { provider: "remote", modelId: "bonsai-27b" };
-
-  console.warn("neither local nor remote 27B is serving a completion — ensuring LOCAL 27B is launched...");
-  // Ensure the local 27B is up (portal launches it for us on first use).
-  try {
-    await fetch(`${PORTAL}/api/models/servers/bonsai-local/start`, {
-      method: "POST",
-      headers: { cookie },
-      signal: AbortSignal.timeout(120_000),
-    }).catch(() => {});
-  } catch {
-    /* the session's ensureMainModelServer() will also try */
-  }
-  return { provider: "local", modelId: "bonsai-27b" };
+  return { provider: EXEC_PROVIDER, modelId: EXEC_MODEL };
 }
 
 /**
@@ -644,7 +667,7 @@ async function runOnce(cookie, state) {
     }
   }
 
-  const projectContext = buildProjectContext();
+  const projectContext = buildProjectContext(EXEC_COMPACT);
   const upgradeTask =
     projectContext +
     "\n\n" +
@@ -803,7 +826,28 @@ async function runOnce(cookie, state) {
   console.log(`  [${changedFiles > 0 ? "PASS" : "FAIL"}] changed source files (${changedFiles})`);
   const netPositive = finalStatus === "idle" && changedFiles > 0 && verdicts.every((v) => v.ok);
   console.log(netPositive ? "RESULT: NET-POSITIVE (verified code edit)." : "RESULT: NET-NEGATIVE or unverified — no verified code edit made.");
+  if (netPositive) {
+    // Bank the verified edit as a commit so the workspace starts clean next
+    // iteration (otherwise stale uncommitted diffs accumulate and poison the
+    // change-count / lockfile gates for every later run).
+    try {
+      commitWorkspaceChanges(`upgrade: verified edit (${changedFiles} file(s))`);
+      console.log(`committed verified edit (${changedFiles} file(s)) — workspace baseline is clean again.`);
+    } catch (e) {
+      console.warn(`could not commit verified edit: ${e?.message ?? e}`);
+    }
+  }
   return { netPositive, reason: netPositive ? `changed ${changedFiles} file(s)` : "no verified edit" };
+}
+
+/** Commit the current workspace changes so the loop banks verified work. */
+function commitWorkspaceChanges(message) {
+  execFileSync("git", ["add", "-A"], { cwd: WS, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  execFileSync("git", ["commit", "-m", message], {
+    cwd: WS,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 }
 
 /**
