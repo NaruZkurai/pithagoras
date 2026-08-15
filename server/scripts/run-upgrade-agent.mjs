@@ -46,6 +46,12 @@ const WAIT_BETWEEN_MS = 45_000;   // then wait 45s more to confirm it's still mo
 const MIN_SECOND_SCORE = 3;       // by then it should have done a bit more
 const RUN_LONG_MS = 60_000;       // the long follow-up (600s = 600_000; use 60s for a smoke test)
 
+// Reasoning budget applied to the session. "low" keeps the 27B from burning its
+// context window on endless thinking (which aborts mid-edit and yields 0
+// verified edits). A reasoning model still reasons a little; we just cap it.
+// Overridable via env (e.g. THINK_LEVEL=medium) if you want deeper thought.
+const THINK_LEVEL = process.env.THINK_LEVEL || "low";
+
 if (!existsSync(WS)) {
   console.error(`workspace not found: ${WS}`);
   process.exit(1);
@@ -482,12 +488,16 @@ async function chooseModel(cookie) {
   return { provider: "local", modelId: "bonsai-27b" };
 }
 
-/** Point a session at a model via the portal config endpoint. */
+/**
+ * Point a session at a model via the portal config endpoint.
+ * Also drops the reasoning budget to "low" so the 27B does not blow its context
+ * window on endless thinking (the failure mode behind 0 verified edits).
+ */
 async function applyModel(cookie, sessionId, provider, modelId) {
   const res = await fetch(`${PORTAL}/api/sessions/${sessionId}/config`, {
     method: "POST",
     headers: { "content-type": "application/json", cookie },
-    body: JSON.stringify({ provider, modelId }),
+    body: JSON.stringify({ provider, modelId, thinkingLevel: THINK_LEVEL }),
   });
   const j = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`set model ${provider}/${modelId}: ${JSON.stringify(j)}`);
@@ -621,6 +631,21 @@ async function runOnce(cookie, state) {
     ".ts must typecheck).\n" +
     "When done, report: the exact file you changed, the diff summary, and the " +
     "exact build command that passed.\n\n" +
+    "REASONING DISCIPLINE (critical — too much reasoning is the failure mode):\n" +
+    "You are a reasoning model, but KEEP REASONING SHORT. Do not write long " +
+    "planning essays or re-analyze what you already know. A brief 2-3 sentence " +
+    "thought then a tool call is ideal. Endless reasoning burns context and " +
+    "the run aborts with 'Context size has been exceeded' BEFORE you land an " +
+    "edit — which is why nothing ever verifies. Think small, then act.\n" +
+    "- NEVER read data/project-tokens.json in full — it is a ~7MB dump of raw " +
+    "token IDs and will blow your context window. Use data/PROJECT_TOKENS.md " +
+    "(already generated: each line is just `path [tokencount]`) or read the " +
+    "file you actually need.\n" +
+    "- The script scripts/augment-500mb.mjs ALREADY EXISTS and is verified " +
+    "-working (targets 127.0.0.1:6465, emits a type-checked augmentation- " +
+    "output.ts). Do NOT rewrite it from scratch. Improve it in place, or fix a " +
+    "different real file in the augmentation path. The 500MB model is on port " +
+    "6465 — never 41001 (that is the 27B).\n" +
     "HARD RULES (violating any of these is an automatic FAIL, not a warning):\n" +
     "- NEVER edit, touch, or regenerate package-lock.json / yarn.lock / any " +
     "lockfile. Lockfiles are off-limits; a dirty lockfile means the iteration " +
@@ -831,10 +856,10 @@ async function runForever() {
 
   // If we stopped mid-loop, abort any in-flight agent turn so a stop lands
   // promptly instead of waiting out the full iteration gate.
-  if (stopping) await abortSessionIfRunning(cookie, sessionId);
+  if (stopping) await abortSessionIfRunning(cookie, state.sessionId);
 
   console.log(
-    `\nupgrade loop stopped after ${iterations} iteration(s) on session ${sessionId}; ` +
+    `\nupgrade loop stopped after ${iterations} iteration(s) on session ${state.sessionId}; ` +
       `${positives} net-positive (verified edits).`
   );
   process.exit(0);
