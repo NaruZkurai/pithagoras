@@ -80,6 +80,15 @@ async function createSession(cookie) {
   return j.id;
 }
 
+/** Tear a session down (deletes its persistent sandbox container). Best-effort. */
+async function deleteSession(cookie, sessionId) {
+  await fetch(`${PORTAL}/api/sessions/${sessionId}`, {
+    method: "DELETE",
+    headers: { cookie },
+    signal: AbortSignal.timeout(REQ_TIMEOUT_MS),
+  });
+}
+
 async function prompt(cookie, sessionId, message, behavior = "followUp") {
   // Fire-and-forget on purpose: the /prompt route returns only once pi's own
   // prompt() for the model resolves, which for a big context against a remote
@@ -522,7 +531,8 @@ function provisionWorkspaceTokens() {
   }
 }
 
-async function runOnce(cookie, sessionId) {
+async function runOnce(cookie, state) {
+  let sessionId = state.sessionId;
   console.log(`iteration on session ${sessionId} (${WS})`);
 
   // Make sure the workspace actually carries the token patterns the task
@@ -534,16 +544,39 @@ async function runOnce(cookie, sessionId) {
 
   // Failover: prefer the remote box's 27B when reachable, otherwise use the
   // LOCAL 27B on 41001 so the harness runs through a box outage instead of
-  // piling up empty responses.
+  // piling up empty responses. Fresh sessions route models fine (verified);
+  // a reuse session that has gone stale reports an empty model registry, which
+  // surfaces as "Not found" from setModel — that is NOT worth keeping: recreate
+  // the session so the runtime boots with a live catalogue.
   const { provider, modelId } = await chooseModel(cookie);
   console.log(`routing session to model ${provider}/${modelId}`);
-  // Best-effort: an explicit set can fail transiently on a just-booted session
-  // (model registry not fully warm). The session already defaults to the right
-  // model, so a failure here must NOT abort the run — log and continue.
   try {
     await applyModel(cookie, sessionId, provider, modelId);
   } catch (e) {
-    console.warn(`(continuing — could not force model ${provider}/${modelId}: ${e?.message ?? e})`);
+    // A single reused session can go stale (empty model registry → setModel
+    // "Not found"). Continued use of a broken session yields 0 usable actions
+    // and 0 net-positive forever. Recover with a fresh session instead.
+    console.warn(
+      `setModel ${provider}/${modelId} failed (${e?.message ?? e}) — recreating session so the model registry reboots warm...`
+    );
+    try {
+      await deleteSession(cookie, sessionId);
+    } catch {
+      /* best effort — it may already be gone */
+    }
+    const fresh = await createSession(cookie);
+    console.log(`recreated loop session: ${sessionId} -> ${fresh}`);
+    // Re-provision the token patterns into the fresh workspace copy too.
+    state.sessionId = sessionId = fresh;
+    provisionWorkspaceTokens();
+    // Retry the model apply against the fresh session.
+    try {
+      await applyModel(cookie, sessionId, provider, modelId);
+      console.log(`model ${provider}/${modelId} applied on fresh session ${sessionId}`);
+    } catch (e2) {
+      console.error(`fresh session ${sessionId} still cannot set ${provider}/${modelId}: ${e2?.message ?? e2}`);
+      return { netPositive: false, reason: `stale session (${provider}/${modelId} not found)` };
+    }
   }
 
   const projectContext = buildProjectContext();
@@ -746,8 +779,10 @@ async function runForever() {
   // ONE session for the whole loop — the loop CONTINUES this session every
   // iteration (each iteration is just the next prompt), so it never leaks a
   // session dir + sandbox container per iteration (that ballooned to 100+).
-  const sessionId = await createSession(cookie);
-  console.log(`loop session ${sessionId} on ${WS}`);
+  // `state.sessionId` is mutable: if the reused session goes stale (empty model
+  // registry), runOnce recreates it in place so the loop keeps one live session.
+  const state = { sessionId: await createSession(cookie) };
+  console.log(`loop session ${state.sessionId} on ${WS}`);
   // Before launching anything, make sure the runner image's baked /repo is
   // up-to-date with the current source (rebuilds only when the repo/Dockerfile
   // is newer than the cached image). Runs once per process, not per iteration.
@@ -770,7 +805,7 @@ async function runForever() {
     const label = `iteration ${iterations}`;
     console.log(`\n===== ${label} =====`);
     try {
-      const { netPositive, reason } = await runOnce(cookie, sessionId);
+      const { netPositive, reason } = await runOnce(cookie, state);
       if (netPositive) positives += 1;
       console.log(`${label} done → ${netPositive ? "NET-POSITIVE" : "NET-NEGATIVE"} (${reason})`);
     } catch (e) {
