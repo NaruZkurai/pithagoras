@@ -46,11 +46,14 @@ const WAIT_BETWEEN_MS = 45_000;   // then wait 45s more to confirm it's still mo
 const MIN_SECOND_SCORE = 3;       // by then it should have done a bit more
 const RUN_LONG_MS = 60_000;       // the long follow-up (600s = 600_000; use 60s for a smoke test)
 
-// Reasoning budget applied to the session. "low" keeps the 27B from burning its
-// context window on endless thinking (which aborts mid-edit and yields 0
-// verified edits). A reasoning model still reasons a little; we just cap it.
-// Overridable via env (e.g. THINK_LEVEL=medium) if you want deeper thought.
-const THINK_LEVEL = process.env.THINK_LEVEL || "low";
+// Reasoning budget applied to the session. Tuned empirically: "low" made the
+// 27B stop acting (0 tool calls, score 2 — too timid), while the default was
+// the model blowing its context on endless thinking (score 7000+, abort mid-
+// edit). The right fix for the blowout is the REASONING DISCIPLINE directive
+// block (keep reasoning to ~2-3 sentences, never dump the 7MB token file),
+// NOT starving the model of reasoning. So default back to "medium" so it still
+// acts, and let the directive bound the prose. Overridable via THINK_LEVEL.
+const THINK_LEVEL = process.env.THINK_LEVEL || "medium";
 
 if (!existsSync(WS)) {
   console.error(`workspace not found: ${WS}`);
@@ -454,14 +457,55 @@ async function ensureFreshRunnerImage() {
   console.log("runner image rebuilt with fresh /repo.");
 }
 
-/** Is the remote model box (any of its ports) reachable right now? */
+/**
+ * Is the LOCAL 27B (this PC, :41001) actually serving a completion?
+ * Same completion-verification as probeRemote so a busy/half-up server is not
+ * trusted either.
+ */
+async function probeLocal() {
+  try {
+    const h = await fetch(`http://127.0.0.1:41001/health`, { signal: AbortSignal.timeout(4000) });
+    if (!h.ok) return false;
+    const ctl = AbortSignal.timeout(15_000);
+    const c = await fetch(`http://127.0.0.1:41001/completion`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "Reply with the single word: ok", n_predict: 4, temperature: 0, stream: false }),
+      signal: ctl,
+    });
+    if (!c.ok) return false;
+    const j = await c.json().catch(() => null);
+    return !!(j && typeof j.content === "string" && j.content.trim().length > 0);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Is the remote model box actually SERVING (health + a real completion)?
+ *
+ * /health alone is not enough: the box has been chronically half-alive —
+ * health returns "ok" while /completion hangs and returns empty, which the
+ * harness read as a responsive model and then got 0 usable actions for 240s.
+ * Verify a tiny generation completes within a short timeout before trusting it.
+ */
 async function probeRemote() {
   for (const port of [6464, 6465]) {
     try {
-      const r = await fetch(`http://192.168.2.64:${port}/health`, { signal: AbortSignal.timeout(4000) });
-      if (r.ok) return true;
+      const h = await fetch(`http://192.168.2.64:${port}/health`, { signal: AbortSignal.timeout(4000) });
+      if (!h.ok) continue;
+      const ctl = AbortSignal.timeout(15_000);
+      const c = await fetch(`http://192.168.2.64:${port}/completion`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "Reply with the single word: ok", n_predict: 4, temperature: 0, stream: false }),
+        signal: ctl,
+      });
+      if (!c.ok) continue;
+      const j = await c.json().catch(() => null);
+      if (j && typeof j.content === "string" && j.content.trim().length > 0) return true;
     } catch {
-      /* try next */
+      /* try next port */
     }
   }
   return false;
@@ -469,12 +513,24 @@ async function probeRemote() {
 
 /**
  * Decide which backend to run the upgrade on:
- *   - remote/bonsai-27b   when the box is up;
- *   - local/bonsai-27b    otherwise (ensuring the LOCAL server is launched).
+ *   - local/bonsai-27b   PREFERRED — the box on this PC is reliable and GPU-backed
+ *                        (the portal launches it on :41001 if needed);
+ *   - remote/bonsai-27b  only if it is ACTUALLY serving (health + real completion)
+ *                        AND local is down, so a half-alive remote is never chosen.
+ *
+ * The remote box was repeatedly preferred (health up) yet never produced output
+ * (empty completions → 0 usable actions → 0 net-positive). Local is the reliable
+ * path; use remote only when local is unavailable.
  */
 async function chooseModel(cookie) {
+  // Is the local 27B up and serving right now?
+  const localUp = await probeLocal();
+  if (localUp) return { provider: "local", modelId: "bonsai-27b" };
+
+  // Local is down — only then consider remote, and only if it really completes.
   if (await probeRemote()) return { provider: "remote", modelId: "bonsai-27b" };
-  console.warn("remote model box unreachable — falling back to LOCAL bonast-27b on :41001");
+
+  console.warn("neither local nor remote 27B is serving a completion — ensuring LOCAL 27B is launched...");
   // Ensure the local 27B is up (portal launches it for us on first use).
   try {
     await fetch(`${PORTAL}/api/models/servers/bonsai-local/start`, {
@@ -490,8 +546,7 @@ async function chooseModel(cookie) {
 
 /**
  * Point a session at a model via the portal config endpoint.
- * Also drops the reasoning budget to "low" so the 27B does not blow its context
- * window on endless thinking (the failure mode behind 0 verified edits).
+ * Also sets the reasoning budget (THINK_LEVEL) on the session.
  */
 async function applyModel(cookie, sessionId, provider, modelId) {
   const res = await fetch(`${PORTAL}/api/sessions/${sessionId}/config`, {
