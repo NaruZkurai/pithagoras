@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { statSync, mkdirSync } from "node:fs";
+import { statSync, mkdirSync, existsSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -52,6 +52,26 @@ export function sandboxImage(): string {
 /** Directory that holds each session's persistent container home (caches). */
 export function sandboxHomeRoot(): string {
   return process.env.SANDBOX_HOME_ROOT || "/tmp/pithagoras-sandbox-homes";
+}
+
+/**
+ * The repo-scoped NON-ROOT-owned node_modules variant to overlay into agent
+ * containers. Produced by scripts/update-runner-node_modules.sh — it extracts
+ * the image's baked /repo/node_modules, re-owns it to uid:gid 1000 (the runner
+ * AND this repo's workspace owner), and publishes it under
+ * data/runner-node_modules/pithagoras/. Mounting it over /repo/node_modules
+ * gives every agent a writable, non-root-owned dependency set regardless of how
+ * the image's copy is owned. Returns the path only if it exists on the host.
+ */
+export function sandboxNodeModulesVariant(): string {
+  const p =
+    process.env.NODE_MODULES_VARIANT ||
+    path.join(process.cwd(), "data", "runner-node_modules", "pithagoras", "node_modules");
+  try {
+    return existsSync(p) ? p : "";
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -250,6 +270,16 @@ export function sandboxBashOperations(
       `${ws}:/workspace`,
       "-v",
       `${homeDir}:/home/runner`,
+      ...(sandboxNodeModulesVariant()
+        ? [
+            // Overlay the repo-scoped non-root node_modules so the agent has a
+            // writable dependency set at /repo/node_modules (the image's baked
+            // copy is kept as fallback/read-only baseline). Shared across
+            // sessions by design — see scripts/update-runner-node_modules.sh.
+            "-v",
+            `${sandboxNodeModulesVariant()}:/repo/node_modules`,
+          ]
+        : []),
       "--cap-drop",
       "ALL",
       "--security-opt",

@@ -19,3 +19,4 @@ gitrepos/llama-direct-token-input/
 # VitePress build output and cache
 docs/.vitepress/dist
 docs/.vitepress/cache
+data/runner-node_modules/
