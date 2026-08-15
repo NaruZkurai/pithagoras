@@ -1,0 +1,30 @@
+# Build context for the sandbox runner images.
+# The repo is baked into the image so each agent container carries the source
+# "as is" — plus the kept 4B base model — but NOT the runtime bloat: no VCS
+# history (old branches), no multi-GB data, no big model weights, no
+# pre-installed deps (they are installed inside the image).
+.git
+.gitignore
+
+# Runtime data / state — never into an image.
+data/
+data-1338/
+
+# Model weights: bake in only the kept 4B base model, never the big ones
+# (they were removed; if more are added, this keeps them out of the image).
+Base Models/*
+!Base Models/Bonsai-4B-Q1_0.gguf
+
+# Third-party repo clones / vendor trees (separate repos themselves).
+gitrepos/
+vendor/
+
+# Dependencies — installed inside the image instead.
+node_modules/
+**/node_modules/
+dist/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.local
