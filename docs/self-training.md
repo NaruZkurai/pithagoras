@@ -74,6 +74,17 @@ and closes the feedback loop **without any gradient training**.
   stats are attributable to *that* model. Per-model success metrics drive Phase
   3's tuning decisions.
 
+> **Live status (2026-08-14):** the base-model fleet is already running on
+> **192.168.2.64** — the 27B (`bonsai-api.service`, :6464, 126k) plus five plain
+> 4B instances (`bonsai-4b-fleet.service`, :6465-6469, 4k each) as cheap
+> base-model subagents. Any agent contacts them over OpenAI-compatible HTTP
+> (no auth key) and can use either as a new base. All six are registered in the
+> portal's `model_servers` table (4B fleet as `bonsai-4b-f1..f5`, `enabled=0`
+> so the portal doesn't spawn them — systemd owns them on the box). The full
+> registry lives in the gitignored `data/agent-home/base-models.md`, referenced
+> from MEMORY.md. The server's VRAM is ~full (~11.7/12 GB), so keep the 4B
+> fleet at 4k and no addon files.
+
 ## Phase 3 — Gradient fine-tuning (optional, when idle)
 
 Only when a model has enough curated positive trajectories and the GPU is idle:
