@@ -305,20 +305,23 @@ function buildProjectContext(compact = false) {
       "# PROJECT (compact — small-context executor)",
       "",
       "cwd IS the project root; paths are RELATIVE (no /workspace mount).",
-      "Do NOT dump the whole repo into context. Read only the file(s) you " +
-        "will edit, using a read tool.",
-      "The 500 MB model (Bonsai-4B-Q1_0) is served at http://127.0.0.1:6465; " +
-        "data/PROJECT_TOKENS.md lists the repo layout as `path [tokens]` — " +
-        "open it with a read tool, not in full into context.",
+      "WRITE-FIRST: you must EDIT a file this turn. Do not read more than ONE " +
+        "file before you make a change — reading 2+ files without writing is a " +
+        "FAIL. Pick a small, real improvement to the augmentation path and " +
+        "REWRITE that file's content with the write/edit tool now.",
       "",
-      "Key augmentation files this project owns (read these for context, edit " +
-        "exactly one):",
-      "  - scripts/augment-500mb.mjs  (the self-augmentation runner — ALREADY " +
-        "WORKS and targets 127.0.0.1:6465)",
-      "  - server/scripts/pre-tokenize-project.mjs",
-      "  - server/src/pi/project-token-tools.ts",
-      "  - server/scripts/run-upgrade-agent.mjs",
-      "  - scripts/train-6gb.sh",
+      "Smallest safe, verified edit — pick ONE of these and do it immediately:",
+      "  1. scripts/augment-500mb.mjs — already works (targets 127.0.0.1:6465). " +
+        "Improve it in place: e.g. add a --dry-run flag, add a guards clause, " +
+        "or fix a small robustness issue. Do NOT rewrite the whole file.",
+      "  2. server/scripts/run-upgrade-agent.mjs — a small hardening win.",
+      "  3. server/src/pi/project-token-tools.ts — a small correctness fix.",
+      "",
+      "Steps: (a) open the file you chose with ONE read, (b) write the edited " +
+        "content, (c) run `node --check <file>` (the .mjs must be valid plain JS " +
+        "- NO TypeScript annotations in .mjs).",
+      "If you cannot make a safe edit, that is a FAIL - do not end the turn with " +
+        "only reading or prose. Make the edit.",
       "",
     ].join("\n");
     return lines;
