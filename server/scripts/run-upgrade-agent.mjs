@@ -31,6 +31,11 @@ const PASS = process.env.PORTAL_PASS || "deathlover";
 const DB_PATH = process.env.DATA_DIR ? path.join(process.env.DATA_DIR, "portal.db") : path.join(ROOT, "data", "portal.db");
 const WS = process.env.WS || path.join(ROOT, "data/workspaces/pithagorus-upgrades/pithagoras");
 const NO_RUN = process.argv.includes("--no-run");
+// The /prompt endpoint can block while the model negotiates/starts, so undici's
+// default 300s headers timeout throws UND_ERR_HEADERS_TIMEOUT even though the
+// prompt was accepted. Give every fetch a 10-min overall budget so the harness
+// holds the response and keeps supervising the run.
+const REQ_TIMEOUT_MS = 600_000;
 const WAIT_VALIDATE_MS = 30_000; // wait 30s then validate usable actions
 const WAIT_BETWEEN_MS = 30_000;   // then wait 30s
 const RUN_LONG_MS = 60_000;       // the long follow-up (600s = 600_000; use 60s for a smoke test)
@@ -53,6 +58,7 @@ async function login() {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ username: "", password: PASS }),
+    signal: AbortSignal.timeout(REQ_TIMEOUT_MS),
   });
   const setCookie = res.headers.get("set-cookie") || "";
   return setCookie.split(";")[0]; // cookie string
@@ -63,6 +69,7 @@ async function createSession(cookie) {
     method: "POST",
     headers: { "content-type": "application/json", cookie },
     body: JSON.stringify({ workspace: WS, title: "autonomous-pi-upgrade" }),
+    signal: AbortSignal.timeout(REQ_TIMEOUT_MS),
   });
   const j = await res.json();
   if (!j.id) throw new Error(`createSession failed: ${JSON.stringify(j)}`);
@@ -74,6 +81,7 @@ async function prompt(cookie, sessionId, message, behavior = "followUp") {
     method: "POST",
     headers: { "content-type": "application/json", cookie },
     body: JSON.stringify({ message, behavior }),
+    signal: AbortSignal.timeout(REQ_TIMEOUT_MS),
   });
   const j = await res.json();
   if (!res.ok) throw new Error(`prompt failed: ${JSON.stringify(j)}`);
