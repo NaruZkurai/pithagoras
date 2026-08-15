@@ -54,6 +54,30 @@ export function sandboxHomeRoot(): string {
   return process.env.SANDBOX_HOME_ROOT || "/tmp/pithagoras-sandbox-homes";
 }
 
+/**
+ * Serialize per-container creation.
+ *
+ * An agent often fires several bash commands in parallel; without this, two
+ * concurrent first-calls could both pass the "is it running?" check, then both
+ * `rm -f` + recreate the same container — deleting a just-created one and
+ * making the session's container appear to "close" on its own. Keyed by the
+ * deterministic container name so independent sessions never block each other.
+ */
+const ensureQueues = new Map<string, Promise<void>>();
+async function withEnsureLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = ensureQueues.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const chain = prev.then(() => gate);
+  ensureQueues.set(key, chain);
+  await prev.catch(() => {});
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 function passthroughEnv(): string[] {
   return [
     "OPENROUTER_API_KEY",
@@ -151,6 +175,24 @@ export function sandboxBashOperations(
       inspect.on("exit", (code) => resolve(code === 0 && out.trim() === "true" ? "true" : ""));
     });
     if (running === "true") return;
+    // Serialize the create path: parallel exec calls must not race each other
+    // into rm -f + recreate (which would "close" a live container).
+    await withEnsureLock(name, createContainer);
+  };
+
+  /** Create (or recreate) this session's persistent container from scratch. */
+  const createContainer = async (): Promise<void> => {
+    // Between the inspect above and this create, the container may already
+    // exist/running (another call won); check once more under the lock.
+    const inspect = spawn("docker", ["inspect", "-f", "{{.State.Running}}", name], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const running = await new Promise<string>((resolve) => {
+      let out = "";
+      inspect.stdout?.on("data", (d) => (out += d.toString()));
+      inspect.on("exit", (code) => resolve(code === 0 && out.trim() === "true" ? "true" : ""));
+    });
+    if (running === "true") return;
 
     // Either never created or stopped. Remove any stale container, then start
     // fresh with a per-session HOME so caches/tools persist across commands.
@@ -178,6 +220,10 @@ export function sandboxBashOperations(
     const args = [
       "run",
       "-d", // detached, long-lived; we exec in per command
+      // Survive a stop/kill (e.g. host OOM or an external stop): Docker brings
+      // it straight back so an idle session container never stays "closed".
+      "--restart",
+      "unless-stopped",
       "--name",
       name,
       "--label",

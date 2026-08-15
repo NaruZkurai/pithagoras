@@ -32,6 +32,9 @@ export LLAMA_RANK_BASE_URL="${LLAMA_RANK_BASE_URL:-http://127.0.0.1:41002}"
 export PI_RANK_MODEL="${PI_RANK_MODEL:-bonsai-1.7b}"
 export LAZY_MODELS="${LAZY_MODELS:-1}"
 export LAZY_IDLE_MS="${LAZY_IDLE_MS:-900000}"
+# Same sandbox image the primary uses: the minimal Arch runner. Without this
+# this instance falls back to the Debian default image.
+export PI_IMAGE="${PI_IMAGE:-pithagoras-runner-arch:latest}"
 export PATH="$PWD/node_modules/.bin:$PATH"
 
 mkdir -p "$DATA_DIR" "$SESSION_DIR" "$WORKSPACE_ROOT" "$AGENT_HOME" "$CHANNELS_DIR" "$BIN_DIR"
