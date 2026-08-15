@@ -168,7 +168,12 @@ async function run() {
     "obvious issues, small wins), implement them in the workspace, and run " +
     "the existing build/lint/typecheck for whatever you touch. Do NOT delete " +
     "files, do NOT commit or push, do NOT restructure broadly. When done, " +
-    "summarize exactly what you changed and what you verified.";
+    "summarize exactly what you changed and what you verified.\n\n" +
+    "Dependencies: node_modules is ALREADY installed and working in this " +
+    "workspace (server and web deps are present, better-sqlite3 prebuilds " +
+    "load). Do NOT run a full npm install or npm ci — it is unnecessary and " +
+    "wastes your time. You can run npm run build / tsc directly. If a build " +
+    "fails, fix the CODE, not the dependency tree.";
 
   if (NO_RUN) {
     console.log("(--no-run) would prompt:\n" + upgradeTask);
