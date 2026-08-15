@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { nanoid } from "nanoid";
 import type { PersonRow, Role } from "./people.js";
 import { mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import type { PiClient } from "./pi/types.js";
 import { findServerBuiltin, runBuiltin } from "./pi/builtins.js";
@@ -90,6 +91,32 @@ interface TurnState {
   streak: number;
 }
 
+/**
+ * Per-session tracker for the "you are wasting time" nudge.
+ *
+ * After every action (a completed tool call) and on thought milestones we warn
+ * the agent how long it has been running without editing a file. Guarantees:
+ *   - every nudge text is built from the LIVE state (elapsed, action count,
+ *     file-edit count) so it is never a duplicate string, and
+ *   - we never resend the original task or earlier content — each warning is a
+ *     short, fresh, standalone nudge that references only the current moment.
+ */
+interface TimeWarnState {
+  /** When the current task/run began. */
+  startedAt: number;
+  /** Completed tool-call events since start. */
+  actions: number;
+  /** Distinct nudge texts already sent (dedupe guard). */
+  sent: Set<string>;
+  /** Last seq a nudge was attached to, so one action gets at most one nudge. */
+  lastSeq: number;
+}
+
+/** How long a task may run before we start warning. */
+const TIME_WARN_AFTER_MS = 20_000;
+/** Never send more than one warning per distinct action. */
+const TIME_WARN_MAX = 8;
+
 /** How many times a stalled turn is nudged before we stop asking. */
 const MAX_AUTO_CONTINUES = 3;
 /** The nudge sent to an agent that stopped mid-chain without an answer. */
@@ -121,6 +148,9 @@ class SessionManager extends EventEmitter {
   /** Auto-continue state per session. */
   private turn = new Map<string, TurnState>();
 
+  /** Time-waste warning state per session. */
+  private timeWarn = new Map<string, TimeWarnState>();
+
   private turnState(sessionId: string): TurnState {
     let t = this.turn.get(sessionId);
     if (!t) {
@@ -128,6 +158,59 @@ class SessionManager extends EventEmitter {
       this.turn.set(sessionId, t);
     }
     return t;
+  }
+
+  private timeWarnState(sessionId: string): TimeWarnState {
+    let s = this.timeWarn.get(sessionId);
+    if (!s) {
+      s = { startedAt: Date.now(), actions: 0, sent: new Set(), lastSeq: 0 };
+      this.timeWarn.set(sessionId, s);
+    }
+    return s;
+  }
+
+  /** Reset the time-warning clock when a fresh task begins. */
+  private resetTimeWarn(sessionId: string): void {
+    this.timeWarn.set(sessionId, { startedAt: Date.now(), actions: 0, sent: new Set(), lastSeq: 0 });
+  }
+
+  /**
+   * Warn the agent it is spending too long, after an action or a thought.
+   *
+   * Called on a completed tool call and on thought milestones. Builds a SHORT,
+   * FRESH nudge from the live moment (elapsed seconds, action count, file-edit
+   * count) so the text is unique — never a resend of the task or of an earlier
+   * warning. One nudge per distinct action; capped so we never spam. The nudge
+   * points the model at the deliverable (a real file edit) without re-stating
+   * the whole task.
+   */
+  private maybeWarnTimeWasted(sessionId: string, seq: number, editedFiles: () => number): void {
+    const s = this.timeWarnState(sessionId);
+    if (s.sent.size >= TIME_WARN_MAX) return; // never spam past the cap
+    if (s.lastSeq === seq) return; // one nudge per action/milestone
+    const elapsedSec = Math.round((Date.now() - s.startedAt) / 1000);
+    if (elapsedSec < TIME_WARN_AFTER_MS / 1000) return; // not yet wasting time
+
+    // Build a UNIQUE warning from live state only (no duplicate content, no
+    // re-sent task). Hashing the live numbers keeps it distinct per moment.
+    const edits = editedFiles();
+    const text =
+      `[time-warning] You have been working for ~${elapsedSec}s (${s.actions} tool ` +
+      `actions, ${edits} file(s) edited). You are spending too long reading/` +
+      `thinking without producing a file edit. The deliverable is ONE changed ` +
+      `source file that passes the build — make the edit NOW with a write/edit ` +
+      `tool. Do not re-read the task's instructions; just make the concrete ` +
+      `edit and verify it builds.`;
+    s.lastSeq = seq;
+    s.actions += 1;
+    if (s.sent.has(text)) return; // belt-and-braces: never repeat identical text
+    s.sent.add(text);
+
+    const live = this.live.get(sessionId);
+    if (!live) return;
+    void live.client
+      .prompt(text, "followUp")
+      .catch((e) => console.warn(`[time-warn ${sessionId}] failed: ${(e as Error).message}`));
   }
 
   constructor() {
@@ -264,7 +347,29 @@ class SessionManager extends EventEmitter {
       if (msg.type === "portal_status" && msg.status === "running") {
         turn.toolCalls = 0;
         turn.answered = false;
+        // A fresh task restarts the time-warning clock too.
+        this.resetTimeWarn(sessionId);
       }
+
+      // Time-waste warnings: after every completed action (tool call) and on
+      // thought milestones, nudge the agent with a fresh warning and never
+      // resend duplicate content.
+      const editedFiles = () => {
+        try {
+          const ws = getSession(sessionId)?.workspace;
+          if (!ws) return 0;
+          const out = execFileSync("git", ["diff", "--name-only"], {
+            cwd: ws,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          return out.split("\n").filter(Boolean).length;
+        } catch {
+          return 0;
+        }
+      };
+      if (msg.type === "tool_execution_end") this.maybeWarnTimeWasted(sessionId, seq, editedFiles);
+      else if (msg.type === "message_update") this.maybeWarnTimeWasted(sessionId, seq, editedFiles);
 
       // Remember which event each assistant message starts at — its thread is
       // keyed on that seq so it lines up with the transcript's message id.
