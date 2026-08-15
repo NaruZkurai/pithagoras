@@ -216,7 +216,33 @@ function buildProjectContext() {
   })(WS);
   lines.push("## All files", "");
   lines.push(`_${files.length} files total._`);
-  lines.push("```text", files.length ? files.join("\n") : "(empty project)", "```", "");
+
+  // Pre-tokenized sizes, if pre-tokenize-project.mjs has run for this project.
+  // Reuses the direct-token API output already on disk (data/project-tokens.json)
+  // so the agent knows each file's real token cost without re-tokenizing.
+  const tokenMap = new Map();
+  try {
+    const tokPath = path.join(ROOT, "data", "project-tokens.json");
+    if (existsSync(tokPath)) {
+      const j = JSON.parse(readFileSync(tokPath, "utf8"));
+      for (const f of j.files || []) tokenMap.set(f.path, f.tokens);
+    }
+  } catch {
+    /* optimistic — annotation is optional */
+  }
+  if (tokenMap.size) {
+    lines.push(
+      "_Pre-tokenized (via the model's direct-token API; each line: `path [tokens]`)._"
+    );
+    lines.push(
+      "```text",
+      files.map((f) => `${f} [${tokenMap.get(f) ?? "?"}]`).join("\n") || "(empty project)",
+      "```",
+      ""
+    );
+  } else {
+    lines.push("```text", files.length ? files.join("\n") : "(empty project)", "```", "");
+  }
 
   // 2) Key file contents (only what exists, capped in total size).
   lines.push("## Key files (contents pre-loaded)", "");
