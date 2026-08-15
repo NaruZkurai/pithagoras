@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Run a SECOND, independent Pithagoras portal instance on port 1338.
+# NOTE: DEPRECATED — do not run a second portal.
 #
-# A genuine duplicate: its own PORT, DATA_DIR, sessions, workspaces, agent home
-# and channels live under ./data-1338 so the primary (4100, ./data) never
-# shares a DB or session state with it. They DO share the model servers (port
-# 41001 etc.) — only one process may own llama.cpp, so this instance reuses the
-# primary's running model server rather than launching a second one.
+# Port 1338 is NOT a separate portal. It is the internet-accessible port that
+# reaches the one real portal on 4100 (see run-portal-proxy.sh and the systemd
+# unit ~/.config/systemd/user/pithagoras-1338.service, which runs the socat
+# forward). This file previously started a second, independent portal with its
+# own data-1338 dir — that split-brain setup is retired because it created
+# duplicate sessions/containers. Kept only as a reference in git history.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+echo "run-portal-1338.sh is deprecated: 1338 is the internet port that forwards to the real portal on 4100 (socat proxy)."
+echo "The systemd unit pithagoras-1338.service runs scripts/run-portal-proxy.sh instead."
+exit 1
 
 if [ -f .env ]; then
   set -a
