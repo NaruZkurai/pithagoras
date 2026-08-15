@@ -1,0 +1,19 @@
+[package]
+name = "llcd-control"
+version = "0.1.0"
+edition = "2021"
+description = "Independent control/build system for the llama-cpp-direct box (Rust, no fleet/portal deps)"
+
+# Two standalone binaries sharing the small lib.
+[[bin]]
+name = "llcd-agent"
+path = "src/bin/llcd_agent.rs"
+
+[[bin]]
+name = "llpc-agent"
+path = "src/bin/llpc_agent.rs"
+
+# Deliberately NO external dependencies: pure std (TcpListener HTTP + Command
+# shell-out) so this builds and runs standalone on the box with no network fetch
+# and no dependency on the 4B fleet, portal, or model servers.
+[dependencies]
