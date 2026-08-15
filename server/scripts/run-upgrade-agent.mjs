@@ -77,15 +77,25 @@ async function createSession(cookie) {
 }
 
 async function prompt(cookie, sessionId, message, behavior = "followUp") {
-  const res = await fetch(`${PORTAL}/api/sessions/${sessionId}/prompt`, {
+  // Fire-and-forget on purpose: the /prompt route returns only once pi's own
+  // prompt() for the model resolves, which for a big context against a remote
+  // model can take >10min. This harness supervises via the DB (events/status),
+  // so it should NOT hold the HTTP request open — it accepts the prompt and
+  // polls. Resolves as soon as the request is dispatched; errors are logged,
+  // not fatal (the session keeps running server-side regardless).
+  const promise = fetch(`${PORTAL}/api/sessions/${sessionId}/prompt`, {
     method: "POST",
     headers: { "content-type": "application/json", cookie },
     body: JSON.stringify({ message, behavior }),
     signal: AbortSignal.timeout(REQ_TIMEOUT_MS),
+  }).catch((e) => {
+    console.warn(`[prompt dispatched, response not awaited] ${e?.cause?.code || e?.message}`);
   });
-  const j = await res.json();
-  if (!res.ok) throw new Error(`prompt failed: ${JSON.stringify(j)}`);
-  return j;
+  // Await just long enough to confirm the request reached the server? No — the
+  // validation below polls the DB and will notice the session regardless. Keep
+  // the promise referenced so any rejection is observed, then move on.
+  void promise;
+  return { ok: true };
 }
 
 /** Events recorded for a session since a seq. */
