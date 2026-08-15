@@ -36,8 +36,10 @@ const NO_RUN = process.argv.includes("--no-run");
 // prompt was accepted. Give every fetch a 10-min overall budget so the harness
 // holds the response and keeps supervising the run.
 const REQ_TIMEOUT_MS = 600_000;
-const WAIT_VALIDATE_MS = 30_000; // wait 30s then validate usable actions
+const WAIT_VALIDATE_MS = 45_000; // wait 45s then validate usable actions (model reads silently at first)
 const WAIT_BETWEEN_MS = 30_000;   // then wait 30s
+const MIN_SCORE_1 = 2;            // lenient: any real tool work (reads/writes) proves it's alive
+const MIN_SCORE_2 = 5;            // by 75s it should have done noticeably more
 const RUN_LONG_MS = 60_000;       // the long follow-up (600s = 600_000; use 60s for a smoke test)
 
 if (!existsSync(WS)) {
@@ -48,8 +50,6 @@ if (!existsSync(DB_PATH)) {
   console.error(`portal db not found: ${DB_PATH}`);
   process.exit(1);
 }
-const db = new Database(DB_PATH, { readonly: true });
-db.pragma("journal_mode = WAL");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -98,11 +98,30 @@ async function prompt(cookie, sessionId, message, behavior = "followUp") {
   return { ok: true };
 }
 
+/**
+ * Fresh readonly connection per query.
+ *
+ * The single long-lived `db` instance opens a WAL snapshot at connect time and
+ * never advances it, so it silently missed every event the portal wrote after
+ * startup — scoring 0 even while the agent was actively reading. A new
+ * connection per poll sees the current WAL, so validation reflects reality.
+ */
+function freshDb() {
+  const d = new Database(DB_PATH, { readonly: true });
+  d.pragma("journal_mode = WAL");
+  return d;
+}
+
 /** Events recorded for a session since a seq. */
 function eventsSince(sessionId, since) {
-  return db
-    .prepare("SELECT seq, type FROM events WHERE session_id = ? AND seq > ? ORDER BY seq ASC")
-    .all(sessionId, since);
+  const d = freshDb();
+  try {
+    return d
+      .prepare("SELECT seq, type FROM events WHERE session_id = ? AND seq > ? ORDER BY seq ASC")
+      .all(sessionId, since);
+  } finally {
+    d.close();
+  }
 }
 
 /** How much "usable action" happened: tool calls + assistant text updates. */
@@ -116,7 +135,7 @@ function usableAction(events) {
 async function waitUntilIdle(sessionId, capMs, pollMs = 15_000) {
   const start = Date.now();
   while (Date.now() - start < capMs) {
-    const row = db
+    const row = freshDb()
       .prepare("SELECT status FROM sessions WHERE id = ?")
       .get(sessionId);
     if (row && row.status !== "running") return row.status;
@@ -312,6 +331,13 @@ async function run() {
     "improvements (bugs, obvious issues, small wins), implement them in the " +
     "workspace, and run the existing build/lint/typecheck for whatever you " +
     "touch. It does NOT mean upgrading the system or its packages.\n\n" +
+    "YOU MUST WRITE FILES: this task is only complete when you have actually " +
+    "EDITED source files in the workspace (via write/edit tools or bash) and " +
+    "verified the changes build. Reading files alone is NOT work — after you " +
+    "read enough to understand 2-4 changes, MAKE those changes. Do not stop " +
+    "after inspecting; the deliverable is modified code that passes the build. " +
+    "If you are unsure what to change, pick the clearest small bug or obvious " +
+    "improvement and fix it.\n\n" +
     "STRICTLY DO NOT: run pacman -Syu / apt / dnf / yum / brew / pip install " +
     "or ANY package-manager or OS updater; do NOT run npm install / npm ci / " +
     "npm update; do NOT bump or modify dependency versions or lockfiles. The " +
@@ -330,14 +356,14 @@ async function run() {
 
   const startSeq = 0;
   await prompt(cookie, sessionId, upgradeTask);
-  console.log("upgrade task sent. waiting 30s to validate usable actions...");
+  console.log(`upgrade task sent. waiting ${WAIT_VALIDATE_MS / 1000}s to validate usable actions...`);
 
   await sleep(WAIT_VALIDATE_MS);
   const ev1 = eventsSince(sessionId, startSeq);
   const a1 = usableAction(ev1);
-  console.log(`after 30s: ${a1.tools} tool calls, ${a1.prose} prose updates (score ${a1.score})`);
-  if (a1.score < 4) {
-    console.error("NOT producing usable actions — aborting long run.");
+  console.log(`after ${WAIT_VALIDATE_MS / 1000}s: ${a1.tools} tool calls, ${a1.prose} prose updates (score ${a1.score})`);
+  if (a1.score < MIN_SCORE_1) {
+    console.error(`NOT producing usable actions (score ${a1.score} < ${MIN_SCORE_1}) — aborting long run.`);
     process.exitCode = 1;
     return;
   }
@@ -347,9 +373,9 @@ async function run() {
 
   const ev2 = eventsSince(sessionId, startSeq);
   const a2 = usableAction(ev2);
-  console.log(`after 60s: ${a2.tools} tool calls, ${a2.prose} prose updates (score ${a2.score})`);
-  if (a2.score < 8) {
-    console.error("still not enough useful work — aborting long run.");
+  console.log(`after ${(WAIT_VALIDATE_MS + WAIT_BETWEEN_MS) / 1000}s: ${a2.tools} tool calls, ${a2.prose} prose updates (score ${a2.score})`);
+  if (a2.score < MIN_SCORE_2) {
+    console.error(`still not enough useful work (score ${a2.score} < ${MIN_SCORE_2}) — aborting long run.`);
     process.exitCode = 1;
     return;
   }
