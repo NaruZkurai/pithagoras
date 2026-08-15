@@ -36,10 +36,14 @@ const NO_RUN = process.argv.includes("--no-run");
 // prompt was accepted. Give every fetch a 10-min overall budget so the harness
 // holds the response and keeps supervising the run.
 const REQ_TIMEOUT_MS = 600_000;
-const WAIT_VALIDATE_MS = 45_000; // wait 45s then validate usable actions (model reads silently at first)
-const WAIT_BETWEEN_MS = 30_000;   // then wait 30s
-const MIN_SCORE_1 = 2;            // lenient: any real tool work (reads/writes) proves it's alive
-const MIN_SCORE_2 = 5;            // by 75s it should have done noticeably more
+// The remote 27B is a REASONING model: it thinks for a while before emitting
+// its first message or tool call, so a short validation gate aborts genuinely
+// working runs (score 0 at 45s while it reasoned). Be patient: wait up to
+// WAIT_FIRST for ANY usable action; only abort if truly nothing appears.
+const WAIT_FIRST_MS = 240_000;    // up to 4 min for the first message/tool call
+const MIN_FIRST_SCORE = 1;        // any single message_update or tool call proves it's alive
+const WAIT_BETWEEN_MS = 45_000;   // then wait 45s more to confirm it's still moving
+const MIN_SECOND_SCORE = 3;       // by then it should have done a bit more
 const RUN_LONG_MS = 60_000;       // the long follow-up (600s = 600_000; use 60s for a smoke test)
 
 if (!existsSync(WS)) {
@@ -350,26 +354,33 @@ async function run() {
 
   const startSeq = 0;
   await prompt(cookie, sessionId, upgradeTask);
-  console.log(`upgrade task sent. waiting ${WAIT_VALIDATE_MS / 1000}s to validate usable actions...`);
+  console.log(`upgrade task sent. waiting up to ${WAIT_FIRST_MS / 1000}s for first usable action (model may reason first)...`);
 
-  await sleep(WAIT_VALIDATE_MS);
-  const ev1 = eventsSince(sessionId, startSeq);
-  const a1 = usableAction(ev1);
-  console.log(`after ${WAIT_VALIDATE_MS / 1000}s: ${a1.tools} tool calls, ${a1.prose} prose updates (score ${a1.score})`);
-  if (a1.score < MIN_SCORE_1) {
-    console.error(`NOT producing usable actions (score ${a1.score} < ${MIN_SCORE_1}) — aborting long run.`);
+  // Patient first gate: wait up to WAIT_FIRST_MS for any real action. A
+  // reasoning model can sit silent for a while thinking; don't abort it.
+  const firstDeadline = Date.now() + WAIT_FIRST_MS;
+  let ev1 = eventsSince(sessionId, startSeq);
+  let a1 = usableAction(ev1);
+  while (a1.score < MIN_FIRST_SCORE && Date.now() < firstDeadline) {
+    await sleep(10_000);
+    ev1 = eventsSince(sessionId, startSeq);
+    a1 = usableAction(ev1);
+  }
+  console.log(`first usable action: ${a1.tools} tool calls, ${a1.prose} prose updates (score ${a1.score})`);
+  if (a1.score < MIN_FIRST_SCORE) {
+    console.error(`still nothing after ${WAIT_FIRST_MS / 1000}s (score ${a1.score} < ${MIN_FIRST_SCORE}) — aborting.`);
     process.exitCode = 1;
     return;
   }
 
-  console.log("validated producing usable actions. waiting 30s more...");
+  console.log("producing usable actions. waiting 45s to confirm it keeps moving...");
   await sleep(WAIT_BETWEEN_MS);
 
   const ev2 = eventsSince(sessionId, startSeq);
   const a2 = usableAction(ev2);
-  console.log(`after ${(WAIT_VALIDATE_MS + WAIT_BETWEEN_MS) / 1000}s: ${a2.tools} tool calls, ${a2.prose} prose updates (score ${a2.score})`);
-  if (a2.score < MIN_SCORE_2) {
-    console.error(`still not enough useful work (score ${a2.score} < ${MIN_SCORE_2}) — aborting long run.`);
+  console.log(`after ${(Date.now() - (Date.now() - WAIT_FIRST_MS - WAIT_BETWEEN_MS)) / 1000}s (approx): ${a2.tools} tool calls, ${a2.prose} prose updates (score ${a2.score})`);
+  if (a2.score < MIN_SECOND_SCORE) {
+    console.error(`still not enough useful work (score ${a2.score} < ${MIN_SECOND_SCORE}) — aborting long run.`);
     process.exitCode = 1;
     return;
   }
