@@ -62,7 +62,29 @@ RUN chown -R runner:runner /repo
 # pi itself. Pinned major so a rebuild does not silently change the agent.
 RUN npm install -g @earendil-works/pi-coding-agent@0.82.1
 
+# The root-run npm above left /home/runner/.npm owned by root. Reclaim the home
+# for the runner user NOW (still as root — a later non-root chown would fail on
+# the overlay fs with "Operation not permitted"), and pre-create the npm cache
+# dir so the install step below never trips on a permission error.
+RUN chown -R runner:runner /home/runner && mkdir -p /home/runner/.npm && chown runner:runner /home/runner/.npm
+ENV npm_config_cache=/home/runner/.npm
+
 USER runner
+
+# Bake the app's OWN npm packages into the image. The repo source is copied
+# above (with .dockerignore keeping the host's node_modules out of the build
+# context), so this single install — run as the runner user, who now owns the
+# repo and its npm cache — produces the workspace node_modules the agent needs
+# to build/typecheck WITHOUT reinstalling at runtime. pinned exact versions in
+# package.json make it reproducible, and better-sqlite3 prebuilds (downloaded on
+# npm 10) land in node_modules so native deps are present too. This keeps every
+# agent container self-contained.
+WORKDIR /repo
+# No |tail here: a failed install must fail the image build loudly rather than
+# silently shipping an image with no app packages.
+RUN npm install --no-audit --no-fund --no-progress
+
 # The bash sandbox runs `bash -lc <cmd>`; the executor runs `pi`. Keep pi on
 # PATH and default to it so both entry styles work.
 ENTRYPOINT ["pi"]
+
