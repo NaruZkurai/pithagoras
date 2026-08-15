@@ -119,13 +119,48 @@ Integration points in Pithagoras:
   clone it, build, and note the `/v1/chat/completions` (or custom) contract in
   this doc.
 
----
+## Fork build status (2026-08-14) — working, GPU + CPU
+
+Built successfully with CUDA on this machine (RTX 4070 Ti SUPER, sm_89, CUDA
+13.3) plus the CPU backend (so one binary runs on GPU *and* CPU):
+
+```sh
+cd gitrepos/llama-direct-token-input
+cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89 -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
+cmake --build build --config Release --target llama-server llama-tokens llama-finetune tcomp -j "$(nproc)"
+```
+
+Artifacts in `gitrepos/llama-direct-token-input/build/bin/`: `llama-server`,
+`llama-tokens` (raw token-ID input), `llama-finetune` (training), plus
+`build/tools/tcomp/libtcomp.a` (ternary compression/training layer). Verified
+`llama-tokens --list-devices` shows `CUDA0: RTX 4070 Ti SUPER`.
+
+**6 GB VRAM training cap** — no `--gpu-mem` flag in this fork, so cap by layers
++ fit target. `scripts/train-6gb.sh` wraps it:
+
+```sh
+# GPU, capped at 6 GiB VRAM (fit target 6144 MiB):
+./scripts/train-6gb.sh llama-finetune -m <model.gguf> --gpu <train args...>
+# CPU fallback (no CUDA needed):
+./scripts/train-6gb.sh llama-finetune -m <model.gguf> --cpu <train args...>
+```
+
+Environment overrides: `NGL_LIMIT` (default 999), `FIT_TARGET` MiB (default
+6144), `BIN_DIR`, `MODEL_DIR` (default /nzk/models).
+
+> Important correction: this fork's "training" is the **ternary compression
+> autoencoder** (`tcomp`), NOT the LoRA/DPO route for improving 4B behavior.
+> GigaToken is a ~1000x tokenizer speedup (real win). The raw direct-token input
+> is a CLI feature (`llama-tokens`); the server's `tokenize_mixed` already
+> accepts raw token ints over HTTP (basically standard llama.cpp). So the
+> `runtime="direct-token"` seam in `model-server.ts` currently toggles nothing
+> unique server-side yet — schedule a raw-token input endpoint if we want it.
 
 ## Priority order (recommended execution)
 
 1. Tool-stats collector + a first pass over existing sessions (cheap, no
-   training, immediately useful).  ← **next**
+   training, immediately useful).  ← **done**
 2. Trajectory dataset builder (ready for LoRA later).
 3. Fleet routing across a few 4B models.
-4. Fork-binary integration into `model-server.ts`.
-5. LoRA/DPO when a model has enough data + idle GPU.
+4. Fork-binary integration into `model-server.ts`.  ← **build done; wiring next**
+5. LoRA/DPO / tcomp when a model has enough data + idle GPU.

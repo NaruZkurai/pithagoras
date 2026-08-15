@@ -8,6 +8,14 @@ data-1338/
 *.tsbuildinfo
 .DS_Store
 
+# Model weights — never commit multi-GB GGUFs to git.
+*.gguf
+Base Models/
+
+# The copied llama-direct-token-input fork is its own repo (pasted in, not a
+# submodule). prime-agent IS a tracked submodule and must NOT be ignored.
+gitrepos/llama-direct-token-input/
+
 # VitePress build output and cache
 docs/.vitepress/dist
 docs/.vitepress/cache
