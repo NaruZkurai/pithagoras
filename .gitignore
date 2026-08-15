@@ -20,3 +20,6 @@ gitrepos/llama-direct-token-input/
 docs/.vitepress/dist
 docs/.vitepress/cache
 data/runner-node_modules/
+
+# Self-augmentation generated output (augment-500mb.mjs runtime artifacts)
+scripts/output/

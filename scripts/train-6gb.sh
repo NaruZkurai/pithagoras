@@ -41,5 +41,20 @@ else
   EXTRA=()
 fi
 
+# --- Model-layer system-RAM cap for custom tokens ---------------------------
+# The model layer (serving / finetune) can load the repo's custom-token file
+# (data/project-tokens.json → the token patterns) plus model+KV into RAM. The
+# user wants that layer capped at 6 GiB so it can never balloon the machine's
+# memory. MODEL_MEM_MAX_MB defaults to the 6 GiB fit target (6144 MiB).
+#
+# ulimit -v caps the child's virtual address space (RSS stays under it for the
+# working set in practice). This is the portable way to bound a llama process's
+# RAM on this host without a cgroup. Set MODEL_MEM_MAX_MB=0 to disable.
+MODEL_MEM_MAX_MB="${MODEL_MEM_MAX_MB:-6144}"
+if [[ -n "$MODEL_MEM_MAX_MB" && "$MODEL_MEM_MAX_MB" != "0" ]]; then
+  ulimit -v "$(( MODEL_MEM_MAX_MB * 1024 ))" 2>/dev/null \
+    && echo "==> model-layer memory capped at ${MODEL_MEM_MAX_MB} MiB (ulimit -v $(( MODEL_MEM_MAX_MB * 1024 )))"
+fi
+
 echo "==> $BIN_DIR/$cmd ${EXTRA[*]} $*"
 exec "$BIN_DIR/$cmd" "${EXTRA[@]}" "$@"

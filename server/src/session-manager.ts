@@ -432,6 +432,21 @@ class SessionManager extends EventEmitter {
             if (currentAssistantSeq !== null) {
               this.logAgentMessageToThread(sessionId, currentAssistantSeq, text);
             }
+          } else {
+            // The model produced NO content (e.g. a max_tokens clamp or a bare
+            // EOS). Previously this left the user's message silently
+            // "unanswered", so the UI offered "Resend this message (it got no
+            // reply)" and the user resending wrote the SAME message twice into
+            // the transcript. Surface it as an error notice instead, so they
+            // know the send actually went out but the model came back empty —
+            // no need to resend (which would duplicate it).
+            this.record(sessionId, "portal_notice", {
+              text:
+                "The model returned an empty response (no output). Your message was sent; " +
+                "the model produced nothing. Check the model server, then try a more focused " +
+                "prompt rather than resending this one.",
+              error: true,
+            });
           }
           currentAssistantSeq = null;
         }

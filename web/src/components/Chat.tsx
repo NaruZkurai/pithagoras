@@ -188,12 +188,19 @@ export function Chat({
   const running = session.status === "running";
 
   /** User messages with no assistant response after them (e.g. a run died). */
+  /**
+   * User messages with no assistant response after them (e.g. a run died).
+   * A user message followed by an ERROR notice is NOT treated as unanswered:
+   * the send went out (the model just returned nothing), so offering "Resend
+   * this message (it got no reply)" would write the same message in twice.
+   */
   const unanswered = useMemo(() => {
     const ids = new Set<string>();
     let responseAfter = false;
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
       if (it.kind === "assistant" && it.text) responseAfter = true;
+      if (it.kind === "notice" && it.tone === "error") responseAfter = true;
       if (it.kind === "user" && !responseAfter) ids.add(it.id);
     }
     return ids;
@@ -816,13 +823,20 @@ export function Chat({
               interrupted — send a message to resume
             </span>
           )}
+          {/* Stop is ALWAYS available. The `running` flag (from the 5s session
+              poll / portal_status) can lag reality, and disabling the button on
+              a stale `idle` made it impossible to stop an agent mid-task.
+              Aborting an idle session is a harmless no-op server-side. */}
           <button
             onClick={onAbort}
-            disabled={!running}
-            title={running ? "Stop the agent mid-task" : "Agent is idle"}
-            className="flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs text-fg-muted transition hover:bg-fg/5 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+            title={running ? "Stop the agent mid-task" : "Stop — aborts any running turn (safe to press even when the agent looks idle)"}
+            className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition hover:bg-fg/5 ${
+              running
+                ? "border-warn/40 text-warn hover:text-warn"
+                : "border-line text-fg-muted hover:text-fg"
+            }`}
           >
-            <LuSquare className="h-3 w-3" />
+            <LuSquare className={`h-3 w-3 ${running ? "animate-pulse" : ""}`} />
             Stop agent
           </button>
         </div>

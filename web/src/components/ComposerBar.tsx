@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LuCornerUpRight } from "react-icons/lu";
-import { api, type PiConfig, type PiModel, type Session } from "../api";
+import { api, type ModelServerChoice, type PiConfig, type PiModel, type Session } from "../api";
 import { ContextPill } from "./ContextPill";
 
 /**
@@ -154,11 +154,14 @@ export function ComposerBar({
     return (q ? models.filter((m) => (m.id + m.name).toLowerCase().includes(q)) : models).slice(0, 200);
   }, [models, filter]);
 
-  const applyModel = async (id: string) => {
+  const applyModel = async (m: PiModel) => {
     setBusy(true);
     try {
-      await api.setConfig(sessionId, { modelId: id });
-      setRecents(pushRecent(id));
+      // The provider is essential: pi resolves `${provider}/${modelId}`, and
+      // the default provider (usually "local") does not know the remote / fleet
+      // models. Sending only the id made every non-local pick silently no-op.
+      await api.setConfig(sessionId, { provider: m.provider, modelId: m.id });
+      setRecents(pushRecent(m.id));
       await load();
       setOpen(null);
       setShowAll(false);
@@ -168,19 +171,30 @@ export function ComposerBar({
     }
   };
 
-  /** Switch to one of the portal's own model servers by name/alias. */
-  const applyServer = async (modelId: string, remote: boolean) => {
-    setBusy(true);
-    try {
-      await api.setConfig(sessionId, { provider: remote ? "remote" : "local", modelId });
-      setRecents(pushRecent(modelId));
-      await load();
-      setOpen(null);
-      setShowAll(false);
-      setFilter("");
-    } finally {
-      setBusy(false);
-    }
+  /**
+   * Map a portal model server to the pi catalogue models it actually serves.
+   * The server alone just names a llama.cpp process; the id pi's model registry
+   * knows it by (e.g. `fleet/bonsai-4b-f1`, `remote/bonsai-27b`) is what the
+   * model picker talks in — never the .gguf filename on disk.
+   */
+  const serverChoices = (sv: ModelServerChoice): PiModel[] => {
+    const direct = models.filter(
+      (m) => m.id === sv.name || (sv.alias || "").split(",").map((a) => a.trim()).includes(m.id)
+    );
+    if (direct.length) return direct;
+    // Known LAN slots: remote 27B on 6464, fleet 4B on 6465–6469.
+    const byPort: Record<number, string> = {
+      6464: "remote",
+      6465: "fleet",
+      6466: "fleet",
+      6467: "fleet",
+      6468: "fleet",
+      6469: "fleet",
+    };
+    const providerFor = byPort[sv.port];
+    if (providerFor) return models.filter((m) => m.provider === providerFor);
+    // Unknown server: show every model on the matching local/remote network.
+    return models.filter((m) => (sv.status.remote ? m.provider !== "local" : m.provider === "local"));
   };
 
   const levels = cfg.thinking.levels ?? [];
@@ -256,19 +270,9 @@ export function ComposerBar({
                 Your servers
               </p>
               {cfg.servers.map((sv) => {
-                const svActive =
-                  (cfg.state.model.provider === "local" &&
-                    sv.alias.split(",").includes(cfg.state.model.id)) ||
-                  (sv.status.remote && cfg.state.model.provider === "remote");
                 const dot =
                   sv.status.running && sv.status.healthy ? "bg-ok" : sv.status.running ? "bg-warn" : "bg-fg/30";
-                // The models this one server serves — from its aliases (or its
-                // model file) as "server : model" choices.
-                const models = sv.alias
-                  .split(",")
-                  .map((a) => a.trim())
-                  .filter(Boolean);
-                const list = models.length ? models : sv.model ? [sv.model] : [sv.name];
+                const list = serverChoices(sv);
                 return (
                   <div key={sv.name} className="rounded-lg">
                     {/* Server header */}
@@ -278,27 +282,28 @@ export function ComposerBar({
                       <span className="shrink-0 font-mono text-[10px] text-fg-faint">
                         {sv.host ? sv.host : "local"}:{sv.port}
                       </span>
-                      {svActive && <span className="ml-auto text-[10px] text-ok">running</span>}
+                      {list.some((m) => m.id === cfg.state.model.id && m.provider === cfg.state.model.provider) && (
+                        <span className="ml-auto text-[10px] text-ok">running</span>
+                      )}
                     </div>
-                    {/* The models on this server — select server : model. */}
+                    {/* The models on this server — the real pi ids it serves. */}
                     <div className="mb-1 space-y-0.5">
-                      {list.map((modelId) => {
-                        const active = (cfg.state.model.id === modelId &&
-                          cfg.state.model.provider === (sv.status.remote ? "remote" : "local"));
+                      {list.map((m) => {
+                        const active = cfg.state.model.id === m.id && cfg.state.model.provider === m.provider;
                         return (
                           <button
-                            key={`${sv.name}:${modelId}`}
+                            key={`${sv.name}:${m.id}`}
                             type="button"
-                            title={`Use ${modelId} on ${sv.name}${
+                            title={`Use ${m.name} on ${sv.name}${
                               sv.status.running && sv.status.healthy ? ` (${sv.status.state})` : ""
                             }`}
-                            onClick={() => void applyServer(modelId, sv.status.remote)}
+                            onClick={() => void applyModel(m)}
                             className={`flex w-full items-center gap-2 rounded-md px-2 py-1 pl-7 text-left text-sm transition ${
                               active ? "bg-fg/10 text-fg" : "text-fg-muted hover:bg-raised hover:text-fg"
                             }`}
                           >
                             <LuCornerUpRight className="h-3 w-3 shrink-0 text-fg-faint" />
-                            <span className="truncate font-mono text-[11px]">{modelId}</span>
+                            <span className="truncate font-mono text-[11px]">{m.name}</span>
                             {active && <span className="ml-auto text-[10px] text-ok">✓</span>}
                           </button>
                         );
@@ -317,7 +322,7 @@ export function ComposerBar({
                 <button
                   key={m.id}
                   type="button"
-                  onClick={() => applyModel(m.id)}
+                  onClick={() => void applyModel(m)}
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg hover:bg-raised"
                   title={m.id}
                 >
@@ -352,7 +357,7 @@ export function ComposerBar({
                   <button
                     key={m.id}
                     type="button"
-                    onClick={() => applyModel(m.id)}
+                    onClick={() => void applyModel(m)}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg-muted hover:bg-raised"
                     title={m.id}
                   >

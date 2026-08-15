@@ -109,17 +109,28 @@ function Shell({
     return () => clearInterval(t);
   }, [refreshSessions, sessionId, settings, view, navigate]);
 
-  // Sidebar dot: main llama.cpp server state, polled so it stays current on
+  // Sidebar dot: aggregate model-server state, polled so it stays current on
   // every page (grey down / yellow starting / green idle / blue busy).
+  //
+  // Watches every server the portal can route to (all enabled rows, not just
+  // the local "main" on LLAMA_BASE_URL). The box's remote 27B + 4B fleet are
+  // the servers work actually runs on, so a healthy remote keeps the light
+  // green even when the local 41001 llama isn't launched.
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
       try {
         const r = await api.modelServers();
         if (cancelled) return;
-        const main =
-          r.servers.find((s) => s.main) ?? r.servers.find((s) => s.enabled) ?? r.servers[0];
-        setModelState(main?.status.state ?? "down");
+        // Enabled rows are the ones the portal actually models on; fall back to
+        // everything if none are marked enabled.
+        const pool = r.servers.filter((s) => s.enabled);
+        const used = pool.length ? pool : r.servers;
+        if (!used.length) return setModelState("down");
+        if (used.some((s) => s.status.state === "busy")) setModelState("busy");
+        else if (used.some((s) => s.status.state === "idle")) setModelState("idle");
+        else if (used.some((s) => s.status.state === "starting")) setModelState("starting");
+        else setModelState("down");
       } catch {
         /* keep last known state */
       }

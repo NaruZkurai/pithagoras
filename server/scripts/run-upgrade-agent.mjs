@@ -22,7 +22,7 @@
  */
 import Database from "better-sqlite3";
 import path from "node:path";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
@@ -138,13 +138,15 @@ function usableAction(events) {
 /** Wait until the session is not running (capped). Returns final status. */
 async function waitUntilIdle(sessionId, capMs, pollMs = 15_000) {
   const start = Date.now();
-  while (Date.now() - start < capMs) {
+  while (Date.now() - start < capMs && !stopping && !sentinelExists()) {
     const row = freshDb()
       .prepare("SELECT status FROM sessions WHERE id = ?")
       .get(sessionId);
     if (row && row.status !== "running") return row.status;
     await sleep(pollMs);
   }
+  // Stop signaled mid-wait — abort the running agent so the turn stops.
+  if (stopping || sentinelExists()) return "stopped";
   return "still-running";
 }
 
@@ -223,21 +225,34 @@ function buildProjectContext() {
     "README.md",
     "SOUL.md",
     "MEMORY.md",
+    // The augmentation path — give the agent the RAW source it must build on
+    // so it never has to guess a path (it previously invented
+    // `server/src/pi/model-server.ts` and hit ENOENT).
+    "server/src/model-server.ts",
+    "server/src/pi/project-token-tools.ts",
+    "server/src/pi/sdk-client.ts",
+    "server/src/pi/payload-inspect.ts",
+    "server/scripts/pre-tokenize-project.mjs",
+    "server/scripts/run-upgrade-agent.mjs",
+    "scripts/train-6gb.sh",
   ];
-  const MAX_KEY_BYTES = 200_000; // cap the injected key-file text total
+  const MAX_KEY_BYTES = 300_000; // cap the injected key-file text total
 
   const lines = ["# PROJECT SNAPSHOT (pre-loaded — do not re-discover it)", ""];
 
   // Tell the agent exactly where it is so it never hunts for its own files
   // (a past failure: it ran `find / -name package.json` because the inject
-  // didn't pin down its working directory). Inside its bash sandbox the
-  // workspace is mounted at /workspace; every path below is relative to that.
+  // didn't pin down its working directory). Every path in this snapshot is
+  // RELATIVE — resolve it from your CURRENT working directory (your cwd IS the
+  // project root). Do NOT prepend a fake mount like `/workspace`: this portal
+  // runs the host executor, so `/workspace` does not exist here.
   lines.push(
-    "Your working directory is `WORKSPACE_ROOT` and every file path in this " +
-      "snapshot is RELATIVE to it. In your bash shell, that root is mounted at " +
-      "`/workspace` — so `server/src/index.ts` below means `/workspace/server/src/index.ts`. " +
-      "You do not need to locate the project; it is already your cwd. Do not run " +
-      "`find`/`ls`/`pwd` to discover files listed here.",
+    "Your working directory (cwd) IS the project root, and every file path in " +
+      "this snapshot is RELATIVE to it. To read `server/src/index.ts`, open the " +
+      "path `server/src/index.ts` from your cwd — do NOT prefix it with " +
+      "`/workspace` or any other mount (that does not exist in this runtime). " +
+      "You do not need to locate the project; it is already your cwd. Do not " +
+      "run `find`/`ls`/`pwd` to discover files listed here.",
     ""
   );
 
@@ -321,35 +336,240 @@ function buildProjectContext() {
   return lines.join("\n");
 }
 
-async function run() {
-  const cookie = await login();
-  const sessionId = await createSession(cookie);
-  console.log(`session ${sessionId} on ${WS}`);
+const RUNNER_IMAGE = "pithagoras-runner-arch:latest";
+const REPO_ROOT = path.resolve(ROOT); // the repo baked into /repo of the image
+const RUNNER_DOCKERFILE = path.join(ROOT, "docker", "runner-arch.dockerfile");
+const REPO_EXCLUDE = new Set(["node_modules", ".git", "dist", "build", ".venv", "data", "gitrepos", "vendor"]);
+
+/** Newest mtime under a dir (walking), excluding heavy/vendored dirs. */
+function newestMtime(dir) {
+  let newest = 0;
+  (function walk(d) {
+    let ents;
+    try {
+      ents = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of ents) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) {
+        if (!REPO_EXCLUDE.has(e.name)) walk(p);
+      } else if (e.isFile()) {
+        try {
+          const t = statSync(p).mtimeMs;
+          if (t > newest) newest = t;
+        } catch {
+          /* skip */
+        }
+      }
+    }
+  })(dir);
+  return newest;
+}
+
+/**
+ * Ensure the runner image's baked /repo is un-to-date with the current source.
+ *
+ * `docker build` bakes a SNAPSHOT of the repo (COPY . /repo) at build time, so
+ * a stale image makes the agent work on old code. Rebuild the image (via the
+ * normal script, which also re-snapshots the non-root node_modules overlay)
+ * whenever the Dockerfile or any tracked source file under the repo is NEWER
+ * than the cached image. Runs once per process, gated by freshness, so a
+ * never-stopping harness doesn't rebuild every iteration.
+ */
+let _imageChecked = false;
+async function ensureFreshRunnerImage() {
+  if (_imageChecked || process.env.SKIP_IMAGE_REBUILD === "1") return;
+  _imageChecked = true;
+
+  const imageTime = (() => {
+    try {
+      const out = execFileSync("docker", ["image", "inspect", RUNNER_IMAGE, "--format", "{{.Created}}"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const t = Date.parse(String(out).trim());
+      return Number.isFinite(t) ? t : 0;
+    } catch {
+      return 0; // image missing → rebuild
+    }
+  })();
+
+  const dockerfileMtime = existsSync(RUNNER_DOCKERFILE) ? statSync(RUNNER_DOCKERFILE).mtimeMs : 0;
+  const srcMtime = newestMtime(REPO_ROOT);
+  const newest = Math.max(dockerfileMtime, srcMtime);
+  if (newest <= imageTime) {
+    console.log(`runner image ${RUNNER_IMAGE} is current (repo/src not newer than image) — no rebuild.`);
+    return;
+  }
+
+  console.log(`repo/src changed since image ${RUNNER_IMAGE} (image=${new Date(imageTime).toISOString()}, newest source=${new Date(newest).toISOString()}) — rebuilding so the agent gets up-to-date /repo...`);
+  execFileSync(path.join(ROOT, "scripts", "update-runner-node_modules.sh"), [], {
+    cwd: ROOT,
+    stdio: "inherit",
+    timeout: 30 * 60_000,
+  });
+  console.log("runner image rebuilt with fresh /repo.");
+}
+
+/** Is the remote model box (any of its ports) reachable right now? */
+async function probeRemote() {
+  for (const port of [6464, 6465]) {
+    try {
+      const r = await fetch(`http://192.168.2.64:${port}/health`, { signal: AbortSignal.timeout(4000) });
+      if (r.ok) return true;
+    } catch {
+      /* try next */
+    }
+  }
+  return false;
+}
+
+/**
+ * Decide which backend to run the upgrade on:
+ *   - remote/bonsai-27b   when the box is up;
+ *   - local/bonsai-27b    otherwise (ensuring the LOCAL server is launched).
+ */
+async function chooseModel(cookie) {
+  if (await probeRemote()) return { provider: "remote", modelId: "bonsai-27b" };
+  console.warn("remote model box unreachable — falling back to LOCAL bonast-27b on :41001");
+  // Ensure the local 27B is up (portal launches it for us on first use).
+  try {
+    await fetch(`${PORTAL}/api/models/servers/bonsai-local/start`, {
+      method: "POST",
+      headers: { cookie },
+      signal: AbortSignal.timeout(120_000),
+    }).catch(() => {});
+  } catch {
+    /* the session's ensureMainModelServer() will also try */
+  }
+  return { provider: "local", modelId: "bonsai-27b" };
+}
+
+/** Point a session at a model via the portal config endpoint. */
+async function applyModel(cookie, sessionId, provider, modelId) {
+  const res = await fetch(`${PORTAL}/api/sessions/${sessionId}/config`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({ provider, modelId }),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`set model ${provider}/${modelId}: ${JSON.stringify(j)}`);
+  return j;
+}
+
+/**
+ * Tear down a finished iteration's session — no longer used since the loop
+ * now CONTINUES a single session instead of creating one per iteration.
+ */
+
+/**
+ * Ensure the loop's workspace carries the raw pre-tokenized token patterns the
+ * task is built on. `data/project-tokens.json` + a readable PROJECT_TOKENS.md
+ * live in the REPO root's data/, but the loop's workspace is a repo copy that
+ * usually has no data/ dir at all — so the agent hit ENOENT on
+ * /workspace/data/project-tokens.json ("not receiving the raw file as tokens").
+ * Copy the manifest in and generate the markdown so the agent can open the
+ * token patterns directly. Idempotent; best-effort.
+ */
+function provisionWorkspaceTokens() {
+  const src = path.join(ROOT, "data", "project-tokens.json");
+  const dstDir = path.join(WS, "data");
+  try {
+    const j = existsSync(src) ? JSON.parse(readFileSync(src, "utf8")) : null;
+    mkdirSync(dstDir, { recursive: true });
+    // Always refresh the manifest + markdown from the source of truth.
+    if (j) {
+      writeFileSync(path.join(dstDir, "project-tokens.json"), JSON.stringify(j, null, 2) + "\n");
+      const lines = [
+        "# PROJECT_TOKENS.md — this project's files, pre-tokenized",
+        "",
+        "```text",
+      ];
+      for (const f of (j.files || []).slice(0, 2000)) lines.push(`${f.path} [${f.tokens}]`);
+      lines.push("```", "");
+      writeFileSync(path.join(dstDir, "PROJECT_TOKENS.md"), lines.join("\n"));
+    }
+  } catch (e) {
+    console.warn(`[provisionTokens] could not copy token patterns: ${e?.message ?? e}`);
+  }
+}
+
+async function runOnce(cookie, sessionId) {
+  console.log(`iteration on session ${sessionId} (${WS})`);
+
+  // Make sure the workspace actually carries the token patterns the task
+  // builds on. The loop's workspace is a repo copy that often lacks `data/`,
+  // so `data/project-tokens.json` / PROJECT_TOKENS.md (the raw token patterns)
+  // were absent and the agent ENOENT'd on them. Copy them in every iteration so
+  // the agent always has the raw token data it's meant to augment.
+  provisionWorkspaceTokens();
+
+  // Failover: prefer the remote box's 27B when reachable, otherwise use the
+  // LOCAL 27B on 41001 so the harness runs through a box outage instead of
+  // piling up empty responses.
+  const { provider, modelId } = await chooseModel(cookie);
+  console.log(`routing session to model ${provider}/${modelId}`);
+  // Best-effort: an explicit set can fail transiently on a just-booted session
+  // (model registry not fully warm). The session already defaults to the right
+  // model, so a failure here must NOT abort the run — log and continue.
+  try {
+    await applyModel(cookie, sessionId, provider, modelId);
+  } catch (e) {
+    console.warn(`(continuing — could not force model ${provider}/${modelId}: ${e?.message ?? e})`);
+  }
 
   const projectContext = buildProjectContext();
   const upgradeTask =
     projectContext +
     "\n\n" +
-    "You are upgrading this Pithagoras project. 'Upgrading' means IMPROVING " +
-    "THE CODE, not upgrading the system. Do exactly ONE concrete, small, " +
-    "low-risk code improvement and PROVE it with a real file edit:\n\n" +
-    "STEP 1 — Pick ONE specific, obvious improvement in this codebase. Good " +
-    "candidates: a real bug, an obvious typo, a small correctness or " +
-    "simplicity win in server/src or web/src. Be specific about the file and " +
-    "the change.\n" +
-    "STEP 2 — MAKE the edit with a write/edit tool (or bash). The deliverable " +
-    "is a changed source file. Do not stop after reading — WRITE the file.\n" +
-    "STEP 3 — Run the build/typecheck (npm run build -w server) and confirm it " +
-    "still passes. If it fails, fix your edit.\n" +
-    "When done, report exactly which file you changed, the diff, and that the " +
-    "build passes.\n\n" +
-    "Do NOT run package-manager or OS updaters (pacman/apt/npm install/npm ci). " +
-    "Do NOT delete files, commit, push, or restructure. One verified edit " +
-    "beats an unverified sweep.";
+    "SELF-AUGMENTATION TASK — the KEY is the 500 MB true-ternary Bonsai-4B " +
+    "model. Build one concrete piece of the augmentation pipeline and PROVE it " +
+    "by WRITING a real source file. Do NOT stop after reading files — the " +
+    "deliverable is a written, working edit. If the model gives you empty " +
+    "responses, do not resend; just get on with writing the change.\n\n" +
+    "The stack that IS in place (verify, don't rediscover):\n" +
+    "- The 500 MB model: /nzk/models/Bonsai-4B-Q1_0.gguf — TRUE TERNARY Q1_0, " +
+    "served locally (llama.cpp) at http://127.0.0.1:6465 OpenAI-compatible.\n" +
+    "- llama.cpp + the direct-token fork gitrepos/llama-direct-token-input " +
+    "(llama-server, llama-tokens, llama-finetune, llama-bench) wrapped by " +
+    "scripts/train-6gb.sh.\n" +
+    "- The repo's token patterns (pre-tokenized): server/scripts/" +
+    "pre-tokenize-project.mjs writes data/project-tokens.json (~161 files, " +
+    "~1.72M tokens) and PROJECT_TOKENS.md in this workspace.\n" +
+    "- The harness that drives this loop: server/scripts/run-upgrade-agent.mjs.\n\n" +
+    "Deliver EXACTLY ONE of these, written as real code, then prove it builds:\n" +
+    "A) scripts/augment-500mb.mjs — a self-augmentation runner that reads " +
+    "data/project-tokens.json, selects repo token patterns as training " +
+    "sequences, and streams them to the 500 MB model at 127.0.0.1:6465 " +
+    "(llama.cpp) to produce an augmentation log / co-evolved token patterns. " +
+    "Wire it so the augmentation is verifiable (e.g. writes an output file and " +
+    "a metric). OR\n" +
+    "B) Improve ANY single real bug/simplification in the augmentation path " +
+    "(server/src/pi/*, server/src/model-server.ts, scripts/train-6gb.sh, or " +
+    "run-upgrade-agent.mjs) that makes the 500 MB self-augmentation more " +
+    "correct or faster.\n\n" +
+    "STEPS — do them, don't stall:\n" +
+    "1. WRITE the chosen file with a write/edit tool (or bash). A real change, " +
+    "not a plan.\n" +
+    "2. Run the build/typecheck: npm run build -w server (and the web if you " +
+    "touched web). Fix it until it passes — that's part of the deliverable.\n" +
+    "3. If you built A), run it with --dry-run to show it loads the token " +
+    "patterns and targets 127.0.0.1:6465.\n" +
+    "When done, report: the exact file you changed, the diff summary, and that " +
+    "the build passes.\n\n" +
+    "Constraints: if you touch model-facing code, target the real 500 MB model " +
+    "at 127.0.0.1:6465 (true ternary) — never a placeholder. Do NOT run " +
+    "package-manager/OS updaters (pacman/apt/npm install/npm ci). Do NOT modify " +
+    "/nzk/models or re-quantize the GGUF. Do NOT delete files, commit, push, or " +
+    "restructure. One verified, written edit that advances the 500 MB " +
+    "self-augmentation beats reads and plans.";
+
 
   if (NO_RUN) {
     console.log("(--no-run) would prompt:\n" + upgradeTask);
-    return;
+    return { netPositive: null, reason: "--no-run (dry)" };
   }
 
   const startSeq = 0;
@@ -361,28 +581,40 @@ async function run() {
   const firstDeadline = Date.now() + WAIT_FIRST_MS;
   let ev1 = eventsSince(sessionId, startSeq);
   let a1 = usableAction(ev1);
-  while (a1.score < MIN_FIRST_SCORE && Date.now() < firstDeadline) {
-    await sleep(10_000);
+  while (a1.score < MIN_FIRST_SCORE && Date.now() < firstDeadline && !stopping && !sentinelExists()) {
+    await sleep(2000); // short poll so a stop signal is received within ~2s
+    if (stopping || sentinelExists()) break; // receive the stop promptly
     ev1 = eventsSince(sessionId, startSeq);
     a1 = usableAction(ev1);
   }
+  if (stopping || sentinelExists()) {
+    await abortSessionIfRunning(cookie, sessionId);
+    console.log("stop signaled during first gate — aborting this iteration.");
+    return { netPositive: false, reason: "stopped" };
+  }
   console.log(`first usable action: ${a1.tools} tool calls, ${a1.prose} prose updates (score ${a1.score})`);
   if (a1.score < MIN_FIRST_SCORE) {
-    console.error(`still nothing after ${WAIT_FIRST_MS / 1000}s (score ${a1.score} < ${MIN_FIRST_SCORE}) — aborting.`);
-    process.exitCode = 1;
-    return;
+    console.error(`still nothing after ${WAIT_FIRST_MS / 1000}s (score ${a1.score} < ${MIN_FIRST_SCORE}) — aborting this iteration.`);
+    return { netPositive: false, reason: `no first action (score ${a1.score})` };
   }
 
   console.log("producing usable actions. waiting 45s to confirm it keeps moving...");
-  await sleep(WAIT_BETWEEN_MS);
+  // Interruptible wait so a stop is honored right away, not after the gap.
+  for (let waited = 0; waited < WAIT_BETWEEN_MS && !stopping && !sentinelExists(); waited += 1000) {
+    await sleep(1000);
+  }
+  if (stopping || sentinelExists()) {
+    await abortSessionIfRunning(cookie, sessionId);
+    console.log("stop signaled during confirmation — aborting this iteration.");
+    return { netPositive: false, reason: "stopped" };
+  }
 
   const ev2 = eventsSince(sessionId, startSeq);
   const a2 = usableAction(ev2);
   console.log(`after ${(Date.now() - (Date.now() - WAIT_FIRST_MS - WAIT_BETWEEN_MS)) / 1000}s (approx): ${a2.tools} tool calls, ${a2.prose} prose updates (score ${a2.score})`);
   if (a2.score < MIN_SECOND_SCORE) {
     console.error(`still not enough useful work (score ${a2.score} < ${MIN_SECOND_SCORE}) — aborting long run.`);
-    process.exitCode = 1;
-    return;
+    return { netPositive: false, reason: `not enough work (score ${a2.score})` };
   }
 
   console.log(`doing something useful. running 600s follow-up command...`);
@@ -423,10 +655,122 @@ async function run() {
   console.log(`  [${changedFiles > 0 ? "PASS" : "FAIL"}] changed source files (${changedFiles})`);
   const netPositive = finalStatus === "idle" && changedFiles > 0 && verdicts.every((v) => v.ok);
   console.log(netPositive ? "RESULT: NET-POSITIVE (verified code edit)." : "RESULT: NET-NEGATIVE or unverified — no verified code edit made.");
-  process.exitCode = netPositive ? 0 : 1;
+  return { netPositive, reason: netPositive ? `changed ${changedFiles} file(s)` : "no verified edit" };
 }
 
-run().catch((e) => {
+/**
+ * Continuous driver: keep running upgrade iterations until told to stop
+ * (Ctrl+C / SIGINT/SIGTERM), or after MAX_ITERS iterations (env, 0 =
+ * infinite). Between iterations it waits LOOP_GAP_MS so a finished run's
+ * edits settle and the box isn't hammered by back-to-back agents.
+ */
+const MAX_ITERS = Number(process.env.MAX_ITERS || 0); // 0 = run forever
+const LOOP_GAP_MS = Number(process.env.LOOP_GAP_MS || 20_000);
+
+let stopping = false;
+function stopLoop() {
+  stopping = true;
+}
+
+// A stop sentinel file: any process (or the portal UI) can signal the harness
+// to stop by creating/`touch`ing this path — no need to find the PID or send a
+// signal. The loop checks it each iteration and during the sleep gap.
+const STOP_FILE = process.env.STOP_FILE || path.join(ROOT, "data", ".upgrade-stop");
+function sentinelExists() {
+  return existsSync(STOP_FILE);
+}
+
+/** Abort any in-flight agent turn on the reused session so a stop takes effect promptly. */
+async function abortSessionIfRunning(cookie, sessionId) {
+  try {
+    await fetch(`${PORTAL}/api/sessions/${sessionId}/abort`, {
+      method: "POST",
+      headers: { cookie },
+    });
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Signal handlers + sentinel mean the harness can RECEIVE a stop from many sources. */
+process.on("SIGINT", () => {
+  console.log("\nSIGINT — stopping: finishing current work, no new iterations after this.");
+  stopLoop();
+});
+process.on("SIGTERM", () => {
+  console.log("\nSIGTERM — stopping: finishing current work, no new iterations after this.");
+  stopLoop();
+});
+
+async function runForever() {
+  let iterations = 0;
+  let positives = 0;
+  // One login for the whole loop (cookies are long-lived; no need to re-auth
+  // every iteration).
+  const cookie = await login();
+  // ONE session for the whole loop — the loop CONTINUES this session every
+  // iteration (each iteration is just the next prompt), so it never leaks a
+  // session dir + sandbox container per iteration (that ballooned to 100+).
+  const sessionId = await createSession(cookie);
+  console.log(`loop session ${sessionId} on ${WS}`);
+  // Before launching anything, make sure the runner image's baked /repo is
+  // up-to-date with the current source (rebuilds only when the repo/Dockerfile
+  // is newer than the cached image). Runs once per process, not per iteration.
+  await ensureFreshRunnerImage().catch((e) =>
+    console.warn(`could not refresh runner image (continuing with existing): ${e?.message ?? e}`)
+  );
+  console.log(
+    `upgrade loop started. MAX_ITERS=${MAX_ITERS || "infinite"}, LOOP_GAP_MS=${LOOP_GAP_MS}. Press Ctrl+C to stop.`
+  );
+
+  while (!stopping && (MAX_ITERS === 0 || iterations < MAX_ITERS)) {
+    // Honor the stop sentinel file (touch data/.upgrade-stop to stop from
+    // anywhere, no PID needed).
+    if (sentinelExists()) {
+      if (!stopping) console.log("\nstop sentinel found (data/.upgrade-stop) — stopping.");
+      stopLoop();
+      break;
+    }
+    iterations += 1;
+    const label = `iteration ${iterations}`;
+    console.log(`\n===== ${label} =====`);
+    try {
+      const { netPositive, reason } = await runOnce(cookie, sessionId);
+      if (netPositive) positives += 1;
+      console.log(`${label} done → ${netPositive ? "NET-POSITIVE" : "NET-NEGATIVE"} (${reason})`);
+    } catch (e) {
+      console.error(`${label} errored: ${e?.message ?? e}`);
+    }
+    // Check the sentinel again after the iteration too.
+    if (sentinelExists() && !stopping) {
+      console.log("\nstop sentinel found — stopping.");
+      stopLoop();
+    }
+    if (stopping || (MAX_ITERS !== 0 && iterations >= MAX_ITERS)) break;
+    console.log(`sleeping ${LOOP_GAP_MS}ms before next iteration (Ctrl+C, kill, or touch data/.upgrade-stop to stop)...`);
+    // Wait in small slices so a stop signal / sentinel is noticed promptly.
+    const slice = 500;
+    for (let waited = 0; waited < LOOP_GAP_MS && !stopping && !sentinelExists(); waited += slice) {
+      await sleep(slice);
+    }
+    if (sentinelExists() && !stopping) {
+      console.log("\nstop sentinel found — stopping.");
+      stopLoop();
+    }
+  }
+
+  // If we stopped mid-loop, abort any in-flight agent turn so a stop lands
+  // promptly instead of waiting out the full iteration gate.
+  if (stopping) await abortSessionIfRunning(cookie, sessionId);
+
+  console.log(
+    `\nupgrade loop stopped after ${iterations} iteration(s) on session ${sessionId}; ` +
+      `${positives} net-positive (verified edits).`
+  );
+  process.exit(0);
+}
+
+runForever().catch((e) => {
   console.error(e);
   process.exit(1);
 });
