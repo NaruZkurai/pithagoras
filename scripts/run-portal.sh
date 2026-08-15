@@ -26,6 +26,9 @@ export CHANNELS_DIR="${CHANNELS_DIR:-$PWD/data/channels}"
 export PI_PROVIDER="${PI_PROVIDER:-local}"
 export PI_MODEL="${PI_MODEL:-gemma-4}"
 export LLAMA_BASE_URL="${LLAMA_BASE_URL:-http://127.0.0.1:41001}"
+# The min-Arch sandbox image agents' bash runs in (Node 22 LTS + full toolchain
+# + the repo baked in). Override with PI_IMAGE to switch back to the Debian one.
+export PI_IMAGE="${PI_IMAGE:-pithagoras-runner-arch:latest}"
 # Where the portal keeps CLIs it wants on pi's PATH. The upstream image uses
 # /data/bin; on the host that is not writable, so use a dir under the repo.
 export BIN_DIR="${BIN_DIR:-$PWD/data/bin}"

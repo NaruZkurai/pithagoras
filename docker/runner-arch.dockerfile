@@ -24,13 +24,27 @@ FROM archlinux:latest
 # node-gyp can compile native npm deps (e.g. better-sqlite3). cmake + python3
 # + pip are needed for building llama.cpp and python tooling. openssh so git
 # can talk to real SSH remotes.
+#
+# NOTE: we deliberately do NOT install Arch's `nodejs` (currently Node 26) —
+# better-sqlite3@11.x cannot compile against Node 26's V8 headers. Pin Node 22
+# LTS (pi needs >= 22.19) from the official tarball instead.
 RUN pacman -Syuq --noconfirm --noprogressbar \
  && pacman -Sq --noconfirm --noprogressbar \
       base-devel cmake pkg-config \
       python3 python-pip \
-      nodejs npm \
       git openssh ca-certificates curl wget \
  && rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/*
+
+# Node 22 LTS from the official binary tarball, unpacked to /opt/node. PATH is
+# set for both root (build) and the runner user (runtime). Keep Arch's own
+# nodejs out of the image so `node` is always this 22.
+ARG NODE_VERSION=v22.20.0
+RUN curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz" \
+      | tar -xJ -C /opt --strip-components=1 \
+ && ln -sf /opt/bin/node /usr/local/bin/node \
+ && ln -sf /opt/bin/npm /usr/local/bin/npm \
+ && ln -sf /opt/bin/npx /usr/local/bin/npx
+ENV PATH=/opt/bin:$PATH
 
 # Dedicated non-root user with a real home. npm/pip/git write their caches
 # here; a per-session HOME can be mounted in at runtime so caches persist per
@@ -47,13 +61,6 @@ RUN chown -R runner:runner /repo
 
 # pi itself. Pinned major so a rebuild does not silently change the agent.
 RUN npm install -g @earendil-works/pi-coding-agent@0.82.1
-
-# npm 11 blocks package install scripts by default (a good host default, but a
-# hurdle inside the sandbox: better-sqlite3 prebuild-install, esbuild, and
-# protobufjs postinstall all need their scripts to run so native builds work).
-# Allow exactly the scripts the repo/pi depend on, globally.
-RUN npm config set --location=global \
-      allow-scripts=better-sqlite3,esbuild,protobufjs,@google/genai
 
 USER runner
 # The bash sandbox runs `bash -lc <cmd>`; the executor runs `pi`. Keep pi on
