@@ -169,6 +169,23 @@ function tryVerify(cmd, opts) {
   }
 }
 
+/** True if `rel` is modified vs the workspace git HEAD (committed state). */
+function isDirtyFile(absPath) {
+  try {
+    const rel = path.relative(WS, absPath);
+    const out = execFileSync("git", ["status", "--porcelain", "--", rel], {
+      cwd: WS,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return (out || "").trim().length > 0;
+  } catch {
+    // If git is unavailable, be conservative: treat as dirty so the gate fails
+    // closed rather than trusting an unverifiable lockfile.
+    return true;
+  }
+}
+
 /**
  * The net-negative gate. After the agent finishes, actually verify the changes
  * instead of taking its word: inspect the diff for obvious destructive edits,
@@ -176,6 +193,15 @@ function tryVerify(cmd, opts) {
  */
 function verifyChanges() {
   const verdicts = [];
+  // 0) Lockfiles must be untouched — a dirty lockfile auto-fails an iteration
+  //    (agents repeatedly mangle package-lock.json, breaking the build).
+  for (const lf of ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]) {
+    const lfPath = path.join(WS, lf);
+    if (existsSync(lfPath)) {
+      const dirty = isDirtyFile(lfPath);
+      verdicts.push({ name: `lockfile clean (${lf})`, ok: !dirty, detail: dirty ? "modified" : "untouched" });
+    }
+  }
   // 1) Manifest sanity: a project root package.json must stay a real manifest.
   const pkg = path.join(WS, "package.json");
   if (existsSync(pkg)) {
@@ -553,18 +579,27 @@ async function runOnce(cookie, sessionId) {
     "STEPS — do them, don't stall:\n" +
     "1. WRITE the chosen file with a write/edit tool (or bash). A real change, " +
     "not a plan.\n" +
-    "2. Run the build/typecheck: npm run build -w server (and the web if you " +
-    "touched web). Fix it until it passes — that's part of the deliverable.\n" +
-    "3. If you built A), run it with --dry-run to show it loads the token " +
-    "patterns and targets 127.0.0.1:6465.\n" +
-    "When done, report: the exact file you changed, the diff summary, and that " +
-    "the build passes.\n\n" +
-    "Constraints: if you touch model-facing code, target the real 500 MB model " +
-    "at 127.0.0.1:6465 (true ternary) — never a placeholder. Do NOT run " +
-    "package-manager/OS updaters (pacman/apt/npm install/npm ci). Do NOT modify " +
-    "/nzk/models or re-quantize the GGUF. Do NOT delete files, commit, push, or " +
-    "restructure. One verified, written edit that advances the 500 MB " +
-    "self-augmentation beats reads and plans.";
+    "2. Run the build/typecheck YOURSELF: npm run build -w server (and the web " +
+    "if you touched web). If it fails, FIX it until it passes — a red build is " +
+    "an automatic FAIL. Green build is part of the deliverable, not optional.\n" +
+    "3. If you built A), run it with --dry-run or a bounded MAX_BLOCKS=2 run to " +
+    "show it loads the token patterns and targets 127.0.0.1:6465. Confirm the " +
+    "generated output is real TypeScript (node --check the .mjs; the emitted " +
+    ".ts must typecheck).\n" +
+    "When done, report: the exact file you changed, the diff summary, and the " +
+    "exact build command that passed.\n\n" +
+    "HARD RULES (violating any of these is an automatic FAIL, not a warning):\n" +
+    "- NEVER edit, touch, or regenerate package-lock.json / yarn.lock / any " +
+    "lockfile. Lockfiles are off-limits; a dirty lockfile means the iteration " +
+    "is rejected. Do NOT run npm install / npm ci / npm audit / package " +
+    "managers at all.\n" +
+    "- Your code MUST be valid, runnable source. In .mjs/.js files there are NO " +
+    "TypeScript type annotations (no `: string`, `: number`, `Promise<...>`) and " +
+    "no `fileURLToURL` — use `fileURLToPath` from node:url. A file that crashes " +
+    "on `node --check` or the typecheck is an automatic FAIL.\n" +
+    "- Do NOT modify /nzk/models or re-quantize the GGUF. Do NOT delete files, " +
+    "commit, push, or restructure. One verified, written, GREEN-BUILD edit that " +
+    "advances the 500 MB self-augmentation beats reads and plans.";
 
 
   if (NO_RUN) {
