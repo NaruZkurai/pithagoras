@@ -6,6 +6,7 @@ import path from "node:path";
 import type { PiClient } from "./pi/types.js";
 import { findServerBuiltin, runBuiltin } from "./pi/builtins.js";
 import { buildExecutor, type Executor, type ExecutorKind } from "./executors/index.js";
+import { destroySandboxContainer } from "./pi/sandbox-fs.js";
 import { appendEvent, appendThreadMessage, createSession, createThread, getSession, getSettings, getThread, listThreadMessages, listThreads, markOrphanedSessionsInterrupted, updateSession } from "./db.js";
 import { ingestMessageCcvs } from "./ccv.js";
 import { captureCheckpoint } from "./checkpoint.js";
@@ -739,6 +740,18 @@ class SessionManager extends EventEmitter {
     live.client.dispose();
     this.live.delete(sessionId);
     await live.executor.cleanup?.(sessionId).catch(() => {});
+  }
+
+  /**
+   * Permanently tear down a session: stop its agent process and delete its
+   * persistent sandbox container. Called only when the session itself is
+   * deleted. Mere inactivity never destroys the container — an idle session
+   * keeps its container warm so its caches and background state still exist
+   * when it's asked something again.
+   */
+  async destroy(sessionId: string): Promise<void> {
+    await this.stop(sessionId);
+    await destroySandboxContainer(sessionId).catch(() => {});
   }
 
   /** Drop the running process so the next turn rebuilds it — used when a

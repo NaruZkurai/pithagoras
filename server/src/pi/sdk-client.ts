@@ -337,7 +337,10 @@ export class SdkPiClient extends EventEmitter implements PiClient {
       try {
         customTools.push(
           pi.createBashToolDefinition(opts.cwd, {
-            operations: sandboxBashOperations(opts.cwd, sandboxLimits()),
+            // The session id keys the session's persistent sandbox container;
+            // fall back to the workspace path if unset so each workspace still
+            // gets a stable container of its own.
+            operations: sandboxBashOperations(opts.cwd, sandboxLimits(), opts.sessionId ?? opts.cwd),
           })
         );
       } catch (e) {

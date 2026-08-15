@@ -301,7 +301,10 @@ app.patch("/api/sessions/:id", (req, res) => {
 app.delete("/api/sessions/:id", async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Not found" });
-  await sessions.stop(session.id);
+  // Stop the agent and delete its persistent sandbox container. Deleting the
+  // session is the one event that tears the container down; idle sessions keep
+  // theirs warm.
+  await sessions.destroy(session.id);
   deleteSession(session.id);
   res.json({ ok: true });
 });
