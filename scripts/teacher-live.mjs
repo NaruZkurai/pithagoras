@@ -34,7 +34,7 @@ import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, 
 // recallable etoken(e1) function stored in data/Etokens.json, the e-tokenizer
 // (touple), the base build from the pre-tokenized token DB, and the
 // disqualification / repeat-train-top-k helpers used in the scoring loop.
-import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, putEtoken, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT, etokenTernaryOf, etokenTernaryBarrel, kvBarrel, kvCompressionAlgo, kvCompressionFlag, kvSpaceSaving } from "./etokens.mjs";
+import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, hasEtoken, putEtoken, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT, etokenTernaryOf, etokenTernaryBarrel, kvBarrel, kvCompressionAlgo, kvCompressionFlag, kvSpaceSaving } from "./etokens.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -1614,14 +1614,28 @@ async function run() {
         // token with the expert (with its affinity/active state) for display.
         const perExpertGuesses = route.rows.map((r, i) => {
           const rawTok = studentIds[(i % Math.max(1, studentIds.length))];
-          // EACH COMPRESSOR MUST USE ONLY COMPRESSOR TOKENS: a compressor expert's
-          // emitted/display token must come from the compressor-token set.
+          // For a NEW-3B / COMPRESSOR expert the display token should be the
+          // E-TOKEN it is being trained to emit — a UNIQUE id outside the base
+          // tokenizer (in the reserved range) that decompresses to an identical
+          // base-tokenizer token sequence. NOT a random base token the student
+          // sampled (that was showing « 아니며», «不看», etc. — meaningless).
+          const is3b = isNewNetwork(r.name) || isCompressorExpert(r.name);
+          if (is3b && typeof lastFpId === "number") {
+            const decomp = etoken(lastFpId);            // base tokenizer ids (identical sequence)
+            const isRec = getEtokens()?.tokens ? hasEtoken(lastFpId) : false;
+            const display = isRec
+              ? `${lastFpId}→[${(decomp || []).join(",")}]`   // unique etoken + its base tokens
+              : `${lastFpId}→[…]`;
+            return { expert: r.name, active: r.active, value: Number(r.value).toFixed(4), token: display, etoken: lastFpId, decompressed: decomp || [] };
+          }
+          // Base 27B experts: keep the student's raw token (they reproduce the
+          // normal base shape, not etokens).
           let token = rawTok;
           if (isCompressorExpert(r.name) && (loadConfig()?.moe?.compressor_tokens_only ?? true)) {
             const firstCompr = [...newTokenSet].find((t) => String(t) === String(rawTok)) ?? [...newTokenSet][0];
             token = firstCompr ?? rawTok;
           }
-          return { expert: r.name, active: r.active, value: Number(r.value).toFixed(4), token };
+          return { expert: r.name, active: r.active, value: Number(r.value).toFixed(4), token, etoken: null, decompressed: [] };
         });
         // Surface full detail: each expert's top-k value, active flag, size,
         // layers used, num experts, per-layer training deltas, and the new
@@ -1679,7 +1693,9 @@ async function run() {
         ...stepRec,
         teacher_token: teacherToken,
         student_tokens: studentIds,
-        per_expert_guesses: (moe?.expert_guesses || []).map((g) => ({ expert: g.expert, token: g.token })),
+        per_expert_guesses: (moe?.expert_guesses || []).map((g) => ({
+          expert: g.expert, token: g.token, etoken: g.etoken ?? null, decompressed: g.decompressed || [],
+        })),
         teacher_topk: (tPos.top || []).slice(0, 10).map((x) => x.token),
         student_top100_count: top100All.size,
         compressed_footprint: fpId,      // MEANINGFUL compressed token id (sum % n_vocab)

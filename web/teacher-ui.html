@@ -71,7 +71,9 @@
       </div>
     </div>
     <div class="card">
-      <h2>Score over time (training) · per expert</h2>
+      <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between">Score over time (training) · per expert
+        <button id="bHideTeacher" style="background:transparent;color:#8b949e;border:1px solid #30363d;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:10px" title="Click to temporarily hide the teacher reference line (it sits at 1.0 and can flatten the graph)">Teacher ref: <span id="hideTeacherState">shown</span></button>
+      </h2>
       <canvas id="scoreChart" height="160"></canvas>
     </div>
     <div class="card">
@@ -221,6 +223,7 @@ function memoRender(key, sig, render) {
 function sigOf(...parts) { return JSON.stringify(parts); }
 
 function applyData(d) {
+  window.__latestD = d; // persist for the toggle (re-render charts w/o new data)
   renderStats(d);
   renderCharts(d);
   renderTop100(d);
@@ -312,6 +315,16 @@ const accumChart = new Chart(document.getElementById("accumChart"), {
 });
 // Track per-expert chart datasets so we only (re)create them on expert changes.
 let expertChartDatasets = {};
+// User toggle: temporarily hide the teacher reference line(s) (the constant 1.0
+// ceiling can flatten/dominate the per-expert graph). Toggled via #bHideTeacher.
+let _hideTeacherRef = false;
+function toggleTeacherRef() {
+  _hideTeacherRef = !_hideTeacherRef;
+  const s = document.getElementById("hideTeacherState");
+  if (s) s.textContent = _hideTeacherRef ? "hidden" : "shown";
+  renderCharts(window.__latestD || {});
+}
+document.getElementById("bHideTeacher")?.addEventListener("click", toggleTeacherRef);
 
 function renderCharts(d) {
   const recent = d.recent || [];
@@ -334,17 +347,20 @@ function renderCharts(d) {
     ds.data = recent.map(r => (r.moe?.cumulative_scores || {})[ds.label] ?? null);
   });
   // TEACHER reference: the teacher always overlaps its OWN top-k 100% (it is
-  // the perfect reference), so this is a constant 1.0 ceiling line.
-  scoreChart.data.datasets.push({
-    label: "teacher (100% ref)",
-    data: recent.map(() => 1.0),
-    borderColor: "#ffffff",
-    borderDash: [5, 3],
-    borderWidth: 1.5,
-    tension: 0,
-    pointRadius: 0,
-    yAxisID: "y1",
-  });
+  // the perfect reference), so this is a constant 1.0 ceiling line. HIDDEN when
+  // the user toggles #bHideTeacher (it flattens the per-expert gains to 0..1).
+  if (!_hideTeacherRef) {
+    scoreChart.data.datasets.push({
+      label: "teacher (100% ref)",
+      data: recent.map(() => 1.0),
+      borderColor: "#ffffff",
+      borderDash: [5, 3],
+      borderWidth: 1.5,
+      tension: 0,
+      pointRadius: 0,
+      yAxisID: "y1",
+    });
+  }
   // STUDENT ↔ TEACHER learning progress: how much of the teacher top-k the
   // student reproduced each step (0..1) — the thing being optimized toward 1.0.
   scoreChart.data.datasets.push({
@@ -372,9 +388,9 @@ function renderCharts(d) {
     const vals = Object.entries(cs).filter(([k,v]) => k !== "TEACHER" && Number.isFinite(v)).map(([,v])=>v);
     return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : null;
   });
-  accumChart.data.datasets[2].data = recent.map(r =>
-    Number.isFinite(r.moe?.cumulative_scores?.TEACHER) ? r.moe.cumulative_scores.TEACHER : null
-  );
+  accumChart.data.datasets[2].data = _hideTeacherRef
+    ? recent.map(() => null) // teacher baseline hidden (user toggle)
+    : recent.map(r => Number.isFinite(r.moe?.cumulative_scores?.TEACHER) ? r.moe.cumulative_scores.TEACHER : null);
   accumChart.update();
 
   // Compressed-token parity bar: for each recent step show student tokens vs
@@ -512,12 +528,18 @@ function renderTeacher(d) {
     const html = shown.map((t, i) => {
       const abs = out.length - shown.length + i;
       const tk = perPos[abs] || perPos[perPos.length - 1] || [];
-      const topkHtml = tk.slice(0, 8).map((x, k) =>
-        `<span class="topk" style="color:#8b949e">${x.token!=null?String(x.token).replace(/</g,"&lt;"):"?"}</span>`
-      ).join(" ");
+      // Show the CONFIGURED top-k size per position (view_top_k), not a hard 8.
+      const topKWant = Math.max(1, Math.min(100, Number(d.view_top_k) || 20));
+      const emitStr = String(t ?? "");
+      const topkHtml = tk.slice(0, topKWant).map((x) => {
+        const toks = x.token != null ? String(x.token).replace(/</g, "&lt;") : "?";
+        const hit = (x.token ?? "") === emitStr; // highlight the emitted token's slot
+        const hl = hit ? "color:#3fb950;font-weight:700" : "color:#8b949e";
+        return `<span class="topk" style="${hl}">${toks}</span>`;
+      }).join(" ");
       return `<div class="teach-tok" style="margin-bottom:4px">
         <span class="tok" title="token ${abs}">${String(t).replace(/</g, "&lt;")}</span>
-        <span style="color:#484f58;font-size:10px"> topk:</span>
+        <span style="color:#484f58;font-size:10px"> topk(${topKWant}):</span>
         <span style="font-size:10px">${topkHtml || "<i style='color:#484f58'>–</i>"}</span>
       </div>`;
     }).join("\n");
@@ -618,7 +640,15 @@ function renderGuess(step) {
       ? `<div style="font-size:11px;color:#8b949e;margin-bottom:4px">one token per expert guess (${peg.length}):</div>` +
         peg.map(g => {
           const c = expColor(g.expert);
-          return `<div class="token-row"><span class="chip" style="background:${c}">${g.expert}</span><span class="tok">${String(g.token ?? "").replace(/</g, "&lt;")}</span></div>`;
+          // New-3B experts show their E-TOKEN (unique reserved id) + the
+          // identical base-tokenizer sequence it decompresses to.
+          let shown = String(g.token ?? "").replace(/</g, "&lt;");
+          if (g.etoken != null) {
+            const dec = (g.decompressed || []).join(",");
+            shown = `<span style="color:#58a6ff;font-weight:700">${g.etoken}</span>` +
+              `<span style="color:#8b949e">→[${dec || "…"}]</span>`;
+          }
+          return `<div class="token-row"><span class="chip" style="background:${c}">${g.expert}</span><span class="tok">${shown}</span></div>`;
         }).join("")
       : `<div style="font-size:11px;color:#8b949e;margin-bottom:4px">student tokens (${st.length}):</div>` +
         st.map(t => `<span class="tok" title="token">${String(t).replace(/</g, "&lt;")}</span>`).join(" ") || '<div style="color:#8b949e">(no tokens)</div>');
