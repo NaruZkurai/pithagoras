@@ -247,16 +247,20 @@ function compressorExpertSet() {
 function isCompressorExpert(name) {
   return compressorExpertSet().has(name);
 }
-// A "new network" = any attached expert beyond the base (role "mutation" or
-// "mtp_head", NOT the 5 base "base"-role experts). Per the user design, these
-// are the networks that must LEARN TO COMPRESS (phase 1) and then reproduce the
-// base shape (phase 2). Base experts represent the "un-attached" original.
+// A "new network" = any attached expert beyond the 27B base that makes up the
+// NEW ~3B of parameters (the 30B - 27B delta: the added/mutation experts, the
+// MTP head, the dynamic etoken (ETE) experts, and compressor experts). Per the
+// user directive ("we are only training the new 3B parameters to use the new
+// etokens"), ONLY these new networks are trained to produce compressed (etoken)
+// output; the 5 base-role experts E1..E5 represent the original 27B base and
+// are NOT trained for etoken emission. Later we move to the model as a whole
+// using this 3B 'expert', but atm only the 3B set learns compressed output.
 function expertRole(name) {
   return String(loadConfig()?.moe?.experts?.[name]?.role || "").toLowerCase();
 }
 function isNewNetwork(name) {
   const role = expertRole(name);
-  return role === "mutation" || role === "mtp_head";
+  return role === "mutation" || role === "mtp_head" || role === "new_token" || role.startsWith("compr");
 }
 // Two-phase scoring config read live (see scoring.two_phase in moe-config.json).
 function twoPhaseCfg() {
@@ -1203,13 +1207,24 @@ async function run() {
       for (const b of codeBaselineSet()) newTokenSet.add(b);
       // GENUINE COMPRESSOR TOKEN SET: the true compressed/formulaic tokens a
       // compressor network may emit/express — the footprint new_token values,
-      // the sentinel, and code-baseline chunk-hash values. It deliberately does
-      // NOT include the raw input tokens (those would make phase-1 compression-
-      // favor trivially true for ANY emitted token = vacuous). Used by the
-      // compressor-only constraint and the two-phase compression/reconstruction
-      // rewards so they discriminate REAL compressed emissions.
+      // the sentinel, code-baseline chunk-hash values, AND every RECORDED
+      // etoken id in Etokens.json (the recallable e-tokens the model uses and
+      // updates from teacher chunks). It deliberately does NOT include the raw
+      // input tokens (those would make phase-1 compression-favor trivially true
+      // for ANY emitted token = vacuous). Used by the compressor-only constraint
+      // and the two-phase compression/reconstruction rewards so they
+      // discriminate REAL compressed emissions. THIS is the compressed-output
+      // target set: when a new-3B network emits one of these, it earns the
+      // phase-1 compressed-output reward (training the 3B set to give etoken
+      // output).
       const compressorTokenSet = new Set(newTokens.map((t) => String(t.new_token)));
       compressorTokenSet.add(String(COMPRESS_AS_TOKEN));
+      // Fold in every recorded etoken id from Etokens.json (the recallable
+      // e-tokens stored live from teacher chunks + the base DB build).
+      const etokStore = getEtokens();
+      if (etokStore && etokStore.tokens) {
+        for (const k of Object.keys(etokStore.tokens)) compressorTokenSet.add(String(k));
+      }
       for (const b of codeBaselineSet()) compressorTokenSet.add(b);
       let curveRw = { reward: 0, overlapFraction: 0, matched: 0, numSlots: 0, compressedMatched: false, compressedSlotRank: -1 };
       let compressRw = { reward: 0, compressionRatio: 0, tokensSaved: 0, newTokenMatchPct: 0, appliedMultiplier: 1 };
@@ -1313,6 +1328,15 @@ async function run() {
           // top-k is DISQUALIFIED for the current round: its value is frozen
           // (no reward, no training climb) until the round reset.
           //
+          // SCOPE (user): "we are only training the new 3B parameters to use
+          // the new etokens". The etoken disqualification + repeat-train-top-k
+          // apply ONLY to the NEW-3B networks (mutation / mtp_head / new_token
+          // / compr*). Base experts E1..E5 = the original 27B — they keep their
+          // normal teacher-top-k matching task and are NOT disqualified or
+          // drilled on etoken output. This is what trains the FINAL 3B set of
+          // experts to give compressed token output, ready to be adopted by the
+          // whole model later.
+          //
           // We ALSO repeat-train the E-TOKEN top-k: "repeat train its top k to
           // include this etoken on the teachers output untill it appears in the
           // top k of the expert." Each step we pull the expert's current top-k
@@ -1320,8 +1344,8 @@ async function run() {
           // the expert's top-k we flag it for the steering bias to drill in
           // (repeat training passes converge it into the expert's top-k).
           const teacherTopKIds = (tPos.top || []).map((x) => (x?.id !== undefined ? x.id : x));
-          const expertChosenId = st?.chosen?.id;
-          const dq = expertChosenId !== undefined
+          const expertChosenId = isNew ? st?.chosen?.id : undefined; // etokens only trained into new-3B nets
+          const dq = (isNew && expertChosenId !== undefined)
             ? evalDisqualification(expertChosenId, teacherTopKIds)
             : { disqualified: false, originalTokens: [], originalInTeacherTopK: true, missing: [] };
           if (dq.disqualified) {
@@ -1333,9 +1357,9 @@ async function run() {
             return m;
           }
           // REPEAT-TRAIN-TOP-K: check whether the teacher's current etoken id
-          // already appears in this expert's top-k; if not, it is still being
-          // trained in (repeat passes). Surface the pass status for the UI.
-          if (typeof lastFpId === "number") {
+          // already appears in this NEW expert's top-k; if not, it is still
+          // being trained in (repeat passes). Only new-3B networks are drilled.
+          if (typeof lastFpId === "number" && isNew) {
             const rtt = repeatTrainEtokenTopK(
               (st?.top || []).map((x) => x?.id !== undefined ? x.id : x),
               teacherTopKIds, lastFpId
@@ -1714,9 +1738,10 @@ async function run() {
       // data/Etokens.json — e1 -> original token tuple. Live stats + the full
       // recall-table summary so the UI can inspect what the model has learned.
       etoken_system: {
-        how: "The teacher's emitted token chunks are fed through the e-tokenizer (etokens.mjs) and stored in data/Etokens.json as recallable functions: etoken(e1) -> (o1,o2,o3,o2,o4) (the original token tuple, deduped of effective adjacent repeats). The same tuple always maps to the same etoken id (deterministic/recallable) in the reserved range [base,base+count). Experts compete to emit these etoken ids so the compressed tuple becomes part of the output. An expert whose produced token's ORIGINAL token is NOT in the teacher's top-k is DISQUALIFIED (no reward) for the round. The etoken id is repeat-trained into each expert's top-k until it appears.",
+        how: "The teacher's emitted token chunks are fed through the e-tokenizer (etokens.mjs) and stored in data/Etokens.json as recallable functions: etoken(e1) -> (o1,o2,o3,o2,o4) (the original token tuple, deduped of effective adjacent repeats). The same tuple always maps to the same etoken id (deterministic/recallable) in the reserved range [base,base+count). TRAIN SCOPE = NEW-3B ONLY: only the added ~3B networks (mutation / mtp_head / new_token / compr* experts, i.e. isNewNetwork) are trained to emit etoken (compressed) output; base 27B experts E1..E5 keep normal top-k matching. A new-3B expert whose produced token's ORIGINAL token is NOT in the teacher's top-k is DISQUALIFIED (no reward) for the round, and the etoken id is repeat-trained into its top-k until it appears. Later the whole model adopts this 3B 'expert' to save space/memory.",
         base: ETOKEN_BASE(),
         count: ETOKEN_COUNT(),
+        train_scope: String(loadConfig()?.etokens?.train_scope ?? "new_3b_only"),
         live_stats: liveEtokStats,
         store: getEtokens() ? {
           total: getEtokens().stats?.total ?? 0,
