@@ -125,7 +125,7 @@
     "base": {
       "per_topk_token_match": 13,
       "per_topp_token_match": 13,
-      "per_teacher_emit_match": 10,
+      "per_teacher_emit_match": 100000,
       "note": "+1 per token in student's top-n/k that's in teacher's top-n/k; +1 per token in student's top-n/p that's in teacher's top-n/p; +2 per student CHOSEN token that's in the teacher's ACTUAL emitted top-k"
     },
     "bonus": {
@@ -134,11 +134,11 @@
     },
     "value_generation": {
       "compressed_token_sentinel": 999993,
-      "points_500x": 100,
+      "points_500x": 10000,
       "note": "500x when the 5-token compression footprint token appears in the top-k of the next-5 AND a match is in the top-100 of the next 5 generated tokens"
     },
     "penalties": {
-      "overconfidence": 13,
+      "overconfidence": 53,
       "redundant_expert": 0,
       "note": "subtract from total when flagged; adjust live via UI"
     }
@@ -148,11 +148,11 @@
     "emit": {
       "teacher": {
         "top_k": 20,
-        "top_p": 0.9
+        "top_p": 0.1
       },
       "student": {
         "top_k": 20,
-        "top_p": 0.9
+        "top_p": 0.1
       }
     },
     "noise_to_layer": 0.05,
@@ -171,6 +171,13 @@
     "rounds_before_reset": 3,
     "note": "expert values/scores persist and accumulate for steps_per_round * rounds_before_reset total steps, then reset (keeping a last_round snapshot for comparison). Set rounds_before_reset to control how many rounds before the reset happens."
   },
+  "expert_policy": {
+    "top_n_survive": 3,
+    "update_non_top": true,
+    "bottom_m_refresh": 2,
+    "reset_from_last_window": true,
+    "note": "at each round reset: top_n_survive experts keep their values (survive), non-top experts keep being updated (trainStep), and the bottom_m_refresh worst experts get refreshed — either re-seeded from the previous window's data (reset_from_last_window=true) or fresh. All adjustable."
+  },
   "ui": {
     "adjustable": [
       "scoring.base.per_topk_token_match",
@@ -187,6 +194,10 @@
       "sampling.noise_to_layer",
       "training.steps_per_round",
       "training.rounds_before_reset",
+      "expert_policy.top_n_survive",
+      "expert_policy.update_non_top",
+      "expert_policy.bottom_m_refresh",
+      "expert_policy.reset_from_last_window",
       "moe.experts.*.training_formula",
       "moe.experts.*.noise",
       "layers.count",

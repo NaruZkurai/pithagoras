@@ -139,6 +139,15 @@
         <div class="stat"><div class="label">Penalty (overconfidence)</div><input id="cPen" type="number" step="1" value="0" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Expert count (add)</div><input id="cExp" type="number" step="1" value="5" min="5" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
       </div>
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #30363d;">
+        <div class="label" style="font-size:11px;color:#8b949e;margin-bottom:4px">Expert update policy (top-n survive · bottom-m refresh)</div>
+        <div class="stats" style="grid-template-columns:1fr 1fr; align-items:end;">
+          <div class="stat"><div class="label">Top-n survive</div><input id="cTopN" type="number" step="1" min="0" value="3" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+          <div class="stat"><div class="label">Bottom-m refresh</div><input id="cBotM" type="number" step="1" min="0" value="2" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+          <div class="stat"><div class="label"><label style="display:flex;gap:6px;align-items:center;font-size:12px;color:#e6edf3;margin-top:6px"><input id="cUpdMid" type="checkbox" checked> Update non-top</label></div></div>
+          <div class="stat"><div class="label"><label style="display:flex;gap:6px;align-items:center;font-size:12px;color:#e6edf3;margin-top:6px"><input id="cFromLast" type="checkbox" checked> Reset from last window</label></div></div>
+        </div>
+      </div>
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
         <button id="bBase" style="background:#238636;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">Apply points</button>
         <button id="bAddExp" style="background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">+ Add expert/layer</button>
@@ -164,6 +173,7 @@ function applyData(d) {
   renderTeacher(d);
   renderExpertScores(d);
   renderSampling(d);
+  renderPolicy(d);
   renderTokens(d);
   appendStream(d);
 }
@@ -439,6 +449,21 @@ function renderSampling(d) {
   set("sEm", d.per_teacher_emit_match ?? 2);
 }
 
+// Expert update policy inputs: set defaults ONCE from the payload, then never
+// overwrite (user edits persist until "Apply points").
+let _policyInited = false;
+function renderPolicy(d) {
+  if (_policyInited) return;
+  _policyInited = true;
+  const p = d.expert_policy || {};
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+  set("cTopN", p.top_n_survive ?? 3);
+  set("cBotM", p.bottom_m_refresh ?? 2);
+  chk("cUpdMid", p.update_non_top !== false);
+  chk("cFromLast", p.reset_from_last_window !== false);
+}
+
 function bindSampling() {
   // Values are applied on "Apply sampling" (same as the config controls).
   document.getElementById("bSamp")?.addEventListener("click", () => {
@@ -469,7 +494,13 @@ document.getElementById("bBase")?.addEventListener("click", () => {
       value_generation: { points_500x: Number(document.getElementById("c500").value || 500) },
       penalties: { overconfidence: Number(document.getElementById("cPen").value || 0) },
     },
-  }, "points/penalty");
+    expert_policy: {
+      top_n_survive: Number(document.getElementById("cTopN").value || 3),
+      bottom_m_refresh: Number(document.getElementById("cBotM").value || 2),
+      update_non_top: document.getElementById("cUpdMid").checked,
+      reset_from_last_window: document.getElementById("cFromLast").checked,
+    },
+  }, "points/penalty + expert policy");
 });
 
 document.getElementById("bAddExp")?.addEventListener("click", () => {

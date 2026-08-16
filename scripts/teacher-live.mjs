@@ -491,6 +491,8 @@ async function run() {
       view_top_k: viewTopK(),
       emit: { teacher: emitFor("teacher"), student: emitFor("student") },
       noise_to_layer: noiseToLayer(),
+      base_model: loadConfig()?.model?.base_gguf ?? STUDENT_URL,
+      expert_policy: loadConfig()?.expert_policy || {},
       per_teacher_emit_match: Number(loadConfig()?.scoring?.base?.per_teacher_emit_match ?? 2),
       student_step_tokens: STUDENT_STEP,
       step, base_score: stepRec.step_points ?? 0, bonus_score: bonusTotal,
