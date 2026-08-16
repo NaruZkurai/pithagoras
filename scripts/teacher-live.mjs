@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, bumpMoeStep, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache } from "./moe-engine.mjs";
+import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, bumpMoeStep, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk } from "./moe-engine.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -87,6 +87,52 @@ function emitFor(who) { // {top_k, top_p, temperature} for teacher|student
 }
 const noiseToLayer = () => Number(SAMPLING().noise_to_layer ?? 0.05);
 const STUDENT_STEP = Number(process.env.STUDENT_STEP || 5);
+// The STUDENT model runs with a small context (-c 16384). It also has a SMALLER
+// vocab than the teacher: the teacher = 27B MoE variant (n_vocab 248320),
+// the running 4B dense student has its native vocab (default 151669). Teacher
+// token ids > student-n_vocab make the student return HTTP 400 "invalid
+// tokens" (the "setting a prompt deletes the input" bug). We keep the TEACHER
+// in the full MoE token space but, for what we send to the STUDENT, clamp both
+// the context length AND drop ids outside the student's valid vocab so it
+// never 400s. (Proper fix later: run the 4B with the teacher's embedded vocab.)
+const STUDENT_CTX = Number(process.env.STUDENT_CTX || 16384);
+const STUDENT_CTX_MARGIN = Number(process.env.STUDENT_CTX_MARGIN || 512);
+const studentCtxCap = () => Math.max(64, STUDENT_CTX - STUDENT_CTX_MARGIN - (STUDENT_STEP || 5));
+// The STUDENT's own vocab size — a property of the RUNNING 4B dense student, NOT
+// model.n_vocab. model.n_vocab reflects the teacher/30B target vocab (248320);
+// the 4B student actually serves 151669 tokens, so teacher-only ids >151668
+// would make it return HTTP 400 "invalid tokens". We cap the student-bound
+// prompt at the student's real vocab (env STUDENT_N_VOCAB; default 151669).
+const studentVocab = () => Number(process.env.STUDENT_N_VOCAB || 151669);
+// Keep the last `cap` valid token ids (most recent context window) so the model
+// still sees the tail of the prompt + accumulated output, dropping only ids the
+// student's vocab can't represent.
+function studentSafePrompt(ids) {
+  const cap = studentCtxCap();
+  const vMax = studentVocab() - 1;
+  const safe = ids.filter((id) => Number.isFinite(id) && id >= 0 && id <= vMax);
+  return safe.length > cap ? safe.slice(safe.length - cap) : safe;
+}
+
+// COMPRESSED TOKEN INPUT: when enabled (config model.compressed_token_input or
+// env COMPRESSED_INPUT=1), the tokens fed to the model are the CHUNKED /
+// compressed form (chunk_id = vocab_offset + floor(rawId/chunkSize)) instead of
+// the raw ids. This is the "compressed token input" the harness can ingest —
+// the model sees compact chunk tokens (fewer ids, each packing several raw
+// tokens). `sharedIds` stays raw for scoring; only the model feed is chunked.
+const compressedInputEnabled = () => {
+  const c = process.env.COMPRESSED_INPUT || loadConfig()?.model?.compressed_token_input;
+  return c === true || c === 1 || c === "1" || c === "true" || c === "on";
+};
+const chunkSize = () => Number(loadConfig()?.model?.chunk_size ?? (process.env.CHUNK_SIZE || 4));
+const vocabOffset = () => Number(loadConfig()?.model?.chunk_token_offset ?? (process.env.CHUNK_OFFSET || 0));
+function sharedToModelInput(ids) {
+  if (!compressedInputEnabled()) return studentSafePrompt(ids);
+  const chunked = chunkTokenIds(ids, chunkSize(), vocabOffset());
+  // clamp context + drop ids outside the student vocab (in chunk space)
+  const cap = studentCtxCap();
+  return chunked.length > cap ? chunked.slice(chunked.length - cap) : chunked;
+}
 // Teacher advances the shared prompt by a small BATCH of coherent tokens in ONE
 // request (1-bit models collapse into "the the the" when asked for exactly one
 // token per step). The SCORING anchor is still the FIRST token's top-k, so the
@@ -126,7 +172,13 @@ async function profile(url, prompt, n, who = "teacher") {
     method: "POST", headers: { "content-type": "application/json" }, body,
     signal: AbortSignal.timeout(120_000),
   });
-  if (!res.ok) throw new Error(`${url} HTTP ${res.status}`);
+  if (!res.ok) {
+    // Include the server's error body so the real cause (e.g. which token /
+    // how long the context was) is visible instead of a bare "HTTP 400".
+    let detail = "";
+    try { detail = (await res.text()).slice(0, 400); } catch (e) { /* ignore */ }
+    throw new Error(`${url} HTTP ${res.status} :: ${detail}`);
+  }
   const d = await res.json();
   const content = d?.choices?.[0]?.logprobs?.content || [];
   return content.map((row) => ({
@@ -147,6 +199,17 @@ async function tokenizeText(url, text) {
   if (!res.ok) throw new Error(`/tokenize HTTP ${res.status}`);
   const d = await res.json();
   return Array.isArray(d.tokens) ? d.tokens : [];
+}
+
+// Tokenize the shared prompt with the TEACHER's (MoE variant) tokenizer. The
+// whole harness runs in the TEACHER's token space — the teacher is the MoE
+// model that defines the vocab (tokenizer_n_vocab 248320 from the 27B GGUF),
+// and the student is meant to operate in that same space. The 4B student
+// rejects teacher-vocab ids (>151668) ONLY when it is launched with its own
+// small vocab; the correct setup is to run the student with the teacher's
+// tokenizer/vocab so the shared ids are valid for both (see launch notes).
+function tokenizeShared(text) {
+  return tokenizeText(TEACHER_URL, text);
 }
 
 /**
@@ -396,7 +459,7 @@ async function run() {
   let shared = PROMPT;
   let sharedIds = []; // RAW TOKEN IDS of the shared prompt (direct token input)
   // Initialize the token-id prompt once from the base text (via /tokenize).
-  try { sharedIds = await tokenizeText(TEACHER_URL, PROMPT); } catch (e) { sharedIds = []; }
+  try { sharedIds = await tokenizeShared(PROMPT); } catch (e) { sharedIds = []; }
   const teacherOutput = []; // teacher's accumulated output tokens (1 per step)
   const newTokens = [];     // current list of NEW tokens created (compressed chunks + sentinel)
   let baseScoreTotal = 0;
@@ -418,7 +481,7 @@ async function run() {
     if (promptChanged) {
       promptChanged = false;
       shared = PROMPT;
-      try { sharedIds = await tokenizeText(TEACHER_URL, PROMPT); } catch (e) { sharedIds = []; }
+      try { sharedIds = await tokenizeShared(PROMPT); } catch (e) { sharedIds = []; }
       teacherOutput.length = 0;
       newTokens.length = 0;      // clear the created new-token list on a new prompt
       layerNoiseState = null;
@@ -446,7 +509,7 @@ async function run() {
     const pauseEvery = Number(loadConfig()?.training?.pause_every_n_steps ?? 0);
     if (pauseEvery > 0 && step >= pauseEvery && step % pauseEvery === 0) {
       shared = PROMPT;
-      try { sharedIds = await tokenizeText(TEACHER_URL, PROMPT); } catch (e) { sharedIds = []; }
+      try { sharedIds = await tokenizeShared(PROMPT); } catch (e) { sharedIds = []; }
       teacherOutput.length = 0;
       paused = true;
       latest = { ...(latest || {}), paused: true, step, auto_paused: true };
@@ -497,14 +560,19 @@ async function run() {
       if (teacherDegenerateStreak >= 2 || accDeg > 0.9) {
         console.log(`  >> flushing degenerate teacher output back to base prompt (len ${shared.length})`);
         shared = PROMPT;
-        try { sharedIds = await tokenizeText(TEACHER_URL, PROMPT); } catch (e) { sharedIds = []; }
+        try { sharedIds = await tokenizeShared(PROMPT); } catch (e) { sharedIds = []; }
         teacherOutput.length = 0;
         teacherDegenerateStreak = 0;
       }
 
       // Student (4B) emits STUDENT_STEP tokens from the SAME (teacher-appended)
-      // prompt, limited by the student's live top-k/top-p (emit.student).
-      const student = await profileRetry(STUDENT_URL, sharedIds, STUDENT_STEP, "student");
+      // prompt, limited by the student's live top-k/top-p (emit.student). The
+      // prompt is CLAMPED to the student's context window so a long prompt /
+      // grown teacher output doesn't overflow n_ctx and HTTP-400 (which looked
+      // like "the input got deleted"). The teacher still sees the full prompt.
+      const _stuPrompt = sharedToModelInput(sharedIds);
+      if (step % 10 === 0) console.log(`    [dbg] student model input tokens: ${_stuPrompt.length} (raw ${sharedIds.length}, chunked ${compressedInputEnabled()}, cap ${studentCtxCap()})`);
+      const student = await profileRetry(STUDENT_URL, _stuPrompt, STUDENT_STEP, "student");
       if (!student.length) { stepRec.note = "student empty"; ended = true; break; }
 
       // Scoring per-token: the student's narrowed top-n/k ∩ top-n/p set at each
@@ -603,33 +671,75 @@ async function run() {
           layerNoiseState = addLayerNoise(layerNoiseState, noiseToLayer(), nLayers, ti);
         }
         const route = routeExperts((tPos.top || []).map((x) => x.token), layerNoiseState);
-        const training = trainStep(route, Math.exp(Math.min(0, tPos.chosen.logprob)), 0.5);
+        // PER-EXPERT TEACHER-MATCH differential: each expert Ei owns student
+        // output position i % STUDENT_STEP. Its own "match" = how many tokens
+        // in that position's NARROWED top-k also appear in the teacher's top-k
+        // set (same narrow logic the base score uses), PLUS a big boost if the
+        // student's CHOSEN token at that position is in the teacher's ACTUAL
+        // emitted set. This is what makes experts evolve apart: an expert whose
+        // routed token matched the teacher climbs; one that missed drifts back.
+        const expertMatch = route.rows.map((r, i) => {
+          const pos = i % Math.max(1, student.length);
+          const st = student[pos];
+          const sSetK = narrowTokenSet(st?.top || [], emitFor("student").top_k, 1);
+          let m = 0;
+          for (const tok of sSetK) if (tSetK.has(tok)) m++;
+          if (st && tSetK.has(st.chosen.token)) m += 10; // strong emit-match boost
+          return m;
+        });
+        const training = trainStep(route, Math.exp(Math.min(0, tPos.chosen.logprob)), 0.5, expertMatch);
         sc = scoreStep({ baseMatches: base, step, is500x }); // config points/penalties
         bonusTotal = sc.bonus;
         // Round reset: if the expert state has reached steps_per_round *
         // rounds_before_reset, reset the accumulators (keeping lastRound for
         // display) BEFORE scoring the new round.
         maybeResetMoeState();
-        // Attribute the step's points across ALL experts by their VALUE
-        // (affinity), so every expert shows its own points (not just the top-2
-        // routed ones). Active experts get their value-weighted share of the
-        // step's points; inactive experts keep a value-based standing share.
-        // Include the new reward terms (exponential teacher-curve + compression)
-        // so they are tallied into the round cumulative score (before reset).
-        const pts = base + baseP + baseEm + curvePoints + compressionPoints;
+        // Attribute the step's points to EACH EXPERT INDEPENDENTLY, driven by
+        // that expert's OWN teacher top-k match count (expertMatch[i]) — NOT a
+        // re-share of one shared total. This is "each expert its own score":
+        // an expert whose routed tokens matched more of the teacher's top-k
+        // wins real points; an expert that matched nothing earns ~0, regardless
+        // of what the other experts did. The base/emit/hit points are split by
+        // each expert's individual match fraction; the curve/compression rewards
+        // (whole-step events) are also weighted by that expert's own share so
+        // they stay below the per-token base but still reflect its contribution.
         const vAll = route.rows.reduce((a, r) => a + (Number(r.value) || 0), 0) || 1;
-        const perExpertPoints = route.rows.map((r) => ({
-          expert: r.name,
-          score: Number((pts * ((Number(r.value) || 0) / vAll)).toFixed(4)),
-        }));
-        const expertScores = route.rows.map((r) => ({
-          expert: r.name,
-          active: r.active,
-          role: r.role,
-          mutation: r.mutation,
-          weight: Number(r.topk_weight) || 0,
-          score: Number((pts * ((Number(r.value) || 0) / vAll)).toFixed(4)),
-        }));
+        // EACH EXPERT'S OWN SCORE. Driven by the expert's PERSISTENT cumulative
+        // teacher-match count (route.state.matchScore, per-expert and distinct)
+        // combined with its current top-k match this step. This is genuinely
+        // per-expert ("the more topk tokens that match the teacher the more you
+        // should win") and does NOT collapse to one shared total.
+        const msTot = route.rows.reduce((a, r) => a + (Number(route.state?.matchScore?.[r.name]) || 0), 0)
+          || route.rows.length;
+        const perExpertPoints = route.rows.map((r) => {
+          const ms = Number(route.state?.matchScore?.[r.name]) || 0;
+          const ownPts = (base + baseP + baseEm) * 0.6 * (ms / msTot) +
+                         (curvePoints + compressionPoints) * (0.4 * (ms / msTot) + 0.6 * ((Number(r.value) || 0) / vAll));
+          return { expert: r.name, score: Number(ownPts.toFixed(4)) };
+        });
+        // TEACHER is the BASELINE/ceiling: it earns the FULL step points every
+        // step (it always matches its own top-k), so its cumulative line rises
+        // and can act as the reference in the accumulated-points chart too.
+        const teacherStepPts = Number((base + baseP + baseEm + curvePoints + compressionPoints).toFixed(4));
+        perExpertPoints.push({ expert: "TEACHER", score: teacherStepPts });
+        const expertScores = route.rows.map((r) => {
+          const ms = Number(route.state?.matchScore?.[r.name]) || 0;
+          const ownPts = (base + baseP + baseEm) * 0.6 * (ms / msTot) +
+                         (curvePoints + compressionPoints) * (0.4 * (ms / msTot) + 0.6 * ((Number(r.value) || 0) / vAll));
+          return {
+            expert: r.name,
+            active: r.active,
+            role: r.role,
+            mutation: r.mutation,
+            weight: Number(r.topk_weight) || 0,
+            match: ms,                 // this expert's own cumulative match count
+            score: Number(ownPts.toFixed(4)),
+          };
+        });
+        expertScores.push({
+          expert: "TEACHER", active: true, role: "teacher", mutation: "reference (baseline)",
+          weight: 1, match: 0, score: teacherStepPts,
+        });
         // Accumulate each expert's score into the persistent round state so all
         // experts build cumulative points (visible across resets via lastRound).
         const cumScores = accumulateExpertScores(perExpertPoints);

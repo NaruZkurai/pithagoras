@@ -88,11 +88,19 @@ let _moeState = null;
 export function initMoeState(expertNames = ["E1","E2","E3","E4","E5"], layerCount = 5) {
   _moeState = {
     expertValues: Object.fromEntries(expertNames.map((n, i) => [n, 0.5 + 0.4 * noise01(i + 7)])),
+    // accum: UNBOUNDED per-expert parity accumulator. expertValues = sigmoid(accum)
+    // so experts stay distinct (never all pinned at the 1.0 ceiling). Re-seeding
+    // a losing expert sets accum = inverse-sigmoid(seed) so its value matches.
+    accum: Object.fromEntries(expertNames.map((n, i) => {
+      const v = 0.5 + 0.4 * noise01(i + 7);
+      return [n, Math.log(v / (1 - v))]; // logit(v)
+    })),
     layerSizes: Array.from({ length: layerCount }, (_, i) => Math.round(100 + noise01(i + 31) * 400)),
     noiseDeltas: Array.from({ length: layerCount }, () => 0), // bounded per-layer noise deltas
     topP: {},       // per-expert top-p summary (persisted)
     kl: {},         // per-expert KL (persisted)
     output: {},     // per-expert output signal history (persisted)
+    matchScore: {}, // per-expert CUMULATIVE teacher top-k match count (own score)
     scores: {},     // per-expert CUMULATIVE points across this round (all experts, not just top-2)
     noise: 0,       // running noise accumulator
     step: 0,
@@ -102,6 +110,17 @@ export function initMoeState(expertNames = ["E1","E2","E3","E4","E5"], layerCoun
   return _moeState;
 }
 export function getMoeState() { return _moeState; }
+
+// set an expert's value in the (0,1) space: derive accum so sigmoid(accum)=v,
+// keeping the anti-collapse invariant (no hard 1.0 ceiling / identical clones).
+function setExpertValue(name, value) {
+  const v = Math.max(1e-4, Math.min(1 - 1e-4, Number(value) || 0.5));
+  if (_moeState) {
+    _moeState.expertValues[name] = v;
+    if (_moeState.accum) _moeState.accum[name] = Math.log(v / (1 - v));
+  }
+  return v;
+}
 
 /**
  * RESET THE MOE EXPERT/LAYER STATE for a NEW PROMPT. When the user sets a fresh
@@ -173,20 +192,24 @@ export function maybeResetMoeState() {
       const seeded = fromLast && lastValues[nm] != null
         ? lastValues[nm] * (0.7 + 0.3 * noise01((+new Date()) + nm.length * 3))
         : 0.5 + 0.4 * noise01((+new Date()) + nm.length * 3);
-      _moeState.expertValues[nm] = Math.max(0, Math.min(1, seeded));
+      setExpertValue(nm, seeded);
       refreshed.push(nm);
       continue;
     }
     // Non-top: keep being updated (trainStep handles the deltas).
     if (doUpdateNonTop) {
-      _moeState.expertValues[nm] = Math.max(0, Math.min(1,
-        (_moeState.expertValues[nm] || 0.5) + (noise01((+new Date()) + nm.length * 7) - 0.5) * 0.04));
+      _moeState.expertValues[nm] = setExpertValue(nm,
+        (_moeState.expertValues[nm] || 0.5) + (noise01((+new Date()) + nm.length * 7) - 0.5) * 0.04);
     }
   }
 
-  // Clear per-token accumulators, keep per-expert keys.
+  // Clear per-token accumulators, keep per-expert keys. The TEACHER baseline
+  // score is PRESERVED across resets so its cumulative line keeps rising (it is
+  // the fixed reference/ceiling, not a trainable expert).
   _moeState.topP = {}; _moeState.kl = {}; _moeState.output = {};
+  const teachScore = _moeState.scores["TEACHER"] || 0;
   _moeState.scores = Object.fromEntries(names.map((nm) => [nm, 0]));
+  if (teachScore) _moeState.scores["TEACHER"] = teachScore;
   _moeState.noiseDeltas = _moeState.noiseDeltas.map(() => 0);
   _moeState.layerSizes = _moeState.layerSizes.map((v, i) =>
     Math.max(10, Math.min(1000, Math.round(v)))); // clamp any corrupted size back to sane range
@@ -226,7 +249,7 @@ export function updateLosingExperts() {
     const seeded = fromLast && lastValues[nm] != null
       ? lastValues[nm] * (0.7 + 0.3 * noise01((+new Date()) + nm.length * 5))
       : 0.5 + 0.4 * noise01((+new Date()) + nm.length * 5);
-    _moeState.expertValues[nm] = Math.max(0, Math.min(1, seeded));
+    setExpertValue(nm, seeded);
     _moeState.scores[nm] = 0; // reset the losing expert's score
   }
   console.log(`  >> update losing experts (every ${every} steps, auto=${auto}, count ${losingCount}): [${losing.join(",") || "none"}]`);
@@ -346,9 +369,12 @@ export function routeExperts(topKTokens, layerNoise) {
   const e5v = Math.min(1, (e1v + e2v + e3v + e4v) / 4 * (0.95 + experts.E5.noise * noise01(seed + 7)));
 
   const mk = (nm, v) => {
-    v = Math.max(0, Math.min(1, v));
-    _moeState.expertValues[nm] = v; // persist
-    return { name: nm, affinity: v, value: v, active: false, role: experts[nm].role, mutation: experts[nm].mutation, topk_weight: experts[nm].topk_weight };
+    // Anti-collapse: persist via sigmoid accumulator, NOT a hard [0,1] clamp
+    // (the clamp in the old mk() re-pinned every expert at 1.0 on every route
+    // call, turning E6..E100 into identical clones). setExpertValue keeps the
+    // value in (0,1) but lets affinity differences persist.
+    const persisted = setExpertValue(nm, v);
+    return { name: nm, affinity: persisted, value: persisted, active: false, role: experts[nm].role, mutation: experts[nm].mutation, topk_weight: experts[nm].topk_weight };
   };
   const rows = [
     mk("E1", e1v), mk("E2", e2v), mk("E3", e3v), mk("E4", e4v), mk("E5", e5v),
@@ -392,6 +418,7 @@ export function routeExperts(topKTokens, layerNoise) {
       topP: _moeState.topP,
       kl: _moeState.kl,
       output: _moeState.output,
+      matchScore: { ..._moeState.matchScore },
       scores: { ..._moeState.scores },
       lastRound: _moeState.lastRound,
       expertValues: { ..._moeState.expertValues },
@@ -408,29 +435,58 @@ export function routeExperts(topKTokens, layerNoise) {
  * small weight adjustment (true-ternary-flavored) so growing stays ternary and
  * is saved.
  */
-export function trainStep(route, teacherVal, studentVal) {
+export function trainStep(route, teacherVal, studentVal, expertMatch) {
   const cfg = loadConfig();
   const layers = cfg.layers;
   if (!_moeState) initMoeState(route.rows.map((r) => r.name), route.layer_count);
   let delta = 0;
-  const perExpert = route.rows.map((r) => {
+  const perExpert = route.rows.map((r, i) => {
     const spec = cfg.moe.experts[r.name] || {};
     const isActive = !!r.active;
-    // active expert: full overlap-adjusted parity update.
+    // PER-EXPERT TEACHER-MATCH: how many of this expert's routed top-k tokens
+    // matched the teacher's top-k this step (0 = no match, >0 = match). This is
+    // the real differentiator — "the more topk tokens that match the teacher
+    // the more you should win". If no per-expert signal is supplied, fall back
+    // to the shared scalar (expertMatch==undefined).
+    const match = expertMatch && expertMatch[i] !== undefined
+      ? Math.max(0, Number(expertMatch[i]) || 0)
+      : 1;
+    // PER-EXPERT persistent match score: each expert accumulates its OWN
+    // teacher top-k match count over steps. This is the "each expert its own
+    // score" signal — it survives beyond a single step and stays distinct per
+    // expert even when multiple experts share a routed output position.
+    _moeState.matchScore[r.name] = (_moeState.matchScore[r.name] ?? 0) + match;
+    const matchScore = _moeState.matchScore[r.name];
+    // active expert: full overlap-adjusted parity update, scaled by how well
+    // this expert actually matched the teacher top-k (matched experts climb,
+    // unmatched experts get pulled back toward 0.5).
     // inactive expert: small standing drift (still scored/trained, not frozen).
-    const activeTerm = (teacherVal - studentVal) * layers.each.topk_gate * layers.each.lr * r.affinity;
+    const activeTerm = (teacherVal - studentVal) * layers.each.topk_gate * layers.each.lr * r.affinity * (0.5 + match);
     const inactiveTerm = (0.5 - studentVal) * layers.each.lr * 0.1;
     const d = isActive ? activeTerm : inactiveTerm;
     delta += d;
     // Persist every expert's value so it keeps accumulating (NOT reset on update)
     // and track per-expert top-p / KL / output signals.
     const prev = _moeState.expertValues[r.name] ?? r.value;
-    const updated = Math.max(0, Math.min(1, prev + d));
-    _moeState.expertValues[r.name] = updated;
+    // Anti-collapse: do NOT hard-clamp to [0,1] — that pinned every active
+    // expert at the 1.0 ceiling and made them identical clones (E6..E100 all
+    // 1.0000). Instead apply a LOGISTIC (sigmoid) squashing of an UNBOUNDED
+    // accumulator, so experts that match the teacher MORE keep pulling ahead,
+    // while the value stays in a stable (0,1) range. This keeps them distinct
+    // instead of saturating the same ceiling.
+    const accum = (Number(_moeState.accum[r.name]) ?? 0) + d;
+    _moeState.accum[r.name] = accum;
+    const updated = 1 / (1 + Math.exp(-accum)); // sigmoid(accum) in (0,1), monotone in d
+    if (!isFinite(updated)) {
+      // guard: extreme accum -> snap near 0/1 but keep distinct via sign of accum
+      _moeState.expertValues[r.name] = accum > 0 ? 0.9999 : 0.0001;
+    } else {
+      _moeState.expertValues[r.name] = updated;
+    }
     _moeState.topP[r.name] = (Number(_moeState.topP[r.name]) || 0) + d * 100;
     _moeState.kl[r.name] = (Number(_moeState.kl[r.name]) || 0) + Math.abs(d);
     _moeState.output[r.name] = d;
-    return { expert: r.name, delta: d, value: updated, active: isActive, topk_weight: r.topk_weight, prev };
+    return { expert: r.name, delta: d, value: updated, active: isActive, topk_weight: r.topk_weight, prev, match, matchScore };
   });
   // Per-layer training update (each of the `count` layers gets a slice of the
   // experts' delta, scaled by its layer weight).

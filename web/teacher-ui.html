@@ -292,8 +292,9 @@ const scoreChart = new Chart(document.getElementById("scoreChart"), {
 const accumChart = new Chart(document.getElementById("accumChart"), {
   type: "line",
   data: { labels: [], datasets: [
-    { label: "max", data: [], borderColor: "#f778ba", backgroundColor: "#f778ba22", borderWidth: 2, tension: .3, pointRadius: 0 },
-    { label: "avg", data: [], borderColor: "#a371f7", backgroundColor: "#a371f722", borderWidth: 2, tension: .3, pointRadius: 0 },
+    { label: "max (experts)", data: [], borderColor: "#f778ba", backgroundColor: "#f778ba22", borderWidth: 2, tension: .3, pointRadius: 0 },
+    { label: "avg (experts)", data: [], borderColor: "#a371f7", backgroundColor: "#a371f722", borderWidth: 2, tension: .3, pointRadius: 0 },
+    { label: "TEACHER (baseline)", data: [], borderColor: "#ffffff", borderDash: [5,3], borderWidth: 2, tension: .3, pointRadius: 0 },
   ] },
   options: {
     responsive: true, maintainAspectRatio: false, animation: false,
@@ -324,14 +325,25 @@ function renderCharts(d) {
   scoreChart.data.datasets.forEach(ds => {
     ds.data = recent.map(r => (r.moe?.cumulative_scores || {})[ds.label] ?? null);
   });
-  // TEACHER line: how close the student's token curve is to the (perfect)
-  // teacher, per step (0..1 overlap of student top-k slots vs teacher top-k).
-  // Kept separate so it's visible even though the scale differs from expert pts.
+  // TEACHER reference: the teacher always overlaps its OWN top-k 100% (it is
+  // the perfect reference), so this is a constant 1.0 ceiling line.
   scoreChart.data.datasets.push({
-    label: "teacher ↔ overlap",
-    data: recent.map(r => r.score_breakdown?.curve_overlap ?? null),
+    label: "teacher (100% ref)",
+    data: recent.map(() => 1.0),
     borderColor: "#ffffff",
     borderDash: [5, 3],
+    borderWidth: 1.5,
+    tension: 0,
+    pointRadius: 0,
+    yAxisID: "y1",
+  });
+  // STUDENT ↔ TEACHER learning progress: how much of the teacher top-k the
+  // student reproduced each step (0..1) — the thing being optimized toward 1.0.
+  scoreChart.data.datasets.push({
+    label: "student ↔ teacher",
+    data: recent.map(r => r.score_breakdown?.curve_overlap ?? null),
+    borderColor: "#58a6ff",
+    borderDash: [2, 2],
     borderWidth: 1.5,
     tension: .3,
     pointRadius: 0,
@@ -339,18 +351,22 @@ function renderCharts(d) {
   });
   scoreChart.update();
 
-  // ---- ACCUM CHART: max & avg of cumulative point per step ----
+  // ---- ACCUM CHART: max & avg of EXpert cumulative points, plus the TEACHER
+  //      baseline (accumulated reference points) as its own line ----
   accumChart.data.labels = steps;
   accumChart.data.datasets[0].data = recent.map(r => {
     const cs = r.moe?.cumulative_scores || {};
-    const vals = Object.values(cs).filter(v => Number.isFinite(v));
+    const vals = Object.entries(cs).filter(([k,v]) => k !== "TEACHER" && Number.isFinite(v)).map(([,v])=>v);
     return vals.length ? Math.max(...vals) : null;
   });
   accumChart.data.datasets[1].data = recent.map(r => {
     const cs = r.moe?.cumulative_scores || {};
-    const vals = Object.values(cs).filter(v => Number.isFinite(v));
+    const vals = Object.entries(cs).filter(([k,v]) => k !== "TEACHER" && Number.isFinite(v)).map(([,v])=>v);
     return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : null;
   });
+  accumChart.data.datasets[2].data = recent.map(r =>
+    Number.isFinite(r.moe?.cumulative_scores?.TEACHER) ? r.moe.cumulative_scores.TEACHER : null
+  );
   accumChart.update();
 
   // Compressed-token parity bar: for each recent step show student tokens vs
@@ -501,34 +517,31 @@ function renderExpertScores(d) {
   const sig = sigOf((esScores||[]).map(e=>[e.expert,e.score,e.active]), d.total_score, last?.step, sb);
   memoRender("expertScores", sig, () => {
     if (!esScores.length) { el.innerHTML = '<div style="color:#8b949e">waiting for expert scores…</div>'; return; }
-    // TEACHER is always pinned at the TOP of the expert column, regardless of
-    // whether its overlap/score is the highest. Its bar reflects the student↔
-    // teacher top-k overlap (curve_overlap, 0..1). If it is NOT in 1st place,
-    // a second teacher placement is shown at its true rank.
-    const tOverlap = Number(sb.curve_overlap ?? 0);
-    const teacherPct = Math.round(tOverlap * 100);
-    const teacherScore = Number(sb.curve ?? 0);
-    const sorted = esScores.slice().sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    const topExpertScore = sorted.length ? Number(sorted[0].score ?? 0) : 0;
-    // Teacher is "1st" when its overlap-based bar dominates (>= the top expert's bar).
-    const teacherIsFirst = teacherScore >= topExpertScore || topExpertScore === 0;
+    // TEACHER is pinned at the TOP of the expert column with its TRUE self-
+    // overlap: the teacher always matches its OWN top-k, so it is the 100%
+    // reference/ceiling. It can never be less than 100% — that's the definition
+    // of "the teacher overlapping 100% of teacher".
+    const teacherPct = 100;                       // self-overlap is always 100
+    // The STUDENT's real progress is a SEPARATE metric: how much of the
+    // teacher's top-k the student reproduced this step (0..1). It is NOT the
+    // teacher's score.
+    const studentToTeacherPct = Math.round(Number(sb.curve_overlap ?? 0) * 100);
 
-    const teacherRow = `<div class="token-row" title="perfect teacher — student↔teacher top-k overlap ${teacherPct}%">
+    const teacherRow = `<div class="token-row" title="the teacher always overlaps its own top-k 100% (the reference)">
       <span class="chip" style="background:#ffffff;color:#0d1117">TEACHER</span>
       <div class="token-bar" style="background:#ffffff;width:${Math.max(4, teacherPct * 1.6)}px"></div>
       <div class="token-val" style="color:#ffffff;width:auto">${teacherPct}%</div>
-      <div style="font-size:10px;color:#8b949e;flex:1">top-k overlap · ${sb.curve_matched ?? 0} slots</div>
+      <div style="font-size:10px;color:#8b949e;flex:1">teacher ↔ teacher (reference)</div>
+    </div>` +
+    // Student's match to the teacher shown as its own row (not the teacher's score)
+    `<div class="token-row" style="opacity:.85" title="student ↔ teacher: how much of the teacher top-k the student produced this step">
+      <span class="chip" style="background:#58a6ff;color:#0d1117">student ↔ teacher</span>
+      <div class="token-bar" style="background:#58a6ff;width:${Math.max(4, studentToTeacherPct * 1.6)}px"></div>
+      <div class="token-val" style="color:#58a6ff;width:auto">${studentToTeacherPct}%</div>
+      <div style="font-size:10px;color:#8b949e;flex:1">student reproduced · ${sb.curve_matched ?? 0} teacher slots</div>
     </div>`;
-    // Second teacher placement ONLY if it is not already in 1st place.
-    const secondPlacement = teacherIsFirst ? "" :
-      `<div class="token-row" style="opacity:.75" title="teacher's true rank">
-        <span class="chip" style="background:#ffffff;color:#0d1117">#2 TEACHER</span>
-        <div class="token-bar" style="background:#ffffff;width:${Math.max(4, teacherPct * 1.6 * 0.6)}px"></div>
-        <div class="token-val" style="color:#8b949e;width:auto">#${sorted.findIndex(e => (e.score??0) <= teacherScore) + 1 || "?"}</div>
-        <div style="font-size:10px;color:#8b949e;flex:1">below current leader</div>
-      </div>`;
 
-    el.innerHTML = teacherRow + secondPlacement +
+    el.innerHTML = teacherRow +
       esScores.map(e => {
       const c = expColor(e.expert);
       const pct = Math.max(2, Math.min(100, (e.score / (d.total_score || 1)) * 100));
