@@ -6,8 +6,8 @@
     "save_dir": "models/snapshots"
   },
   "moe": {
-    "num_experts": 5,
-    "always_active": 5,
+    "num_experts": 15,
+    "always_active": 15,
     "topk_route": 2,
     "experts": {
       "E1": {
@@ -25,11 +25,11 @@
         "noise": 0
       },
       "E3": {
-        "role": "mutation",
-        "mutation": "E4 + noise",
+        "role": "base",
+        "mutation": "none",
         "topk_weight": 1,
-        "training_formula": "expert3 = expert4_weights + gaussian(noise_scale)",
-        "noise": 0.15
+        "training_formula": "parity_update = teacher_topk_overlap(student, expert)",
+        "noise": 0
       },
       "E4": {
         "role": "base",
@@ -39,10 +39,80 @@
         "noise": 0
       },
       "E5": {
-        "role": "mutation",
-        "mutation": "similar neurons of E1,E2,E3,E4 + noise",
+        "role": "base",
+        "mutation": "none",
         "topk_weight": 1,
-        "training_formula": "expert5 = avg(similar(neuron(E1),neuron(E2),neuron(E3),neuron(E4))) + noise",
+        "training_formula": "parity_update = teacher_topk_overlap(student, expert)",
+        "noise": 0
+      },
+      "E6": {
+        "role": "mutation",
+        "mutation": "similar(neurons E1..E15) + noise",
+        "topk_weight": 1,
+        "training_formula": "expert6 = avg(similar(neurons)) + noise",
+        "noise": 0.1
+      },
+      "E7": {
+        "role": "mutation",
+        "mutation": "similar(neurons E1..E15) + noise",
+        "topk_weight": 1,
+        "training_formula": "expert7 = avg(similar(neurons)) + noise",
+        "noise": 0.1
+      },
+      "E8": {
+        "role": "mutation",
+        "mutation": "similar(neurons E1..E15) + noise",
+        "topk_weight": 1,
+        "training_formula": "expert8 = avg(similar(neurons)) + noise",
+        "noise": 0.1
+      },
+      "E9": {
+        "role": "mutation",
+        "mutation": "similar(neurons E1..E15) + noise",
+        "topk_weight": 1,
+        "training_formula": "expert9 = avg(similar(neurons)) + noise",
+        "noise": 0.1
+      },
+      "E10": {
+        "role": "mutation",
+        "mutation": "similar(neurons E1..E15) + noise",
+        "topk_weight": 1,
+        "training_formula": "expert10 = avg(similar(neurons)) + noise",
+        "noise": 0.1
+      },
+      "E11": {
+        "role": "mutation",
+        "mutation": "similar(neurons E1..E15) + noise",
+        "topk_weight": 1,
+        "training_formula": "expert11 = avg(similar(neurons)) + noise",
+        "noise": 0.1
+      },
+      "E12": {
+        "role": "mutation",
+        "mutation": "similar(neurons E1..E15) + noise",
+        "topk_weight": 1,
+        "training_formula": "expert12 = avg(similar(neurons)) + noise",
+        "noise": 0.1
+      },
+      "E13": {
+        "role": "mutation",
+        "mutation": "similar(neurons E1..E15) + noise",
+        "topk_weight": 1,
+        "training_formula": "expert13 = avg(similar(neurons)) + noise",
+        "noise": 0.1
+      },
+      "E14": {
+        "role": "mutation",
+        "mutation": "similar(neurons E1..E15) + noise",
+        "topk_weight": 1,
+        "training_formula": "expert14 = avg(similar(neurons)) + noise",
+        "noise": 0.1
+      },
+      "E15": {
+        "role": "mutation",
+        "mutation": "similar(neurons E1..E15) + noise",
+        "topk_weight": 1,
+        "training_formula": "expert15 = avg(similar(neurons)) + noise",
         "noise": 0.1
       }
     },
@@ -53,9 +123,9 @@
   },
   "scoring": {
     "base": {
-      "per_topk_token_match": 1,
-      "per_topp_token_match": 1,
-      "per_teacher_emit_match": 10,
+      "per_topk_token_match": 13,
+      "per_topp_token_match": 13,
+      "per_teacher_emit_match": 1,
       "note": "+1 per token in student's top-n/k that's in teacher's top-n/k; +1 per token in student's top-n/p that's in teacher's top-n/p; +2 per student CHOSEN token that's in the teacher's ACTUAL emitted top-k"
     },
     "bonus": {
@@ -64,11 +134,11 @@
     },
     "value_generation": {
       "compressed_token_sentinel": 999993,
-      "points_500x": 500,
+      "points_500x": 100,
       "note": "500x when the 5-token compression footprint token appears in the top-k of the next-5 AND a match is in the top-100 of the next 5 generated tokens"
     },
     "penalties": {
-      "overconfidence": 1,
+      "overconfidence": 13,
       "redundant_expert": 0,
       "note": "subtract from total when flagged; adjust live via UI"
     }
@@ -89,7 +159,7 @@
     "note": "top-k sliders are capped at 100 (NOT 100k). view_top_k = how many top tokens the model looks at (logprobs); emit.* limits top-k/top-p sampling so the teacher stays coherent. noise_to_layer = per-token noise added to layers for the next output token."
   },
   "layers": {
-    "count": 5,
+    "count": 15,
     "each": {
       "training_formula": "layer_weight_adj = lr * (teacher_value - student_value) * topk_gate",
       "lr": 0.01,
@@ -116,5 +186,6 @@
       "moe.num_experts",
       "moe.topk_route"
     ]
-  }
+  },
+  "_request_save_snapshot": true
 }
