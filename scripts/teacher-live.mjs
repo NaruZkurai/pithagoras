@@ -64,6 +64,7 @@ let PROMPT =
   process.env.PROMPT ||
   "Consider the Pithagoras portal: the pi model picker sends provider and modelId. The issue is that";
 let promptChanged = false; // set true by a /prompt POST to reseed shared next step
+let paused = false;        // true = skip training steps (UI keeps serving)
 
 // Token used to denote the 5-token compression footprint (e.g. token 999993
 // == the token ids 9,4,3,200,2). We treat "compressed token == sum of its
@@ -221,6 +222,30 @@ function startServer() {
       return;
     }
 
+    // /pause POST: pause/resume training (body {paused:true|false} or GET).
+    if (url === "/pause") {
+      if (req.method === "POST") {
+        let body = "";
+        req.on("data", (c) => (body += c));
+        req.on("end", () => {
+          try {
+            const patch = JSON.parse(body || "{}");
+            paused = patch.paused !== undefined ? !!patch.paused : !paused;
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true, paused }));
+          } catch (e) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+          }
+        });
+        return;
+      }
+      // GET current paused state
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, paused }));
+      return;
+    }
+
     if (url.startsWith("/events")) {
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
       const push = () => {
@@ -270,6 +295,14 @@ async function run() {
       recent.length = 0;
       step = 0;
       console.log(`  >> prompt changed to: ${JSON.stringify(PROMPT.slice(0, 80))}... (restarting generation)`);
+    }
+    // Pause: skip training steps but keep the UI (SSE/JSON) alive and reflect
+    // the paused state so the browser stays connected.
+    if (paused) {
+      latest = { ...(latest || {}), paused: true, step };
+      sendCurrent();
+      await new Promise((r) => setTimeout(r, 300));
+      continue;
     }
     step++;
     let stepRec = { step, ts: Date.now() };
@@ -337,9 +370,13 @@ async function run() {
         const training = trainStep(route, Math.exp(Math.min(0, tPos.chosen.logprob)), 0.5);
         sc = scoreStep({ baseMatches: base, step, is500x }); // config points/penalties
         bonusTotal = sc.bonus;
-        // Attribute the step's total gain across experts by their top-k weight,
-        // so the "total score" shows each expert's contribution in its own color.
-        const wSum = route.rows.reduce((a, r) => a + (Number(r.topk_weight) || 0), 0) || 1;
+        // Attribute the step's points across experts by each expert's routing
+        // VALUE (affinity) — only ACTIVE (top-2 routed) experts earn points, so
+        // per-expert scores differ, and the Σ still equals the total (resets
+        // each token).
+        const pts = base + baseP + baseEm;
+        const active = route.rows.filter((r) => r.active);
+        const vSum = active.reduce((a, r) => a + (Number(r.value) || 0), 0) || 1;
         const expertScores = route.rows.map((r) => ({
           expert: r.name,
           active: r.active,
@@ -347,9 +384,8 @@ async function run() {
           mutation: r.mutation,
           weight: Number(r.topk_weight) || 0,
           // Score is the per-token points BEFORE the expert was updated this
-          // step (base+baseP+baseEm), attributed by top-k weight, so the Σ
-          // experts == total (which resets every token).
-          score: Number(((base + baseP + baseEm) * ((Number(r.topk_weight) || 0) / wSum)).toFixed(4)),
+          // step, attributed only to active experts by their value.
+          score: Number((r.active ? pts * ((Number(r.value) || 0) / vSum) : 0).toFixed(4)),
         }));
         // Surface full detail: each expert's top-k value, active flag, size,
         // layers used, num experts, per-layer training deltas, and the new
@@ -365,6 +401,14 @@ async function run() {
           per_layer: training.perLayer || [],
           training_delta: training.delta,
           layer_noise: layerNoiseState ? layerNoiseState.layers.map((v) => Number(v.toFixed(4))) : [],
+          state: route.state ? {
+            noise: Number(route.state.noise?.toFixed?.(4) ?? route.state.noise ?? 0),
+            step: route.state.step ?? 0,
+            topP: route.state.topP || {},
+            kl: route.state.kl || {},
+            output: route.state.output || {},
+            expertValues: Object.fromEntries(route.rows.map((r) => [r.name, Number((route.state.expertValues?.[r.name] ?? 0).toFixed?.(4) ?? route.state.expertValues?.[r.name]) || 0])),
+          } : undefined,
           new_tokens: {
             teacher: studentIds.map((_, i) => student[i].chosen.token), // student new tokens
             teacher_anchor: teacherToken,
@@ -424,6 +468,7 @@ async function run() {
       view_top_k: viewTopK(),
       emit: { teacher: emitFor("teacher"), student: emitFor("student") },
       noise_to_layer: noiseToLayer(),
+      per_teacher_emit_match: Number(loadConfig()?.scoring?.base?.per_teacher_emit_match ?? 2),
       student_step_tokens: STUDENT_STEP,
       step, base_score: stepRec.step_points ?? 0, bonus_score: bonusTotal,
       // total = this token's points BEFORE the expert was updated; resets each token.
@@ -437,6 +482,7 @@ async function run() {
       teacher_prompt_output_tokens: (PROMPT + " " + teacherOutput.join(" ")).trim().split(/\s+/).length,
       recent,
       prompt: shared,
+      paused: false,
       ts: Date.now(),
     };
     sendCurrent();

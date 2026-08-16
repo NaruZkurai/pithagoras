@@ -29,7 +29,7 @@
   .token-val { font-family:ui-monospace,monospace; font-size:11px; width:64px; text-align:right; color:var(--dim); }
   .footer { padding:10px 20px; color:var(--dim); font-size:12px; border-top:1px solid var(--line); }
   canvas { max-height:260px; }
-  .stream { font-family:ui-monospace,monospace; font-size:12px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; height:220px; overflow-y:auto; }
+  .stream { font-family:ui-monospace,monospace; font-size:12px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; height:220px; max-height:220px; overflow-y:auto; flex-shrink:0; }
   .fivehundred { color:var(--good); font-weight:700; }
   .teacher-out { font-family:ui-monospace,monospace; font-size:12px; line-height:1.7; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; max-height:200px; overflow-y:auto; word-break:break-word;}
   .teacher-out .tok { display:inline-block; background:#1f6feb22; border:1px solid #1f6feb55; border-radius:4px; padding:0 4px; margin:1px; }
@@ -46,6 +46,7 @@
 <header>
   <h1>Teacher-Anchored Parity — 27B teacher → 4B student</h1>
   <span id="conn" class="status offline">connecting…</span>
+  <button id="bPause" style="background:#6e7681;color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer;font-weight:600">Pause training</button>
 </header>
 <div class="wrap">
   <!-- LEFT: graphs -->
@@ -219,6 +220,15 @@ function setConn(live) {
   c.className = "status " + (live ? "live" : "offline");
 }
 
+// Reflect the live paused state on the Pause button.
+function setPausedUI(p) {
+  const b = document.getElementById("bPause");
+  if (!b) return;
+  const isPaused = !!p;
+  b.textContent = isPaused ? "▶ Resume training" : "⏸ Pause training";
+  b.style.background = isPaused ? "#238636" : "#6e7681";
+}
+
 function renderStats(d) {
   document.getElementById("sStep").textContent = d.step ?? 0;
   document.getElementById("sBase").textContent = d.base_score ?? 0;
@@ -228,7 +238,8 @@ function renderStats(d) {
   document.getElementById("sLayers").textContent = d.layers_total ?? 0;
   document.getElementById("s500").textContent = d["500x_generations"] ?? 0;
   document.getElementById("models").textContent =
-    `teacher ${d.teacher} → student ${d.student} · top-k ${d.top_k} · student step ${d.student_step_tokens}`;
+    `teacher ${d.teacher} → student ${d.student} · view ${d.view_top_k} emit tK${d.emit?.teacher?.top_k ?? "?"}/tP${d.emit?.teacher?.top_p ?? "?"} sK${d.emit?.student?.top_k ?? "?"}/sP${d.emit?.student?.top_p ?? "?"} · step ${d.student_step_tokens} · ${d.paused ? "PAUSED" : "training"}`;
+  setPausedUI(d.paused);
 }
 
 function renderCharts(d) {
@@ -410,6 +421,7 @@ function renderSampling(d) {
   lab("lTKs", e.student?.top_k ?? "?"); set("sTKs", e.student?.top_k ?? 20);
   lab("lTPs", e.student?.top_p ?? "?"); set("sTPs", Number(e.student?.top_p ?? 0.9) * 100);
   lab("lNz", d.noise_to_layer ?? "?"); set("sNz", Number(d.noise_to_layer ?? 0.05) * 100);
+  lab("lEm", d.per_teacher_emit_match ?? "?"); set("sEm", d.per_teacher_emit_match ?? 2);
 }
 
 function bindSampling() {
@@ -480,6 +492,21 @@ document.getElementById("bPrompt")?.addEventListener("click", async () => {
     const j = await r.json();
     document.getElementById("cfgStatus").textContent = j.ok ? "prompt set ✓" : "err ✗ " + (j.error || "");
   } catch (e) { document.getElementById("cfgStatus").textContent = "offline (prompt server :4199)"; }
+});
+
+// Pause/resume training: POST /pause and reflect the new state optimistically.
+document.getElementById("bPause")?.addEventListener("click", async () => {
+  const b = document.getElementById("bPause");
+  const next = b.textContent.startsWith("⏸") || b.textContent.startsWith("Pause");
+  setPausedUI(next);
+  try {
+    const r = await fetch("http://127.0.0.1:4199/pause", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ paused: next }),
+    });
+    const j = await r.json();
+    setPausedUI(j.paused);
+  } catch (e) { /* server offline; keep optimistic */ }
 });
 
 function appendStream(d) {

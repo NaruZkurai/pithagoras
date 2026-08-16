@@ -53,6 +53,48 @@ export function noise01(seed) {
 }
 
 /**
+ * PERSISTENT MoE training state. This survives across expert updates so that
+ * top-p, KL, output and noise KEEP ACCUMULATING instead of being reset to a
+ * fresh random value every token/step (which is what the old per-call
+ * `Math.random()` did). Seeded once, then evolved by training deltas + noise.
+ *  - expertValues: current value (affinity proxy) per expert name
+ *  - layerSizes:   current size per layer
+ *  - topP/kl/output: live accumulators surfaced in the UI
+ *  - step:         how many steps it has been trained
+ */
+let _moeState = null;
+export function initMoeState(expertNames = ["E1","E2","E3","E4","E5"], layerCount = 5) {
+  _moeState = {
+    expertValues: Object.fromEntries(expertNames.map((n, i) => [n, 0.5 + 0.4 * noise01(i + 7)])),
+    layerSizes: Array.from({ length: layerCount }, (_, i) => Math.round(100 + noise01(i + 31) * 400)),
+    topP: {},       // per-expert top-p summary (persisted)
+    kl: {},         // per-expert KL (persisted)
+    output: {},     // per-expert output signal history (persisted)
+    noise: 0,       // running noise accumulator
+    step: 0,
+  };
+  return _moeState;
+}
+export function getMoeState() { return _moeState; }
+
+/**
+ * Per-token noise injection into the layers, meant to be accumulated across the
+ * tokens emitted this step so the NEXT output token sees a nudged layer state.
+ * This now MUTATES the persistent `_moeState.layerSizes` (does NOT reset it),
+ * so the noise keeps accumulating across expert updates.
+ */
+export function addLayerNoise(state, noise, layerCount = 5, tokenIdx = 0) {
+  if (!_moeState) initMoeState(["E1","E2","E3","E4","E5"], layerCount);
+  const nz = Number(noise) || 0;
+  _moeState.noise += nz;
+  _moeState.layerSizes = _moeState.layerSizes.map((v, i) =>
+    Math.max(10, v + nz * 40 * noise01((+new Date()) + i * 131 + tokenIdx * 17))
+  );
+  _moeState.step += 1;
+  return { layers: _moeState.layerSizes.slice(), step: _moeState.step };
+}
+
+/**
  * Narrow a per-position logprobs list (already sorted by prob desc) into a
  * token-id Set that is the intersection of:
  *   - top-k: the single most likely `k` tokens, and
@@ -75,17 +117,6 @@ export function narrowTokenSet(logprobs, k, p) {
   return set;
 }
 
-/**
- * Per-token noise injection into the layers, meant to be accumulated across the
- * tokens emitted this step so the NEXT output token sees a nudged layer state.
- * Returns a NEW state object (immutable-ish) with each layer bumped by noise.
- */
-export function addLayerNoise(state, noise, layerCount = 5, tokenIdx = 0) {
-  const base = state && Array.isArray(state.layers) ? state.layers : Array.from({ length: layerCount }, () => 0);
-  const layers = base.map((v, i) => v + (noise || 0) * noise01((+new Date()) + i * 131 + tokenIdx * 17));
-  return { layers, step: (state && state.step || 0) + 1 };
-}
-
 
 /**
  * Build the expert-layer STATES for one routing step.
@@ -98,34 +129,45 @@ export function routeExperts(topKTokens, layerNoise) {
   const experts = cfg.experts;
   const n = Object.keys(experts).length;
   const seed = (+new Date()) & 0xffffff;
+  const layerCount = loadConfig().layers?.count || 5;
+  const names = Object.keys(experts);
+  if (!_moeState) initMoeState(names, layerCount);
+  // Keep the persistent state in sync if experts were added.
+  for (const nm of names) if (_moeState.expertValues[nm] === undefined) _moeState.expertValues[nm] = 0.5 + 0.4 * noise01(seed + nm.length);
+  while (_moeState.layerSizes.length < layerCount) _moeState.layerSizes.push(Math.round(100 + noise01(seed + _moeState.layerSizes.length + 3) * 400));
+  _moeState.layerSizes = _moeState.layerSizes.slice(0, layerCount);
 
-  // Base affinity: each expert's agreement with the top-k input (mutated).
-  const rows = [];
+  // Base affinity: each expert's agreement with the top-k input. Instead of a
+  // fresh random each step, EVOLVE from the persistent value (previous value +
+  // small drift), so the expert's signal keeps accumulating and is NOT reset on
+  // the expert update.
   const base = topKTokens || [];
   const baseSet = new Set(base);
+  const baseAffinity = baseSet.size ? 0.6 + 0.3 * noise01(seed + 1) : 0.3;
+  const drift = (nm, i) => (noise01(seed + i * 3 + 5) - 0.5) * 0.08; // small ±0.04 drift
 
-  // E1, E2, E4 base; E3 = E4+noise; E5 = similar of E1..E4 + noise.
-  const baseAffinity = baseSet.size ? 0.6 + 0.3 * Math.random() : 0.3;
-  const e4 = baseAffinity;
-  const e1 = baseAffinity * (0.9 + 0.1 * Math.random());
-  const e2 = baseAffinity * (0.85 + 0.15 * Math.random());
-  const e3 = Math.min(1, e4 + experts.E3.noise * noise01(seed));      // E4 + noise
-  // E5: only similar neurons of E1..E4 + noise.
-  const e5 = Math.min(1, (e1 + e2 + e3 + e4) / 4 * (0.95 + experts.E5.noise * noise01(seed + 7)));
+  const e4v = _moeState.expertValues.E4 + drift("E4", 1);
+  const e1v = _moeState.expertValues.E1 + drift("E1", 2);
+  const e2v = _moeState.expertValues.E2 + drift("E2", 3);
+  const e3v = Math.min(1, e4v + experts.E3.noise * noise01(seed));      // E4 + noise
+  const e5v = Math.min(1, (e1v + e2v + e3v + e4v) / 4 * (0.95 + experts.E5.noise * noise01(seed + 7)));
 
-  rows.push({ name: "E1", affinity: e1, value: e1, active: false, role: experts.E1.role, mutation: experts.E1.mutation, topk_weight: experts.E1.topk_weight });
-  rows.push({ name: "E2", affinity: e2, value: e2, active: false, role: experts.E2.role, mutation: experts.E2.mutation, topk_weight: experts.E2.topk_weight });
-  rows.push({ name: "E3", affinity: e3, value: e3, active: false, role: experts.E3.role, mutation: experts.E3.mutation, topk_weight: experts.E3.topk_weight });
-  rows.push({ name: "E4", affinity: e4, value: e4, active: false, role: experts.E4.role, mutation: experts.E4.mutation, topk_weight: experts.E4.topk_weight });
-  rows.push({ name: "E5", affinity: e5, value: e5, active: false, role: experts.E5.role, mutation: experts.E5.mutation, topk_weight: experts.E5.topk_weight });
+  const mk = (nm, v) => {
+    v = Math.max(0, Math.min(1, v));
+    _moeState.expertValues[nm] = v; // persist
+    return { name: nm, affinity: v, value: v, active: false, role: experts[nm].role, mutation: experts[nm].mutation, topk_weight: experts[nm].topk_weight };
+  };
+  const rows = [
+    mk("E1", e1v), mk("E2", e2v), mk("E3", e3v), mk("E4", e4v), mk("E5", e5v),
+  ];
 
   // Add any experts beyond E1..E5 (added via UI) with a noise-based mutation.
-  for (const k of Object.keys(experts)) {
+  for (const k of names) {
     const idx = Number(k.replace(/\D/g, "")) || 0;
     if (idx <= 5) continue;
     const spec = experts[k] || {};
-    const aff = Math.min(1, baseAffinity * (0.7 + 0.3 * Math.random()) + (spec.noise || 0) * noise01(seed + idx));
-    rows.push({ name: k, affinity: aff, value: aff, active: false, role: spec.role || "mutation", mutation: spec.mutation, topk_weight: spec.topk_weight || 1 });
+    const aff = Math.min(1, (_moeState.expertValues[k] || 0.5) + (spec.noise || 0) * noise01(seed + idx));
+    rows.push(mk(k, aff));
   }
 
   // Keep only the TOP-N (cfg.topk_route) by affinity.
@@ -133,16 +175,14 @@ export function routeExperts(topKTokens, layerNoise) {
   const kTop = Math.min(cfg.topk_route, rows.length);
   for (let i = 0; i < kTop; i++) rows[i].active = true;
 
-  // Layer sizes: derive a per-layer size estimate (proportional to affinity,
-  // scaled by the layer count) so the UI can show how big each layer is.
-  // Any accumulated per-token `layerNoise.layers` nudges each layer up/down,
-  // so the NEXT output token routes through a noise-injected layer state.
-  const layerCount = loadConfig().layers?.count || 5;
+  // Layer sizes come from the PERSISTENT state (grown by noise each token),
+  // with a small per-step drift so they evolve instead of resetting.
   const noiseArr = layerNoise && Array.isArray(layerNoise.layers) ? layerNoise.layers : [];
-  const perLayerSize = Array.from({ length: layerCount }, (_, li) => {
-    const lv = 0.3 + 0.7 * Math.random();
-    const bump = noiseArr[li] != null ? noiseArr[li] * 40 : 0; // clamp effect
-    return { layer: "L" + (li + 1), size: Math.max(10, Math.round(100 + lv * 400 + bump)) }; // noise-injected
+  const perLayerSize = _moeState.layerSizes.map((v, li) => {
+    const bump = noiseArr[li] != null ? noiseArr[li] * 40 : 0;
+    const lv = Math.max(10, Math.round(v + bump + (noise01(seed + li + 40) - 0.5) * 8));
+    _moeState.layerSizes[li] = lv; // persist the grown size
+    return { layer: "L" + (li + 1), size: lv };
   });
 
   return {
@@ -151,6 +191,15 @@ export function routeExperts(topKTokens, layerNoise) {
     layer_count: layerCount,
     per_layer_size: perLayerSize,
     topk_route: cfg.topk_route,
+    state: {
+      noise: _moeState.noise,
+      step: _moeState.step,
+      topP: _moeState.topP,
+      kl: _moeState.kl,
+      output: _moeState.output,
+      expertValues: { ..._moeState.expertValues },
+      layerSizes: _moeState.layerSizes.slice(),
+    },
   };
 }
 
@@ -163,13 +212,22 @@ export function trainStep(route, teacherVal, studentVal) {
   const cfg = loadConfig();
   const layers = cfg.layers;
   const group = route.rows.filter((r) => r.active);
+  if (!_moeState) initMoeState(route.rows.map((r) => r.name), route.layer_count);
   let delta = 0;
   const perExpert = group.map((r) => {
     const spec = cfg.moe.experts[r.name];
     // per-expert formula = overlap-adjusted parity update, scaled by layer lr/gate.
     const d = (teacherVal - studentVal) * layers.each.topk_gate * layers.each.lr * r.affinity;
     delta += d;
-    return { expert: r.name, delta: d, value: r.value, topk_weight: r.topk_weight };
+    // Persist the expert's value so it keeps accumulating (NOT reset on update)
+    // and track per-expert top-p / KL / output signals.
+    const prev = _moeState.expertValues[r.name] ?? r.value;
+    const updated = Math.max(0, Math.min(1, prev + d));
+    _moeState.expertValues[r.name] = updated;
+    _moeState.topP[r.name] = (Number(_moeState.topP[r.name]) || 0) + d * 100;
+    _moeState.kl[r.name] = (Number(_moeState.kl[r.name]) || 0) + Math.abs(d);
+    _moeState.output[r.name] = d;
+    return { expert: r.name, delta: d, value: updated, topk_weight: r.topk_weight, prev };
   });
   // Per-layer training update (each of the `count` layers gets a slice of the
   // active-experts' delta, scaled by its layer weight).
@@ -178,7 +236,7 @@ export function trainStep(route, teacherVal, studentVal) {
     size: ls.size,
     delta: (perExpert.reduce((a, e) => a + e.delta, 0) / (layerDeltasLen(route) || 1)) * ((i + 1) / (route.per_layer_size.length || 1)),
   }));
-  return { delta, perExpert, perLayer: layerDeltas, layers: layers.count };
+  return { delta, perExpert, perLayer: layerDeltas, layers: layers.count, state: _moeState };
 }
 function layerDeltasLen(route) { return (route.per_layer_size || []).length; }
 
