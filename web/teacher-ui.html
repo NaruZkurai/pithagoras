@@ -363,16 +363,21 @@ function renderCharts(d) {
   }
   // STUDENT ↔ TEACHER learning progress: how much of the teacher top-k the
   // student reproduced each step (0..1) — the thing being optimized toward 1.0.
-  scoreChart.data.datasets.push({
-    label: "student ↔ teacher",
-    data: recent.map(r => r.score_breakdown?.curve_overlap ?? null),
-    borderColor: "#58a6ff",
-    borderDash: [2, 2],
-    borderWidth: 1.5,
-    tension: .3,
-    pointRadius: 0,
-    yAxisID: "y1",
-  });
+  // HIDDEN along with the teacher reference when #bHideTeacher is toggled, so
+  // the per-expert graph shows ONLY the expert score lines (no teacher
+  // scaffolding/blue line).
+  if (!_hideTeacherRef) {
+    scoreChart.data.datasets.push({
+      label: "student ↔ teacher",
+      data: recent.map(r => r.score_breakdown?.curve_overlap ?? null),
+      borderColor: "#58a6ff",
+      borderDash: [2, 2],
+      borderWidth: 1.5,
+      tension: .3,
+      pointRadius: 0,
+      yAxisID: "y1",
+    });
+  }
   scoreChart.update();
 
   // ---- ACCUM CHART: max & avg of EXpert cumulative points, plus the TEACHER
