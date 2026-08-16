@@ -738,6 +738,16 @@ async function run() {
           const st = student[pos];
           const sSetK = narrowTokenSet(st?.top || [], emitFor("student").top_k, 1);
           let m = 0;
+          // MTP HEAD (+1 forward): the MTP expert predicts the NEXT token, so it
+          // is scored on how well the student's output tracks the teacher's top-k
+          // one position ahead (its own forward-looking signal).
+          if (r.name === "EMTP") {
+            const ahead = student[(pos + 1) % Math.max(1, student.length)];
+            const aheadSet = narrowTokenSet(ahead?.top || [], emitFor("student").top_k, 1);
+            for (const tok of aheadSet) if (tSetK.has(tok)) m++;
+            if (ahead && tSetK.has(ahead.chosen.token)) m += 10; // next-token emit-match boost
+            return m;
+          }
           for (const tok of sSetK) if (tSetK.has(tok)) m++;
           if (st && tSetK.has(st.chosen.token)) m += 10; // strong emit-match boost
           return m;

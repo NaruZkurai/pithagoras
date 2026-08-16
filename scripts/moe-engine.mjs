@@ -382,6 +382,14 @@ export function routeExperts(topKTokens, layerNoise) {
 
   // Add any experts beyond E1..E5 (added via UI) with a noise-based mutation.
   for (const k of names) {
+    // The MTP head (EMTP) is a named expert (no digits) — always include it as
+    // a trained row so "the MTP must be trained too". It predicts the NEXT token.
+    if (k === "EMTP") {
+      const spec = experts[k] || {};
+      const aff = setExpertValue(k, (_moeState.expertValues[k] ?? 0.5) + (spec.noise || 0.02) * noise01(seed + 9001));
+      rows.push(mk(k, aff));
+      continue;
+    }
     const idx = Number(k.replace(/\D/g, "")) || 0;
     if (idx <= 5) continue;
     const spec = experts[k] || {};
