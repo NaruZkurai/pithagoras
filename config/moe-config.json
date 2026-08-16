@@ -807,7 +807,7 @@
     }
   },
   "sampling": {
-    "view_top_k": 20,
+    "view_top_k": 100,
     "emit": {
       "teacher": {
         "top_k": 20,
@@ -815,13 +815,13 @@
         "temperature": 0.7
       },
       "student": {
-        "top_k": 20,
-        "top_p": 0.95,
-        "temperature": 0.7
+        "top_k": 100,
+        "top_p": 0.99,
+        "temperature": 2.0
       }
     },
     "noise_to_layer": 0.01,
-    "note": "top-k sliders are capped at 100 (NOT 100k). view_top_k = how many top tokens the model looks at (logprobs); emit.* limits top-k/top-p/temperature sampling so the teacher stays coherent. noise_to_layer = per-token noise added to layers for the next output token."
+    "note": "top-k sliders are capped at 100 (NOT 100k). view_top_k = how many top tokens the model looks at (logprobs); emit.* limits top-k/top-p/temperature sampling so the teacher stays coherent. STUDENT TEMPERATURE 2.0 + top_k 100: the native TQ1_0 student produces a delta-peaked (collapsed) distribution at temp 0.7 — every position emits the same token. Raising temperature ~2.0 (VERIFIED) breaks the collapse and yields varied output, so the expert-steering logit bias can actually nudge it toward teacher top-k and let overlap climb. noise_to_layer = per-token noise added to layers for the next output token."
   },
   "layers": {
     "count": 50,
