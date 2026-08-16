@@ -318,11 +318,22 @@ async function profileRetry(url, prompt, n, who = "teacher", tries = 3) {
   throw last;
 }
 
-/** The 5-token compression footprint: a single token id whose VALUE equals the
- *  sum of the 5 constituent token ids (the n1+n2+n3 convention). */
+/**
+ * The compression footprint: a single token ID whose VALUE represents the sum
+ * of the constituent token ids (the n1+n2+n3 convention). To be a MEANINGFUL
+ * token the model can actually emit/match, we fold the (potentially huge) raw
+ * sum into the model's valid vocab range via modulo n_vocab — otherwise a sum
+ * like 500942 (> n_vocab 248320) is out-of-vocab, can never appear in top-k,
+ * and the 500x detector can never fire. Returns {id, rawSum}.
+ */
 function compressFootprint(tokens) {
-  return tokens.reduce((a, t) => a + t, 0);
+  const nv = Number(loadConfig()?.model?.n_vocab
+    ?? loadConfig()?.model?.tokenizer_n_vocab ?? 248320);
+  const rawSum = (tokens || []).reduce((a, t) => a + (Number(t) || 0), 0);
+  const id = rawSum % Math.max(1, nv); // valid in-vocab token id
+  return { id, rawSum };
 }
+
 
 /**
  * Detect a degenerate teacher run — 1-bit (Q1_0) models fall into character
@@ -782,9 +793,11 @@ async function run() {
       const studentIds = student.map((s) => s.chosen.token);          // TEXT (display)
       const studentIdNums = student.map((s) => Number(s?.chosen?.id)).filter((v) => Number.isFinite(v)); // NUMERIC ids (compression math)
       const footprint = compressFootprint(studentIdNums.length ? studentIdNums : student.map((_, i) => i + 1));
+      const fpId = footprint.id;                    // valid in-vocab compressed token id
+      const fpRaw = footprint.rawSum;               // raw (huge) sum for display/debug
       const top100All = new Set(student.flatMap((s) => (s.top || []).map((x) => x.token)));
-      const inTopK = student.some((s) => (s.top || []).some((x) => x.token === COMPRESS_AS_TOKEN));
-      const inTop100 = top100All.has(COMPRESS_AS_TOKEN) || top100All.has(String(footprint));
+      const inTopK = student.some((s) => (s.top || []).some((x) => x.token === COMPRESS_AS_TOKEN || String(x.token) === String(fpId)));
+      const inTop100 = top100All.has(COMPRESS_AS_TOKEN) || top100All.has(String(fpId)) || top100All.has(String(fpRaw));
       const is500x = inTopK && inTop100;
       if (is500x) fives++;
       // THE NEW-TOKEN SYSTEM (visible): each step, the student's 5 output
@@ -796,8 +809,9 @@ async function run() {
         step,
         input_ids: studentIdNums.length ? studentIdNums : student.map((s) => Number(s?.chosen?.id) || 0), // the 5 token ids being compressed
         input: studentIds,           // the 5 token TEXT being compressed (display)
-        new_token: footprint,        // the created new token (SUM of input token ids — numeric)
-        new_token_text: `${footprint} (∑ids ${studentIdNums.join("+")})`,
+        new_token: fpId,             // MEANINGFUL compressed token id (sum % n_vocab — valid in-vocab)
+        new_token_text: `${fpId} (sum ${fpRaw} % n_vocab = in-vocab token)`,
+        raw_sum: fpRaw,              // the raw (unfolded) sum, for debug
         sentinel: COMPRESS_AS_TOKEN, // the fixed sentinel this scheme matches
         created: is500x,             // true when this new token appears in top-k AND top-100
         ts: Date.now(),
@@ -825,7 +839,7 @@ async function run() {
           student,
           teacherTopK: (tPos.top || []).map((x) => x.token),
           perTokenMatch: ptsK,
-          compressedToken: footprint,
+          compressedToken: fpId,
           newTokenSet,
           degenerate: stepRec.student_collapsed === true,
         });
@@ -999,7 +1013,8 @@ async function run() {
           new_tokens: {
             teacher: studentIds.map((_, i) => student[i].chosen.token), // student new tokens
             teacher_anchor: teacherToken,
-            compressed: footprint,       // 5-token compression footprint
+            compressed: fpId,            // MEANINGFUL compressed token id (sum % n_vocab)
+            compressed_raw_sum: fpRaw,   // raw (unfolded) sum for debug
             compressed_token: COMPRESS_AS_TOKEN,
           },
         };
@@ -1023,7 +1038,8 @@ async function run() {
         per_expert_guesses: (moe?.expert_guesses || []).map((g) => ({ expert: g.expert, token: g.token })),
         teacher_topk: (tPos.top || []).slice(0, 10).map((x) => x.token),
         student_top100_count: top100All.size,
-        compressed_footprint: footprint,
+        compressed_footprint: fpId,      // MEANINGFUL compressed token id (sum % n_vocab)
+        compressed_footprint_raw: fpRaw, // raw (unfolded) sum for debug
         compressed_token: COMPRESS_AS_TOKEN,
         in_topk: inTopK,
         in_top100: inTop100,
@@ -1131,7 +1147,7 @@ async function run() {
       } : undefined,
       // NEW-TOKEN SYSTEM: how new tokens are created + the current created list.
       new_token_system: {
-        how: "Each step, the student's STUDENT_STEP output tokens are COMPRESSED into ONE new token whose VALUE = the sum of their token ids (footprint). A fixed sentinel (COMPRESS_AS_TOKEN) marks the compression; when that new token appears in the model's top-k of the space AND a match is in the top-100 of the emitted tokens, it counts as a 500x value generation.",
+        how: "Each step, the student's STUDENT_STEP output tokens are COMPRESSED into ONE new token whose VALUE = the sum of their token ids, folded into the valid vocab range (sum % n_vocab) so it is a MEANINGFUL, in-vocab token the model can actually emit. A fixed sentinel (COMPRESS_AS_TOKEN) marks the compression; when that new token appears in the model's top-k of the space AND a match is in the top-100 of the emitted tokens, it counts as a 500x value generation.",
         sentinel: COMPRESS_AS_TOKEN,
         per_step: STUDENT_STEP,
         create_rule: "new_token = sum(input tokens)",
