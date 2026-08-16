@@ -63,6 +63,12 @@ function emitFor(who) { // {top_k, top_p, temperature} for teacher|student
 }
 const noiseToLayer = () => Number(SAMPLING().noise_to_layer ?? 0.05);
 const STUDENT_STEP = Number(process.env.STUDENT_STEP || 5);
+// Teacher advances the shared prompt by a small BATCH of coherent tokens in ONE
+// request (1-bit models collapse into "the the the" when asked for exactly one
+// token per step). The SCORING anchor is still the FIRST token's top-k, so the
+// teacher-anchored parity design is preserved. Set TEACHER_BATCH=1 to revert
+// to strictly one-token-per-step (not recommended on 1-bit models).
+const TEACHER_BATCH = Math.max(1, Number(process.env.TEACHER_BATCH || 8));
 const STEPS = Number(process.env.STEPS || 0); // 0 = run forever
 let PROMPT =
   process.env.PROMPT ||
@@ -313,14 +319,17 @@ async function run() {
     step++;
     let stepRec = { step, ts: Date.now() };
     try {
-      // Teacher (27B) adds ONE token (retry transient 500s). Coherence limited
-      // by the teacher's live top-k/top-p (emit.teacher) from config.
-      const teacher = await profileRetry(TEACHER_URL, shared, 1, "teacher");
+      // Teacher (27B) advances the shared prompt by TEACHER_BATCH coherent tokens
+      // in ONE request (1-bit models collapse into "the the the" when asked for
+      // exactly one token per step). The SCORING anchor remains the FIRST token
+      // (tPos) so the teacher-anchored top-k parity design is preserved.
+      const teacher = await profileRetry(TEACHER_URL, shared, TEACHER_BATCH, "teacher");
       const tPos = teacher[0];
       if (!tPos || tPos.chosen.token === undefined) { stepRec.note = "teacher empty"; ended = true; break; }
       const teacherToken = tPos.chosen.token;
-      shared += " " + teacherToken;
-      teacherOutput.push(teacherToken); // accumulate teacher's output tokens
+      const teacherAdvance = teacher.map((x) => x.chosen.token).filter((t) => t !== undefined);
+      shared += " " + teacherAdvance.join(" ");
+      teacherOutput.push(...teacherAdvance); // accumulate teacher's output tokens
 
       // Student (4B) emits STUDENT_STEP tokens from the SAME (teacher-appended)
       // prompt, limited by the student's live top-k/top-p (emit.student).
