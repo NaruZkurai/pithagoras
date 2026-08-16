@@ -1,0 +1,52 @@
+{
+  // Tasks for the pithagoras 30B training harness.
+  // These are idempotent, RAM-first operations: they repair/sync the per-file
+  // native-ternary segments INSIDE the existing /dev/shm RAM disk and its disk
+  // mirror. They never allocate a NEW ramdisk or re-export the whole 26.9B model
+  // (that would be slow and wasteful — only the 96 corrupt SSM segments change).
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "repair-ssm-ram",
+      "type": "shell",
+      "command": "python3 scripts/fix_ssm_ram.py",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": [],
+      "detail": "Re-decode the 96 corrupted SSM (.tern) segments in-place (old flat-block decode broke the [5120,48] cols%128!=0 tensors) and write them back to the EXISTING RAM disk + disk mirror. Does NOT create a new ramdisk or re-export the model."
+    },
+    {
+      "label": "patch-30b-gguf",
+      "type": "shell",
+      "command": "python3 scripts/patch_gguf_ternary.py --model /dev/shm/pithagoras-moe-checkpoints/model-30b/model --src /nzk/models/Bonsai-27B-Q1_0.gguf --out /dev/shm/pithagoras-moe-checkpoints/model-30b/bonsai-30b-patched.gguf",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": [],
+      "dependsOn": "repair-ssm-ram",
+      "detail": "Rewrite the 30B GGUF's Q1_0 weight bytes from the (now-correct) per-file ternary segments, preserving each block's original fp16 scale. Must run AFTER repair-ssm-ram so the SSM segments are valid."
+    },
+    {
+      "label": "rebuild-30b",
+      "type": "shell",
+      "command": "echo 'repairing SSM then rebuilding patched 30B GGUF...'",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "repair-ssm-ram",
+        "patch-30b-gguf"
+      ],
+      "problemMatcher": [],
+      "detail": "Full in-place fix: repair the 96 SSM segments in the existing RAM disk, then rebuild bonsai-30b-patched.gguf from the corrected segments."
+    }
+  ]
+}

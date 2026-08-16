@@ -532,11 +532,22 @@ export function scoreStep({ baseMatches, step, is500x, bonusOverride }) {
  *
  * Returns { reward, overlapFraction, matched, total }.
  */
-export function curveReward({ student, teacherTopK, perTokenMatch, compressedToken, newTokenSet }) {
+export function curveReward({ student, teacherTopK, perTokenMatch, compressedToken, newTokenSet, degenerate }) {
   const cfg = loadConfig()?.scoring?.curve || {};
   const expBase = Number(cfg.exp_base ?? 2.0);
   const expScaler = Number(cfg.exp_scaler ?? 4.0);
   const compressedMult = Number(cfg.compressed_token_mult ?? 4.0);
+
+  // DEGENERATE-OUTPUT GUARD: a collapsed student (all emitted tokens the same,
+  // e.g. "/") matches nothing meaningful against the teacher's top-k curve.
+  // Zero its curve reward so a stuck attractor can never earn curve points.
+  if (degenerate === true) {
+    return {
+      reward: 0, overlapFraction: 0, matched: 0, numSlots: 0,
+      compressedMatched: false, compressedSlotRank: -1, total: 0, degenerate: true,
+    };
+  }
+
   const matchPts = Number(perTokenMatch ?? cfg?.base_match ?? (loadConfig()?.scoring?.base?.per_topk_token_match ?? 1));
   const teacherList = teacherTopK || [];
   if (!teacherList.length) return { reward: 0, overlapFraction: 0, matched: 0, total: 0 };
@@ -592,7 +603,7 @@ export function curveReward({ student, teacherTopK, perTokenMatch, compressedTok
 
   const total = positions * teacherList.length;
   const overlapFraction = total ? matched / total : 0;
-  return { reward, overlapFraction, matched, numSlots, compressedMatched, compressedSlotRank, total };
+  return { reward, overlapFraction, matched, numSlots, compressedMatched, compressedSlotRank, total, degenerate: false };
 }
 
 /**
@@ -613,19 +624,46 @@ export function curveReward({ student, teacherTopK, perTokenMatch, compressedTok
  * tokens are in the new-token-system's created-token set, multiply by
  * `new_token_match_mult * tokensSaved` (strong reward for matching created tokens).
  *
+ * DEGENERATE-OUTPUT GUARD (the "/"-collapse fix the user identified): if the
+ * student emitted tokens are ALL the SAME token (a 1-bit/ternary attractor like
+ * repeated "/"), the model isn't compressing — it's stuck. Rewarding any
+ * "compression" on that output reinforces the attractor. So when `degenerate`
+ * is true we apply `degenerate_penalty` (config scoring.compression.
+ * degenerate_penalty) and ZERO the compression reward (or keep it small if
+ * degenerate_partial is true), so a collapsed student can never earn points for
+ * trivially repeating one token.
+ *
  * `tally_before_reset` is handled by the caller (the harness accumulates this
  * into the round cumulative score before `maybeResetMoeState`).
  *
  * Returns { reward, compressionRatio, baseEffectiveTokens, textLengthGenerated,
- *           tokensSaved, newTokenMatchPct, multiplier, appliedMultiplier }.
+ *           tokensSaved, newTokenMatchPct, multiplier, appliedMultiplier,
+ *           degenerate, degeneratePenalty }.
  */
-export function compressionReward({ emittedTokens, perTokenEmitted, textLengthGenerated, newTokenSet }) {
+export function compressionReward({ emittedTokens, perTokenEmitted, textLengthGenerated, newTokenSet, degenerate }) {
   const cfg = loadConfig()?.scoring?.compression || {};
   const emitted = Math.max(1, Number(emittedTokens ?? cfg.base_effective_tokens ?? 5));
   const reference = Math.max(1, Number(cfg.reference_tokens ?? 23));
   const textLen = Number(textLengthGenerated ?? 0);
   const textFactor = Number(cfg.text_length_factor ?? 1.0);
   const mult = Number(cfg.multiplier ?? 1.0);
+  const base = { reward: 0, compressionRatio: reference / emitted, baseEffectiveTokens: emitted,
+    textLengthGenerated: textLen, tokensSaved: Math.max(1, reference - emitted),
+    newTokenMatchPct: 0, multiplier: mult, appliedMultiplier: 1, degenerate: false, degeneratePenalty: 0 };
+
+  // DEGENERATE-OUTPUT GUARD: all emitted tokens identical => collapsed attractor.
+  const collapsed =
+    degenerate === true ||
+    (Array.isArray(perTokenEmitted) && perTokenEmitted.length > 1 &&
+     new Set(perTokenEmitted.map(String)).size === 1);
+  if (collapsed) {
+    const penalty = Number(cfg.degenerate_penalty ?? -50);
+    const partial = cfg.degenerate_partial === true;
+    // Collapsed output earns ~no compression reward. If partial, keep a small
+    // fraction so the harness still sees a signal but can't farm points.
+    const reward = partial ? Math.min(0, base.reward) : 0;
+    return { ...base, reward, degenerate: true, degeneratePenalty: penalty, newTokenMatchPct: 0 };
+  }
 
   const compressionRatio = reference / emitted;
   const tokensSaved = Math.max(1, reference - emitted);
@@ -649,14 +687,15 @@ export function compressionReward({ emittedTokens, perTokenEmitted, textLengthGe
   }
   reward *= mult;
   return {
+    ...base,
     reward,
     compressionRatio,
     baseEffectiveTokens: baseEffective,
-    textLengthGenerated: textLen,
     tokensSaved,
     newTokenMatchPct,
-    multiplier: mult,
     appliedMultiplier,
+    degenerate: false,
+    degeneratePenalty: 0,
   };
 }
 

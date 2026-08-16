@@ -742,8 +742,8 @@
   },
   "scoring": {
     "base": {
-      "per_topk_token_match": 25,
-      "per_topp_token_match": 25,
+      "per_topk_token_match": 1,
+      "per_topp_token_match": 1,
       "per_teacher_emit_match": 20,
       "note": "+1 per token in student's top-n/k that's in teacher's top-n/k; +1 per token in student's top-n/p that's in teacher's top-n/p; +2 per student CHOSEN token that's in the teacher's ACTUAL emitted top-k"
     },
@@ -753,11 +753,11 @@
     },
     "value_generation": {
       "compressed_token_sentinel": 999993,
-      "points_500x": 44,
+      "points_500x": 20,
       "note": "500x when the 5-token compression footprint token appears in the top-k of the next-5 AND a match is in the top-100 of the next 5 generated tokens"
     },
     "penalties": {
-      "overconfidence": 10,
+      "overconfidence": -95,
       "redundant_expert": 0,
       "note": "subtract from total when flagged; adjust live via UI"
     },
@@ -766,7 +766,8 @@
       "exp_base": 2,
       "exp_scaler": 4,
       "note": "exponential reward for matching the (perfect) teacher's top-k curve: each matched teacher slot i pays per_topk_token_match * exp_base^((i+1)/exp_scaler), so MORE matches = MORE reward (progressively). A compressed token that lands on a teacher slot counts and is multiplied by compressed_token_mult. New-token-system tokens in the teacher top-k are also heavily rewarded.",
-      "compressed_token_mult": 4
+      "compressed_token_mult": 4,
+      "degenerate_freezes_reward": true
     },
     "compression": {
       "enabled": true,
@@ -777,7 +778,9 @@
       "new_token_match_mult": 1.001,
       "new_token_match_min_pct": 0.2,
       "tally_before_reset": true,
-      "note": "compression_reward = compressionRatio * baseEffectiveTokens * ( 1 + textLengthGenerated / tokensSaved ) ; \ncompressionRatio = referenceTokens / emittedTokens ; tokensSaved = referenceTokens - emittedTokens. If >=min_pct of generated tokens match new-token-system created tokens, multiply by new_token_match_mult * tokensSaved."
+      "degenerate_penalty": -50,
+      "degenerate_partial": false,
+      "note": "compression_reward = compressionRatio * baseEffectiveTokens * ( 1 + textLengthGenerated / tokensSaved ) ; \ncompressionRatio = referenceTokens / emittedTokens ; tokensSaved = referenceTokens - emittedTokens. If >=min_pct of generated tokens match new-token-system created tokens, multiply by new_token_match_mult * tokensSaved. DEGENERATE GUARD: if the student emits ALL the same token (a repeated-token attractor like '/'), the compression reward is frozen to 0 (degenerate_partial=false) and degenerate_penalty is applied, so a collapsed student can't farm points for trivially repeating one token."
     }
   },
   "sampling": {

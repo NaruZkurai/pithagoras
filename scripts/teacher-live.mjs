@@ -700,6 +700,7 @@ async function run() {
           perTokenMatch: ptsK,
           compressedToken: footprint,
           newTokenSet,
+          degenerate: stepRec.student_collapsed === true,
         });
       }
       if (cfgRew.compression?.enabled !== false) {
@@ -709,6 +710,7 @@ async function run() {
           perTokenEmitted: studentIds.map(String),
           textLengthGenerated: textLen,
           newTokenSet,
+          degenerate: stepRec.student_collapsed === true,
         });
       }
       const curvePoints = (cfgRew.curve?.enabled === false) ? 0 : (curveRw.reward || 0);
@@ -887,6 +889,9 @@ async function run() {
           comp_tokens_saved: compressRw?.tokensSaved ?? 0,
           comp_newtok_pct: compressRw?.newTokenMatchPct ?? 0,
           comp_mult: compressRw?.appliedMultiplier ?? 1,
+          curve_degenerate: curveRw?.degenerate === true,
+          comp_degenerate: compressRw?.degenerate === true,
+          degenerate_penalty: compressRw?.degeneratePenalty ?? 0,
         },
         penalty: sc ? sc.penalty : 0,
         step_gain: sc ? sc.totalGain : 0,
