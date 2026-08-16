@@ -22,6 +22,16 @@
     "chunk_token_offset": 0,
     "compressed_token_input_note": "Set true (or env COMPRESSED_INPUT=1) to feed the model CHUNKED/compressed tokens (chunk_id = vocab_offset + floor(rawId/chunk_size)) instead of raw ids; the compressed-token scoring (footprint = sum of ids) always runs."
   },
+  "etokens": {
+    "enabled": true,
+    "build_base": true,
+    "live_update": true,
+    "chunk_size": 4,
+    "file": "data/Etokens.json",
+    "note": "E-TOKEN COMPRESSION SYSTEM (corrected): data/Etokens.json stores recallable functions etoken(e1) -> (o1,o2,o3,o2,o4) (the original token tuple, deduped of effective adjacent repeats). On startup the pre-tokenized token DB (data/project-tokens.json) is fed through the e-tokenizer to BUILD the base Etokens.json; then every teacher-generated chunk is e-tokenized and MERGED back live (etokens.live_update). The etoken id (in moe.new_token_base..+new_token_count) is the deterministic/recallable handle in the reserved range. Experts that produce a token whose ORIGINAL token is NOT in the teacher's top-k are DISQUALIFIED (no reward) for the round, and the etoken id is repeat-trained into each expert's top-k until it appears (etokens.mjs).",
+    "disqualify_round": true,
+    "repeat_train_topk_max_passes": 40
+  },
   "moe": {
     "num_experts": 51,
     "always_active": 51,

@@ -30,6 +30,11 @@ import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, bumpMoeStep, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk } from "./moe-engine.mjs";
+// E-TOKEN COMPRESSION SYSTEM (the corrected "new token" feature). Provides the
+// recallable etoken(e1) function stored in data/Etokens.json, the e-tokenizer
+// (touple), the base build from the pre-tokenized token DB, and the
+// disqualification / repeat-train-top-k helpers used in the scoring loop.
+import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, putEtoken, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT } from "./etokens.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -500,6 +505,11 @@ function teacherDegeneracy(tokens, windowSize = 20) {
 }
 
 let latest = null; // latest current.json content to serve to the UI
+// E-TOKEN live statistics (reset each run; persisted summary folded into the
+// payload so the UI can show the etoken system's live behaviour).
+let liveEtokStats = {
+  built_total: 0, created: 0, steered: 0, in_topk: 0, disqualified: 0, e_tokenized: 0,
+};
 
 // HISTORY rotation cap: appendFileSync to a multi-GB history.jsonl every step
 // blocks the Node event loop (the HTTP UI on :4199 stops responding), and the
@@ -641,6 +651,52 @@ function startServer() {
       return;
     }
 
+    // /etokens GET: return the Etokens.json recall-table summary (and, with
+    // ?full=1, the table itself). This exposes the recallable function table
+    // (etoken(e1) -> original token tuple) to the UI for inspection.
+    if (url === "/etokens" && req.method === "GET") {
+      try {
+        const q = new URL(url, "http://x").searchParams;
+        const full = q.get("full") === "1";
+        const store = getEtokens();
+        const base = {
+          base: store?.base ?? false,
+          etoken_base: ETOKEN_BASE(),
+          etoken_count: ETOKEN_COUNT(),
+          stats: store?.stats || {},
+          total: store ? (store.stats?.total ?? 0) : 0,
+          how: "etoken(e1) -> original token tuple, stored in data/Etokens.json; recallable + deterministic.",
+        };
+        if (full && store) base.tokens = store.tokens;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(base));
+      } catch (e) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(e.message || e) }));
+      }
+      return;
+    }
+    // /etokens/rebuild POST: rebuild the BASE Etokens.json from the
+    // pre-tokenized token DB (drops any live-updated rows first).
+    if (url === "/etokens/rebuild" && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        try {
+          const patch = JSON.parse(body || "{}");
+          let store = getEtokens();
+          if (store) { store.tokens = {}; store.stats.live_added = 0; store.stats.total = 0; store.base = false; }
+          buildBaseEtokens(Number(patch.chunk_size ?? 4), { log: false });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, total: getEtokens()?.stats?.total ?? 0 }));
+        } catch (e) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+        }
+      });
+      return;
+    }
+
     // /prompt POST: set the teacher/student prompt LIVE. The next step re-seeds
     // `shared` with this new prompt (a fresh generation run).
     if (url === "/prompt" && req.method === "POST") {
@@ -729,6 +785,25 @@ async function run() {
   console.log("=== TEACHER-LIVE: 27B teacher -> 4B student, continuous scoring ===");
   console.log(`  teacher ${TEACHER_URL} | student ${STUDENT_URL} | view-top-${viewTopK()} emit teacher tK${emitFor("teacher").top_k}/tP${emitFor("teacher").top_p} student tK${emitFor("student").top_k}/tP${emitFor("student").top_p} | student step ${STUDENT_STEP}`);
   startServer();
+
+  // ---- E-TOKEN SYSTEM INIT (corrected "new token" feature) ----
+  // Load data/Etokens.json if present, otherwise BUILD the base Etokens.json
+  // from the pre-tokenized token DB (all tokens in the DB are pre-tokenized and
+  // coupled into unique new tokens via the e-tokenizer — the base etoken.json
+  // the model then uses and updates from the teacher's generated chunks).
+  {
+    const et = loadConfig()?.etokens ?? {};
+    const etok = initEtokens();
+    if (etok && etok.base) {
+      console.log(`  [etokens] loaded base Etokens.json: ${(etok.stats?.total ?? 0)} recallable etokens (base=${!!etok.base})`);
+    } else if (et.build_base !== false) {
+      console.log("  [etokens] building base Etokens.json from the pre-tokenized token DB...");
+      const r = buildBaseEtokens(Number(et.chunk_size ?? loadConfig()?.model?.chunk_size ?? 4), { log: true });
+      console.log(`  [etokens] base built: ${r.etokensAdded} etokens from ${r.tokenized} DB tokens (${(r.sources || []).join(", ")})`);
+    }
+    // Track per-step e-token statistics (created this run, matched, disqualified).
+    liveEtokStats = { built_total: getEtokens()?.stats?.total ?? 0, created: 0, steered: 0, in_topk: 0, disqualified: 0, e_tokenized: 0 };
+  }
 
   let shared = PROMPT;
   let sharedIds = []; // RAW TOKEN IDS of the shared prompt (direct token input)
@@ -915,6 +990,23 @@ async function run() {
         if (teacherAdvanceIds.length) sharedIds.push(...teacherAdvanceIds);
         shared += " " + teacherAdvance.join(" ");
         teacherOutput.push(...teacherAdvance);
+        // ---- E-TOKEN LIVE UPDATE FROM THE TEACHER'S GENERATED CHUNK ----
+        // "these are fed to the e-tokenizer and then used as a base etoken.json
+        //  that the model then uses and updates based on the token generated
+        //  chunk of the teacher." The teacher's emitted token-id chunk is
+        //  e-tokenized (coupled into unique new tokens, effective repeats
+        //  deduped) and its etokens MERGED back into Etokens.json live.
+        if (teacherAdvanceIds.length && loadConfig()?.etokens?.live_update !== false) {
+          const etChunks = etokenize(teacherAdvanceIds, Number(loadConfig()?.etokens?.chunk_size ?? loadConfig()?.model?.chunk_size ?? 4));
+          let createdStep = 0;
+          for (const ec of etChunks) {
+            const r = putEtoken({ id: ec.id, tuple: ec.chunk, live: true, audit: `teacher-chunk@step${step}` });
+            if (r.isNew) createdStep++;
+            liveEtokStats.e_tokenized++;
+          }
+          liveEtokStats.created += createdStep;
+          liveEtokStats.last_teacher_etokens = etChunks.map((ec) => ec.id);
+        }
       } else {
         // Keep scoring the SAME window top-k (already captured above).
         stepRec.window = { ...(stepRec.window || {}), teacher_token: teacherToken };
@@ -1211,6 +1303,48 @@ async function run() {
           const isMtp = r.name === "EMTP";
           phaseInfo[i].isNew = isNew; phaseInfo[i].isMtp = isMtp;
           let m = 0;
+
+          // ---- E-TOKEN DISQUALIFICATION + REPEAT-TRAIN-TOP-K (corrected) ----
+          // "all experts that dont produce a token that has an original token
+          //  that isnt in the teacher's top k is disqualified". An expert that
+          // PRODUCED a token (its chosen token at its routed position) whose
+          // ORIGINAL token (decompressed via etoken(e1) if it is a recorded
+          // etoken id, else the raw token id itself) is NOT in the teacher's
+          // top-k is DISQUALIFIED for the current round: its value is frozen
+          // (no reward, no training climb) until the round reset.
+          //
+          // We ALSO repeat-train the E-TOKEN top-k: "repeat train its top k to
+          // include this etoken on the teachers output untill it appears in the
+          // top k of the expert." Each step we pull the expert's current top-k
+          // and the teacher's top-k; if the teacher's e-token id is not yet in
+          // the expert's top-k we flag it for the steering bias to drill in
+          // (repeat training passes converge it into the expert's top-k).
+          const teacherTopKIds = (tPos.top || []).map((x) => (x?.id !== undefined ? x.id : x));
+          const expertChosenId = st?.chosen?.id;
+          const dq = expertChosenId !== undefined
+            ? evalDisqualification(expertChosenId, teacherTopKIds)
+            : { disqualified: false, originalTokens: [], originalInTeacherTopK: true, missing: [] };
+          if (dq.disqualified) {
+            liveEtokStats.disqualified++;
+            phaseInfo[i].disqualified = true;
+            phaseInfo[i].missingOriginals = dq.missing;
+            // DISQUALIFIED: no positive reward, freeze the expert for the round.
+            m = 0;
+            return m;
+          }
+          // REPEAT-TRAIN-TOP-K: check whether the teacher's current etoken id
+          // already appears in this expert's top-k; if not, it is still being
+          // trained in (repeat passes). Surface the pass status for the UI.
+          if (typeof lastFpId === "number") {
+            const rtt = repeatTrainEtokenTopK(
+              (st?.top || []).map((x) => x?.id !== undefined ? x.id : x),
+              teacherTopKIds, lastFpId
+            );
+            if (rtt.inTopK) liveEtokStats.in_topk++;
+            phaseInfo[i].etoken_in_topk = rtt.inTopK;
+            phaseInfo[i].etoken_passes_to_learn = rtt.passesToLearn;
+            phaseInfo[i].etoken_target = rtt.targetSet ? rtt.targetSet.slice(0, 10) : undefined;
+          }
           // MTP HEAD (+1 forward): the MTP expert predicts the NEXT token, so it
           // is scored on how well the student's output tracks the teacher's top-k
           // one position ahead (its own forward-looking signal). MTP also AIDS
@@ -1310,9 +1444,12 @@ async function run() {
         perExpertPoints.push({ expert: "TEACHER", score: teacherStepPts });
         const expertScores = route.rows.map((r, i) => {
           const ms = Number(route.state?.matchScore?.[r.name]) || 0;
-          const ownPts = (base + baseP + baseEm) * 0.6 * (ms / msTot) +
-                         (curvePoints + compressionPoints) * (0.4 * (ms / msTot) + 0.6 * ((Number(r.value) || 0) / vAll));
           const pi = phaseInfo[i] || {};
+          // A DISQUALIFIED expert earns NO points this step (value frozen, no
+          // climb) until the round reset.
+          let ownPts = (base + baseP + baseEm) * 0.6 * (ms / msTot) +
+                         (curvePoints + compressionPoints) * (0.4 * (ms / msTot) + 0.6 * ((Number(r.value) || 0) / vAll));
+          if (pi.disqualified) ownPts = 0;
           return {
             expert: r.name,
             active: r.active,
@@ -1322,6 +1459,10 @@ async function run() {
             match: ms,                 // this expert's own cumulative match count
             score: Number(ownPts.toFixed(4)),
             is_new_network: !!pi.isNew,
+            disqualified: !!pi.disqualified,
+            missing_originals: pi.missingOriginals || [],
+            etoken_in_topk: pi.etoken_in_topk === true,
+            etoken_passes_to_learn: pi.etoken_passes_to_learn ?? 0,
             phase1_compression: Number((pi.p1 || 0).toFixed ? (pi.p1 || 0).toFixed(2) : pi.p1 || 0),
             phase2_reconstruction: Number((pi.p2 || 0).toFixed ? (pi.p2 || 0).toFixed(2) : pi.p2 || 0),
             mtp_aid: Number((pi.mtpAid || 0).toFixed ? (pi.mtpAid || 0).toFixed(2) : pi.mtpAid || 0),
@@ -1529,6 +1670,10 @@ async function run() {
           expert: e.expert, value: e.value, active: e.active, role: e.role,
           mutation: e.mutation, topk_weight: e.topk_weight,
           is_new_network: !!es.is_new_network,
+          disqualified: !!es.disqualified,
+          missing_originals: es.missing_originals || [],
+          etoken_in_topk: es.etoken_in_topk === true,
+          etoken_passes_to_learn: es.etoken_passes_to_learn ?? 0,
           phase1_compression: es.phase1_compression ?? 0,
           phase2_reconstruction: es.phase2_reconstruction ?? 0,
           mtp_aid: es.mtp_aid ?? 0,
@@ -1565,6 +1710,22 @@ async function run() {
         } : { loaded: false, note: "run scripts/seed-code-baseline.mjs to feed the code DB as baseline" },
       },
       new_tokens_list: newTokens,
+      // E-TOKEN SYSTEM (corrected): the recallable etoken(e1) function stored in
+      // data/Etokens.json — e1 -> original token tuple. Live stats + the full
+      // recall-table summary so the UI can inspect what the model has learned.
+      etoken_system: {
+        how: "The teacher's emitted token chunks are fed through the e-tokenizer (etokens.mjs) and stored in data/Etokens.json as recallable functions: etoken(e1) -> (o1,o2,o3,o2,o4) (the original token tuple, deduped of effective adjacent repeats). The same tuple always maps to the same etoken id (deterministic/recallable) in the reserved range [base,base+count). Experts compete to emit these etoken ids so the compressed tuple becomes part of the output. An expert whose produced token's ORIGINAL token is NOT in the teacher's top-k is DISQUALIFIED (no reward) for the round. The etoken id is repeat-trained into each expert's top-k until it appears.",
+        base: ETOKEN_BASE(),
+        count: ETOKEN_COUNT(),
+        live_stats: liveEtokStats,
+        store: getEtokens() ? {
+          total: getEtokens().stats?.total ?? 0,
+          base_etokens: getEtokens().stats?.base_etokens ?? 0,
+          live_added: getEtokens().stats?.live_added ?? 0,
+          built_from: getEtokens().stats?.built_from ?? null,
+        } : null,
+        last_teacher_etokens: liveEtokStats.last_teacher_etokens || [],
+      },
       // Teacher: the total prompt + accumulated output tokens.
       teacher_prompt: PROMPT,
       teacher_output: teacherOutput,
