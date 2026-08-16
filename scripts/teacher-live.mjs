@@ -75,6 +75,55 @@ function saveTopKCurve({ step, promptCtx, teacherToken, teacherId, top }) {
     fs.appendFileSync(TOP_K_CURVE, JSON.stringify(row) + "\n");
   } catch (e) { /* best-effort */ }
 }
+
+// ---- TEACHER TOP-K FROM FILE ONLY (NO TEACHER GENERATION) ----
+// USER DIRECTIVE: "USE THAT ONLY FOR NOW NO TEACHER GENS". The harness must NOT
+// call the teacher (the CPU TQ2_0 is slow and was the bottleneck) — it reads the
+// teacher's recorded top-k from output/live/topk-curve.jsonl and uses that as the
+// fixed reference. The student loops against this same teacher top-k until its
+// own top-k "fits" (converges / overlaps), exactly the loop-and-increment design.
+
+let _teacherTopKFile = null;   // parsed rows [{step, teacher_id, teacher_token, top_k:[...]}, ...]
+let _teacherTopKLoadedAt = 0;  // mtime of the file when last parsed
+
+/**
+ * Load every teacher top-k row from topk-curve.jsonl (best-effort). Returns the
+ * parsed array (newest last). Called lazily; caches by file mtime.
+ */
+function loadTeacherTopKRows() {
+  try {
+    if (!fs.existsSync(TOP_K_CURVE)) return [];
+    const m = fs.statSync(TOP_K_CURVE).mtimeMs;
+    if (_teacherTopKFile && m === _teacherTopKLoadedAt) return _teacherTopKFile;
+    const rows = fs.readFileSync(TOP_K_CURVE, "utf8").trim().split("\n").filter(Boolean)
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(Boolean);
+    _teacherTopKFile = rows;
+    _teacherTopKLoadedAt = m;
+    return rows;
+  } catch { return _teacherTopKFile || []; }
+}
+
+/**
+ * The current teacher top-k reference, taken ONLY from the file (never from a
+ * live teacher call). Returns the top-k list of the MOST RECENT recorded row
+ * ({id, token, logprob}[...]).
+ */
+function teacherTopKFromFile() {
+  const rows = loadTeacherTopKRows();
+  if (!rows.length) return null;
+  const last = rows[rows.length - 1];
+  const top = Array.isArray(last?.top_k) ? last.top_k : [];
+  // Ensure each entry has id+token+logprob shapes the harness expects.
+  return top.map((t) => ({ id: t.id, token: t.token, logprob: Number.isFinite(t.logprob) ? t.logprob : 0 }));
+}
+
+/** Does the topk-curve file currently have any usable teacher top-k? */
+function hasTeacherTopKFromFile() {
+  const rows = loadTeacherTopKRows();
+  return !!rows.length && Array.isArray(rows[rows.length - 1]?.top_k) && rows[rows.length - 1].top_k.length;
+}
+
 const PORT = Number(process.env.LIVE_PORT || 4199);
 
 const TEACHER_URL = process.env.TEACHER_URL || "http://127.0.0.1:41001"; // 27B
@@ -852,6 +901,7 @@ async function run() {
   let lastConvergedStep = -1;// step at which the student last hit identity_tolerance
   let lastFpId = null;       // compressed new token id from the previous step (steered toward)
   let lastFpRaw = 0;         // raw sum from the previous step (debug)
+  let winRefTopKSource = "teacher"; // "teacher" | "file" — where the window top-k came from
   const curWindowTier = () => win && win.tiers ? win.tiers[Math.min(winTierIdx, win.tiers.length - 1)] : null;
 
   while (!ended && (alwaysRun || step < _steps)) {
@@ -923,72 +973,48 @@ async function run() {
         teacherOutput.length = 0;
       }
       if (!winRefTopK || winRefIds.length < (tier.tokens || 1)) {
-        // Not built or stale -> (re)generate the reference window from the base.
-        // USER EFFICIENCY DIRECTIVE: when the student top-k is BAD (best overlap
-        // below poor_topk_threshold) and skip_teacher_when_poor is on, DON'T
-        // spend resources having the teacher generate a fresh top-k — reuse the
-        // existing reference and just update the COMPRESSION experts from the
-        // student's own generation. This saves the teacher forward pass when it
-        // wouldn't help (the student can't reach a fresh target anyway).
-        const moeP = loadConfig()?.moe || {};
-        const skipTeacher = (moeP.skip_teacher_when_poor !== false)
-          && winRefTopK && winRefTopK.length && bestWinOverlap < Number(moeP.poor_topk_threshold ?? 0.1);
+        // ---- TEACHER TOP-K FROM FILE ONLY (NO TEACHER GENS) ----
+        // USER DIRECTIVE: never call the teacher. Load the teacher's recorded
+        // top-k from output/live/topk-curve.jsonl and use it as the FIXED window
+        // reference. The student loops against this SAME teacher top-k until its
+        // own top-k "fits" (overlaps >= identity_tolerance), then the window is
+        // incremented — the loop-and-increment/"train till it works" design,
+        // without any slow teacher forward pass.
         const baseLen = Math.max(1, (tier.tokens || 8));
-        const need = baseLen - winRefIds.length;
-        if (need > 0 && !skipTeacher) {
-          try {
-            // Advance teacher from the CURRENT base prompt to fill `need` tokens.
-            // IMPORTANT (root-cause fix): request a REAL multi-token chunk, not a
-            // single token. With max_tokens=1 + top-k anchoring, a coherent
-            // teacher's sharpest top-1 prediction is often a stopword (" the" for
-            // TQ2_0), which degenerates the whole window into a repeated-token
-            // flush loop (the "garbage" that looked like a model problem — the
-            // MODEL is fine; the harness was only sampling 1 top-1 token). We
-            // anchor the window on a genuine generated sequence (the SAME token +
-            // top-k data the e-tokenizer consumes) so the teacher chunk is
-            // coherent and the E-token system gets a real chunk.
-            const refN = Math.min(need, Math.max(2, TEACHER_BATCH));
-            const tch = await profileRetry(TEACHER_URL, sharedIds, refN, "teacher");
-            const tpos0 = tch[0];
-            if (tpos0 && tpos0.chosen.token !== undefined && tch.length > 1) {
-              winRefTopK = tpos0.top || [];                    // shared across all experts + MTP
-              const tids = tch.map((x) => x.chosen.id).filter((v) => Number.isFinite(v));
-              const toks = tch.map((x) => x.chosen.token).filter((t) => t !== undefined);
-              // LOOP: extend the reference by feeding the teacher its own output
-              // only within the window budget (fixed first-N, no unbounded growth).
-              winRefIds.push(...tids.slice(0, need));
-              saveTopKCurve({ step, promptCtx: PROMPT.slice(-400), teacherToken: tpos0.chosen.token, teacherId: tpos0.chosen.id, top: tpos0.top });
-              // Surface the real teacher chunk in the Teacher-output panel AND
-              // feed it through the e-tokenizer (Etokens.json update) — the chunk
-              // and its top-k are the SAME data used to build the window.
-              teacherOutput.length = 0;
-              teacherOutput.push(...toks.slice(0, need));
-              if (tids.length && loadConfig()?.etokens?.live_update !== false) {
-                const etChunks = etokenize(tids.slice(0, need), Number(loadConfig()?.etokens?.chunk_size ?? loadConfig()?.model?.chunk_size ?? 4));
-                for (const ec of etChunks) {
-                  const r = putEtoken({ id: ec.id, tuple: ec.chunk, live: true, audit: `teacher-window@step${step}` });
-                  if (r.isNew) liveEtokStats.created++;
-                  liveEtokStats.e_tokenized++;
-                }
-                liveEtokStats.last_teacher_etokens = etChunks.map((ec) => ec.id);
-              }
-              // window built: need is now satisfied, so future passes won't rebuild
-            }
-          } catch (e) { /* keep partial window */ }
-        } else if (skipTeacher) {
-          // Student is poor: reuse the cached teacher reference — no new teacher
-          // generation this step. Compression experts still update from the
-          // student's own output below (self-supervised, cost-free).
-          stepRec._skipped_teacher_poor = true;
-          if (step % 20 === 0) console.log(`  [skip-teacher] student top-k poor (overlap ${bestWinOverlap.toFixed(3)} < ${Number(moeP.poor_topk_threshold ?? 0.1)}) — reusing teacher ref, self-updating compression experts`);
-          if (winRefIds.length < need) {
-            // Fill the reference window ids from what we have (don't block on the
-            // teacher for a poor student); the top-k stays the cached one.
-            const have = winRefIds.length;
-            for (let k = have; k < baseLen; k++) winRefIds.push(winRefIds[k % Math.max(1, winRefIds.length)] || 2413);
+        const rows = loadTeacherTopKRows();
+        if (rows.length) {
+          // Use the MOST RECENT recorded teacher top-k as the window anchor.
+          const last = rows[rows.length - 1];
+          const top = Array.isArray(last?.top_k) ? last.top_k : [];
+          if (top.length) {
+            winRefTopK = top.map((t) => ({ id: t.id, token: t.token, logprob: Number.isFinite(t.logprob) ? t.logprob : 0 }));
+          }
+          // Populate the reference window ids/tokens from the file rows (the
+          // teacher_id / teacher_token recorded per row) — no teacher call.
+          if (!winRefIds.length) {
+            const ids = rows.map((r) => r.teacher_id).filter((v) => Number.isFinite(Number(v)));
+            const toks = rows.map((r) => r.teacher_token).filter((t) => t !== undefined);
+            winRefIds.push(...ids.slice(0, baseLen).map(Number));
+            teacherOutput.length = 0;
+            teacherOutput.push(...toks.slice(0, baseLen));
           }
         }
-        if (winRefIds.length === 0) winRefIds = [2413]; // guard
+        // Ensure the window has at least one token id (guard) mirroring the old
+        // fallback, and always ensure a non-empty teacher top-k reference.
+        if (winRefIds.length === 0) winRefIds = [2413];
+        if (!winRefTopK || !winRefTopK.length) winRefTopK = winRefTopK || [{ id: 279, token: " the", logprob: -1 }];
+        // E-tokenize the file-derived teacher chunk (same tokens + top-k data
+        // already recorded) — Etokens.json stays fed with NO teacher generation.
+        if (winRefIds.length && loadConfig()?.etokens?.live_update !== false) {
+          const etChunks = etokenize(winRefIds.slice(0, baseLen), Number(loadConfig()?.etokens?.chunk_size ?? loadConfig()?.model?.chunk_size ?? 4));
+          for (const ec of etChunks) {
+            const r = putEtoken({ id: ec.id, tuple: ec.chunk, live: true, audit: `teacher-file@step${step}` });
+            if (r.isNew) liveEtokStats.created++;
+            liveEtokStats.e_tokenized++;
+          }
+          liveEtokStats.last_teacher_etokens = etChunks.map((ec) => ec.id);
+        }
+        winRefTopKSource = "file"; // surfaced in the payload
       }
       winSeq++;
       stepRec.window = { tier: curWindowTier().tokens, idx: winTierIdx + 1, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, topk_size: (winRefTopK || []).length };
@@ -1742,7 +1768,7 @@ async function run() {
       num_experts: stepRec.moe?.num_experts ?? loadConfig()?.moe?.num_experts ?? 5,
       layers_total: stepRec.moe?.layers_total ?? loadConfig()?.layers?.count ?? 5,
       pause_every_n_steps: Number(loadConfig()?.training?.pause_every_n_steps ?? 0),
-      windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000, max_loops_per_tier: win.maxLoopsPerTier, overlap: stepRec.window?.overlap ?? 0, best_overlap: bestWinOverlap, tol: win.identityTolerance, graduated: !!(stepRec.window?.graduated), last_converged_step: lastConvergedStep, allow_new_token_output: !!loadConfig()?.moe?.allow_new_token_output, skip_teacher_when_poor: !!loadConfig()?.moe?.skip_teacher_when_poor, self_update_when_poor: !!loadConfig()?.moe?.self_update_when_poor, skipped_teacher_poor: !!stepRec._skipped_teacher_poor } : undefined,
+      windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000, max_loops_per_tier: win.maxLoopsPerTier, overlap: stepRec.window?.overlap ?? 0, best_overlap: bestWinOverlap, tol: win.identityTolerance, graduated: !!(stepRec.window?.graduated), last_converged_step: lastConvergedStep, allow_new_token_output: !!loadConfig()?.moe?.allow_new_token_output, skip_teacher_when_poor: !!loadConfig()?.moe?.skip_teacher_when_poor, self_update_when_poor: !!loadConfig()?.moe?.self_update_when_poor, skipped_teacher_poor: !!stepRec._skipped_teacher_poor, topk_source: winRefTopKSource } : undefined,
       expert_steering: { enabled: Number(loadConfig()?.moe?.expert_steering ?? 0) > 0, factor: Number(loadConfig()?.moe?.expert_steering ?? 0), max_bias: Number(loadConfig()?.moe?.steering_max_bias ?? 2.0), top_n: Number(loadConfig()?.moe?.steering_top_n ?? 20), last_bias_tokens: steerBias ? Object.keys(steerBias).length : 0 },
       two_phase: { enabled: !!loadConfig()?.scoring?.two_phase?.enabled, phase: Number(loadConfig()?.scoring?.two_phase?.phase ?? 1), new_net_compression_weight: Number(loadConfig()?.scoring?.two_phase?.new_net_compression_weight ?? 40), reconstruct_weight: Number(loadConfig()?.scoring?.two_phase?.reconstruct_weight ?? 120), reconstruct_min_overlap: Number(loadConfig()?.scoring?.two_phase?.reconstruct_min_overlap ?? 0.5), note: "Phase1=new nets FAVOR compressed tokens; Phase2=new compressed experts reproduce base shape; MTP aids compressed tokens" },
       // PER-EXPERT scored/training detail (surfaced so the UI shows EVERY expert
