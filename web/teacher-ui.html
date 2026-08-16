@@ -121,8 +121,10 @@
         <div class="stat"><div class="label">View top-k (model looks at this many)</div><input id="sView" type="number" min="1" max="100" step="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Teacher · emit top-k (keeps it coherent)</div><input id="sTKt" type="number" min="1" max="100" step="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Teacher · emit top-p</div><input id="sTPt" type="number" min="0.5" max="1" step="0.01" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+        <div class="stat"><div class="label">Teacher · temperature</div><input id="sTempt" type="number" min="0" max="2" step="0.05" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Student · emit top-k</div><input id="sTKs" type="number" min="1" max="100" step="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Student · emit top-p</div><input id="sTPs" type="number" min="0.5" max="1" step="0.01" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+        <div class="stat"><div class="label">Student · temperature</div><input id="sTemps" type="number" min="0" max="2" step="0.05" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Noise → layer per output token</div><input id="sNz" type="number" min="0" max="1" step="0.01" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Pts per student CHOSEN token in teacher's emitted top-k</div><input id="sEm" type="number" min="0" max="20" step="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
       </div>
@@ -221,11 +223,51 @@ function expColor(name) {
 const scoreChart = new Chart(document.getElementById("scoreChart"), {
   type: "line",
   data: { labels: [], datasets: [
-    { label: "Total score", data: [], borderColor: "#58a6ff", backgroundColor: "rgba(88,166,255,.15)", fill: true, tension: .3, pointRadius: 0 },
-    { label: "Base score", data: [], borderColor: "#3fb950", tension: .3, pointRadius: 0 },
+    { label: "Total", data: [], borderColor: "#ffffff", borderWidth: 2, tension: .3, pointRadius: 0 },
   ] },
-  options: { responsive: true, animation: false, scales: { x: { ticks: { color: "#8b949e", maxTicksLimit: 12 } }, y: { ticks: { color: "#8b949e" } } }, plugins: { legend: { labels: { color: "#e6edf3" } } } }
+  options: { responsive: true, animation: false, scales: { x: { ticks: { color: "#8b949e", maxTicksLimit: 12 } }, y: { ticks: { color: "#8b949e" } } }, plugins: { legend: { labels: { color: "#e6edf3", boxWidth: 10, font: { size: 9 } } } } }
 });
+// Track per-expert chart datasets so we only (re)create them on expert changes.
+let expertChartDatasets = {};
+
+function renderCharts(d) {
+  const recent = d.recent || [];
+  scoreChart.data.labels = recent.map(r => r.step);
+  scoreChart.data.datasets[0].data = recent.map(r => r.total_score);
+  scoreChart.data.datasets[0].label = "Total";
+  // One colored line PER EXPERT from their cumulative_scores across recent steps.
+  const last = recent[recent.length - 1];
+  const experts = last?.moe?.cumulative_scores ? Object.keys(last.moe.cumulative_scores).sort((a, b) => (parseInt(a.replace(/\D/g,"")||0) - parseInt(b.replace(/\D/g,"")||0))) : [];
+  // Remove datasets for experts that no longer exist.
+  scoreChart.data.datasets = [scoreChart.data.datasets[0]].concat(
+    experts.map(name => {
+      const color = expColor(name);
+      if (!expertChartDatasets[name]) {
+        expertChartDatasets[name] = { label: name, data: [], borderColor: color, backgroundColor: color + "22", tension: .3, pointRadius: 0, borderWidth: 1.5 };
+      }
+      return expertChartDatasets[name];
+    })
+  );
+  scoreChart.data.datasets.forEach((ds, i) => {
+    if (i === 0) return;
+    const name = ds.label;
+    ds.data = recent.map(r => (r.moe?.cumulative_scores || {})[name] ?? null);
+  });
+  scoreChart.update();
+
+  // Compressed-token parity bar: for each recent step show student tokens vs
+  // whether the compressed token (~token generation) matched (500x).
+  const bar = document.getElementById("compBar");
+  bar.innerHTML = "";
+  recent.slice(-6).reverse().forEach(r => {
+    const row = document.createElement("div");
+    row.className = "row";
+    const match = r.is_500x_value_generation ? '<span class="fivehundred">◉ 500×</span> ' : "";
+    row.innerHTML = `<div style="font-size:11px;color:#8b949e">step ${r.step} — teacher «${r.teacher_token ?? "-"}» → student [${(r.student_tokens||[]).join(" ") || "-"}] ${match}</div>
+      <div style="font-size:11px;color:#8b949e">compressed footprint ${r.compressed_footprint ?? "-"} :: inTopK ${r.in_topk ?? "-"} :: inTop100 ${r.in_top100 ?? "-"} :: base+${r.base_step_score ?? 0}</div>`;
+    bar.appendChild(row);
+  });
+}
 
 function setConn(live) {
   const c = document.getElementById("conn");
@@ -253,27 +295,6 @@ function renderStats(d) {
   document.getElementById("models").textContent =
     `teacher ${d.teacher} → student ${d.student} · view ${d.view_top_k} emit tK${d.emit?.teacher?.top_k ?? "?"}/tP${d.emit?.teacher?.top_p ?? "?"} sK${d.emit?.student?.top_k ?? "?"}/sP${d.emit?.student?.top_p ?? "?"} · step ${d.student_step_tokens} · ${d.paused ? "PAUSED" : "training"}`;
   setPausedUI(d.paused);
-}
-
-function renderCharts(d) {
-  const recent = d.recent || [];
-  scoreChart.data.labels = recent.map(r => r.step);
-  scoreChart.data.datasets[0].data = recent.map(r => r.total_score);
-  scoreChart.data.datasets[1].data = recent.map(r => r.base_step_score !== undefined ? r.base_score_total : 0);
-  scoreChart.update();
-
-  // Compressed-token parity bar: for each recent step show student tokens vs
-  // whether the compressed token (~token generation) matched (500x) .
-  const bar = document.getElementById("compBar");
-  bar.innerHTML = "";
-  recent.slice(-6).reverse().forEach(r => {
-    const row = document.createElement("div");
-    row.className = "row";
-    const match = r.is_500x_value_generation ? '<span class="fivehundred">◉ 500×</span> ' : "";
-    row.innerHTML = `<div style="font-size:11px;color:#8b949e">step ${r.step} — teacher «${r.teacher_token ?? "-"}» → student [${(r.student_tokens||[]).join(" ") || "-"}] ${match}</div>
-      <div style="font-size:11px;color:#8b949e">compressed footprint ${r.compressed_footprint ?? "-"} :: inTopK ${r.in_topk ?? "-"} :: inTop100 ${r.in_top100 ?? "-"} :: base+${r.base_step_score ?? 0}</div>`;
-    bar.appendChild(row);
-  });
 }
 
 function renderTop100(d) {
@@ -469,8 +490,10 @@ function renderSampling(d) {
   set("sView", d.view_top_k ?? 100);
   set("sTKt", e.teacher?.top_k ?? 20);
   set("sTPt", Number(e.teacher?.top_p ?? 0.9).toFixed(2));
+  set("sTempt", Number(e.teacher?.temperature ?? 0.7).toFixed(2));
   set("sTKs", e.student?.top_k ?? 20);
   set("sTPs", Number(e.student?.top_p ?? 0.9).toFixed(2));
+  set("sTemps", Number(e.student?.temperature ?? 0.7).toFixed(2));
   set("sNz", Number(d.noise_to_layer ?? 0.05).toFixed(2));
   set("sEm", d.per_teacher_emit_match ?? 2);
 }
@@ -499,8 +522,8 @@ function bindSampling() {
       sampling: {
         view_top_k: Number(document.getElementById("sView").value),
         emit: {
-          teacher: { top_k: Number(document.getElementById("sTKt").value), top_p: Number(document.getElementById("sTPt").value) },
-          student: { top_k: Number(document.getElementById("sTKs").value), top_p: Number(document.getElementById("sTPs").value) },
+          teacher: { top_k: Number(document.getElementById("sTKt").value), top_p: Number(document.getElementById("sTPt").value), temperature: Number(document.getElementById("sTempt").value) },
+          student: { top_k: Number(document.getElementById("sTKs").value), top_p: Number(document.getElementById("sTPs").value), temperature: Number(document.getElementById("sTemps").value) },
         },
         noise_to_layer: Number(document.getElementById("sNz").value),
       },
