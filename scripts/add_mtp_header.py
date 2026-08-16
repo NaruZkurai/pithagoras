@@ -129,8 +129,8 @@ def main():
     # bump block_count value 64 -> n_layer+n_mtp (find its value offset)
     blk_key = b"qwen35.block_count"
     start = None
-    for m in re.finditer(re.escape(blk_key), kv_section):
-        c = m.start() - 8
+    for _mm in re.finditer(re.escape(blk_key), kv_section):
+        c = _mm.start() - 8
         if c < 0:
             continue
         (ln,) = struct.unpack("<Q", kv_section[c:c + 8])
@@ -186,7 +186,7 @@ def main():
     n_ff = 17408
     m = {
         "blk.%d.attn_norm.weight" % n_layer: (n_embd,),
-        "blk.%d.attn_post_norm.weight" % n_layer: (n_embd,),
+        "blk.%d.post_attention_norm.weight" % n_layer: (n_embd,),
         "blk.%d.attn_q.weight" % n_layer: (n_embd, 12288),
         "blk.%d.attn_k.weight" % n_layer: (n_embd, 1024),
         "blk.%d.attn_v.weight" % n_layer: (n_embd, 1024),
@@ -200,6 +200,13 @@ def main():
         "blk.%d.nextn.enorm.weight" % n_layer: (n_embd,),
         "blk.%d.nextn.hnorm.weight" % n_layer: (n_embd,),
     }
+
+    # bump tensor_count (u64 at offset 8): we APPEND new MTP tensors, so llama
+    # must be told there are now len(tensors)+len(m) tensors or it will silently
+    # ignore the extra MTP entries (the real cause of 'blk.64.attn_norm not found').
+    (cur_tc,) = struct.unpack("<Q", bytes(kv_section[8:16]))
+    struct.pack_into("<Q", kv_section, 8, cur_tc + len(m))
+    print(f"tensor_count {cur_tc} -> {cur_tc+len(m)}", flush=True)
 
     # ---- assemble final header bytes ----
     new_header = bytearray()
