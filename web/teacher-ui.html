@@ -420,19 +420,16 @@ async function postCfg(patch, note) {
   } catch (e) { document.getElementById("cfgStatus").textContent = "offline"; document.getElementById("cfgStatus").textContent += " (config server on :4199)"; }
 }
 
-// Sync the sampling number inputs from the latest payload (same style as the
-// config controls: values are shown/edited directly in the inputs).
+// Set the sampling number-input defaults ONCE from the first payload, then
+// NEVER touch them again (like the config controls: they hold what the user
+// typed and are only read when "Apply sampling" is clicked). This prevents the
+// Live stream / "Each token generated" updates from resetting the values.
+let _samplingInited = false;
 function renderSampling(d) {
+  if (_samplingInited) return;
+  _samplingInited = true;
   const e = d.emit || {};
-  // Only sync the value into an input if it is NOT currently focused (being
-  // edited). This prevents the Live stream updates from resetting what the
-  // user typed, matching the config controls' behavior.
-  const set = (id, v) => {
-    const el = document.getElementById(id);
-    if (!el || document.activeElement === el) return;
-    const sv = String(v);
-    if (el.value !== sv) el.value = sv;
-  };
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   set("sView", d.view_top_k ?? 100);
   set("sTKt", e.teacher?.top_k ?? 20);
   set("sTPt", Number(e.teacher?.top_p ?? 0.9).toFixed(2));
