@@ -16,6 +16,8 @@
   .status.offline { color:var(--warn); border-color:var(--warn); }
   .wrap { padding:18px 20px; display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:16px; }
   @media (max-width: 900px){ .wrap{ grid-template-columns:1fr; } }
+  .moe-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  @media (max-width: 1100px){ .moe-row{ grid-template-columns:1fr; } }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
   .card h2 { margin:0 0 12px; font-size:14px; color:var(--dim); font-weight:600; text-transform:uppercase; letter-spacing:.04em;}
   .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; }
@@ -49,20 +51,44 @@
   <button id="bPause" style="background:#6e7681;color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer;font-weight:600">Pause training</button>
 </header>
 <div class="wrap">
-  <!-- LEFT: graphs -->
+  <!-- LEFT: stats + graphs -->
   <div style="display:grid; gap:16px;">
     <div class="card">
-      <h2>Score over time (training)</h2>
-      <canvas id="scoreChart" height="120"></canvas>
+      <h2>Live statistics</h2>
+      <div class="stats">
+        <div class="stat"><div class="label">Step</div><div id="sStep" class="value">0</div></div>
+        <div class="stat"><div class="label">Base score</div><div id="sBase" class="value">0</div></div>
+        <div class="stat"><div class="label">Bonus</div><div id="sBonus" class="value">0</div></div>
+        <div class="stat"><div class="label">Total</div><div id="sTotal" class="value">0</div></div>
+        <div class="stat"><div class="label">Experts</div><div id="sExperts" class="value good">0</div></div>
+        <div class="stat"><div class="label">Layers</div><div id="sLayers" class="value good">0</div></div>
+        <div class="stat"><div class="label">500× gens</div><div id="s500" class="value good">0</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Score over time (training) · per expert</h2>
+      <canvas id="scoreChart" height="160"></canvas>
+    </div>
+    <div class="card">
+      <h2>Accumulated points — max &amp; avg per expert</h2>
+      <canvas id="accumChart" height="160"></canvas>
     </div>
     <div class="card">
       <h2>Compressed-token parity ≈ token generation (top-100 window)</h2>
       <div id="compBar" style="display:grid; gap:8px;"></div>
     </div>
     <div class="card">
-      <h2>Teacher — total prompt + output (live)</h2>
-      <div style="font-size:12px;color:#8b949e;margin-bottom:6px">prompt <span id="teachPromoteCount" style="color:#3fb950"></span> · output <span id="teachOutCount" style="color:#58a6ff"></span> tokens</div>
-      <div id="teachOut" class="teacher-out"><div style="color:#8b949e">waiting for teacher output…</div></div>
+      <h2>Teacher — prompt &amp; output (live, two windows)</h2>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div>
+          <div style="font-size:12px;color:#58a6ff;margin-bottom:6px">prompt <span id="teachPromoteCount"></span></div>
+          <div id="teachPromptWin" class="teacher-out" style="max-height:220px;"><div style="color:#8b949e">waiting for teacher prompt…</div></div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#3fb950;margin-bottom:6px">output <span id="teachOutCount"></span></div>
+          <div id="teachOut" class="teacher-out" style="max-height:220px;"><div style="color:#8b949e">waiting for teacher output…</div></div>
+        </div>
+      </div>
     </div>
     <div class="card">
       <h2>New-token system · current new tokens</h2>
@@ -83,25 +109,15 @@
 
   <!-- RIGHT: live stats + top-100 tokens -->
   <div style="display:grid; gap:16px;">
-    <div class="card">
-      <h2>Live statistics</h2>
-      <div class="stats">
-        <div class="stat"><div class="label">Step</div><div id="sStep" class="value">0</div></div>
-        <div class="stat"><div class="label">Base score</div><div id="sBase" class="value">0</div></div>
-        <div class="stat"><div class="label">Bonus</div><div id="sBonus" class="value">0</div></div>
-        <div class="stat"><div class="label">Total</div><div id="sTotal" class="value">0</div></div>
-        <div class="stat"><div class="label">Experts</div><div id="sExperts" class="value good">0</div></div>
-        <div class="stat"><div class="label">Layers</div><div id="sLayers" class="value good">0</div></div>
-        <div class="stat"><div class="label">500× gens</div><div id="s500" class="value good">0</div></div>
+    <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px;" class="moe-row">
+      <div class="card" id="moeCard">
+        <h2>MoE active experts · layers</h2>
+        <div id="moe" style="font-size:13px;"></div>
       </div>
-    </div>
-    <div class="card" id="moeCard">
-      <h2>MoE active experts · layers</h2>
-      <div id="moe" style="font-size:13px;"></div>
-    </div>
-    <div class="card">
-      <h2>Total score by expert (each its own color)</h2>
-      <div id="expertScores" style="display:grid; gap:8px;"></div>
+      <div class="card">
+        <h2>Score by expert (each its own color)</h2>
+        <div id="expertScores" style="display:grid; gap:8px;"></div>
+      </div>
     </div>
     <div class="card">
       <h2>Top-100 tokens (next-5 window)</h2>
@@ -220,40 +236,76 @@ function expColor(name) {
   const n = parseInt(String(name).replace(/[^0-9]/g, ""), 10);
   return EXPERT_COLORS[(isNaN(n) ? 0 : n - 1) % EXPERT_COLORS.length];
 }
+const yScaleOpts = {
+  ticks: { color: "#8b949e" },
+  // Auto-scale cleanly: always start at 0 and let the chart pick a nice max.
+  beginAtZero: true,
+  grace: "5%",
+};
 const scoreChart = new Chart(document.getElementById("scoreChart"), {
   type: "line",
+  data: { labels: [], datasets: [] },
+  options: {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    scales: { x: { ticks: { color: "#8b949e", maxTicksLimit: 12 } }, y: yScaleOpts },
+    // Per-expert colors are identified in the "Score by expert" panel (colored
+    // chips). Hide the 50+ item legend here so it doesn't eat chart space.
+    plugins: {
+      legend: { display: false },
+    },
+  },
+});
+// Second chart: accumulated point MAX and AVG across experts over time.
+const accumChart = new Chart(document.getElementById("accumChart"), {
+  type: "line",
   data: { labels: [], datasets: [
-    { label: "Total", data: [], borderColor: "#ffffff", borderWidth: 2, tension: .3, pointRadius: 0 },
+    { label: "max", data: [], borderColor: "#f778ba", backgroundColor: "#f778ba22", borderWidth: 2, tension: .3, pointRadius: 0 },
+    { label: "avg", data: [], borderColor: "#a371f7", backgroundColor: "#a371f722", borderWidth: 2, tension: .3, pointRadius: 0 },
   ] },
-  options: { responsive: true, animation: false, scales: { x: { ticks: { color: "#8b949e", maxTicksLimit: 12 } }, y: { ticks: { color: "#8b949e" } } }, plugins: { legend: { labels: { color: "#e6edf3", boxWidth: 10, font: { size: 9 } } } } }
+  options: {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    scales: { x: { ticks: { color: "#8b949e", maxTicksLimit: 12 } }, y: yScaleOpts },
+    plugins: { legend: { position: "bottom", labels: { color: "#e6edf3", boxWidth: 10, boxHeight: 10, font: { size: 9 } } } },
+  },
 });
 // Track per-expert chart datasets so we only (re)create them on expert changes.
 let expertChartDatasets = {};
 
 function renderCharts(d) {
   const recent = d.recent || [];
-  scoreChart.data.labels = recent.map(r => r.step);
-  scoreChart.data.datasets[0].data = recent.map(r => r.total_score);
-  scoreChart.data.datasets[0].label = "Total";
-  // One colored line PER EXPERT from their cumulative_scores across recent steps.
+  const steps = recent.map(r => r.step);
   const last = recent[recent.length - 1];
   const experts = last?.moe?.cumulative_scores ? Object.keys(last.moe.cumulative_scores).sort((a, b) => (parseInt(a.replace(/\D/g,"")||0) - parseInt(b.replace(/\D/g,"")||0))) : [];
-  // Remove datasets for experts that no longer exist.
-  scoreChart.data.datasets = [scoreChart.data.datasets[0]].concat(
-    experts.map(name => {
+
+  // ---- SCORE CHART: one colored line PER EXPERT (no more "Total" line) ----
+  scoreChart.data.labels = steps;
+  const kept = new Set(experts);
+  // Create datasets for experts we haven't seen yet.
+  for (const name of experts) {
+    if (!expertChartDatasets[name]) {
       const color = expColor(name);
-      if (!expertChartDatasets[name]) {
-        expertChartDatasets[name] = { label: name, data: [], borderColor: color, backgroundColor: color + "22", tension: .3, pointRadius: 0, borderWidth: 1.5 };
-      }
-      return expertChartDatasets[name];
-    })
-  );
-  scoreChart.data.datasets.forEach((ds, i) => {
-    if (i === 0) return;
-    const name = ds.label;
-    ds.data = recent.map(r => (r.moe?.cumulative_scores || {})[name] ?? null);
+      expertChartDatasets[name] = { label: name, data: [], borderColor: color, backgroundColor: color + "22", tension: .3, pointRadius: 0, borderWidth: 1.5 };
+    }
+  }
+  scoreChart.data.datasets = Object.values(expertChartDatasets).filter(ds => kept.has(ds.label));
+  scoreChart.data.datasets.forEach(ds => {
+    ds.data = recent.map(r => (r.moe?.cumulative_scores || {})[ds.label] ?? null);
   });
   scoreChart.update();
+
+  // ---- ACCUM CHART: max & avg of cumulative point per step ----
+  accumChart.data.labels = steps;
+  accumChart.data.datasets[0].data = recent.map(r => {
+    const cs = r.moe?.cumulative_scores || {};
+    const vals = Object.values(cs).filter(v => Number.isFinite(v));
+    return vals.length ? Math.max(...vals) : null;
+  });
+  accumChart.data.datasets[1].data = recent.map(r => {
+    const cs = r.moe?.cumulative_scores || {};
+    const vals = Object.values(cs).filter(v => Number.isFinite(v));
+    return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : null;
+  });
+  accumChart.update();
 
   // Compressed-token parity bar: for each recent step show student tokens vs
   // whether the compressed token (~token generation) matched (500x).
@@ -342,13 +394,22 @@ function renderMoe(d) {
 function renderTeacher(d) {
   const out = d.teacher_output || [];
   document.getElementById("teachPromoteCount").textContent = "(" + (d.teacher_prompt_output_tokens ?? "?") + " total)";
-  document.getElementById("teachOutCount").textContent = "(" + out.length + ")";
+  document.getElementById("teachOutCount").textContent = "(" + out.length + " tokens)";
   // Keep the prompt editor in sync with the live base prompt (only when the
   // user isn't mid-editing it).
   const cp = document.getElementById("cPrompt");
   if (cp && document.activeElement !== cp) {
     cp.value = d.teacher_prompt ?? cp.value;
   }
+  // PROMPT window: show the base prompt (head) — separate from the output.
+  const pw = document.getElementById("teachPromptWin");
+  const promptText = String(d.teacher_prompt ?? d.prompt ?? "");
+  pw.innerHTML =
+    `<div style="color:#8b949e;margin-bottom:4px">prompt head (${promptText.length} chars${promptText.length > 600 ? ", truncated" : ""}):</div>` +
+    `<div style="word-break:break-word;color:#58a6ff">${promptText.slice(0, 600).replace(/</g, "&lt;")}${promptText.length > 600 ? "…" : ""}</div>`;
+  pw.scrollTop = 0;
+
+  // OUTPUT window: the teacher's emitted tokens, separate.
   const el = document.getElementById("teachOut");
   if (!out.length) { el.innerHTML = '<div style="color:#8b949e">waiting for teacher output…</div>'; return; }
   // Cap the rendered token list so the panel doesn't grow forever (show last 100).
@@ -356,9 +417,8 @@ function renderTeacher(d) {
   const html = shown.map((t, i) =>
     `<span class="tok" title="token ${out.length - shown.length + i}">${String(t).replace(/</g, "&lt;")}</span>`
   ).join(" ");
-  el.innerHTML = `<div style="color:#8b949e;margin-bottom:4px">total prompt + output (${d.teacher_prompt_output_tokens ?? "?"} tokens)</div>` +
-    `<div style="color:#8b949e;margin-bottom:2px">— output tokens (${out.length}${shown.length < out.length ? `, showing last ${shown.length}` : ""}):</div>${html}` +
-    `<div style="color:#8b949e;margin-top:8px;margin-bottom:2px">— full prompt head:</div><div style="word-break:break-word">${String(d.prompt || d.teacher_prompt || "").slice(0, 600).replace(/</g, "&lt;")}${String(d.prompt || "").length > 600 ? "…" : ""}</div>`;
+  el.innerHTML =
+    `<div style="color:#8b949e;margin-bottom:2px">— output tokens (${out.length}${shown.length < out.length ? `, showing last ${shown.length}` : ""}):</div>${html}`;
   el.scrollTop = el.scrollHeight;
 }
 
