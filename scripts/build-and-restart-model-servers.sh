@@ -16,8 +16,8 @@
 #   ./scripts/build-and-restart-model-servers.sh --rebuild  # rebuild llama-server, then restart
 #   ./scripts/build-and-restart-model-servers.sh --check    # only probe /health
 # Env overrides (defaults match the current box layout):
-#   LLAMA_SRC     llama.cpp source dir          (default: /nzk/git/llama.cpp)
-#   LLAMA_BIN     llama-server binary           (default: $LLAMA_SRC/build-cuda/bin/llama-server)
+#   LLAMA_SRC     llama.cpp source dir          (default: ./gitrepos/llama-direct-token-input)
+#   LLAMA_BIN     llama-server binary           (default: $LLAMA_SRC/build/bin/llama-server)
 #   MODEL_27B     27B .gguf path                 (default: /mnt/data/sda4/models/Bonsai-27B-Q1_0.gguf)
 #   MODEL_4B      4B .gguf path                  (default: /nzk/models/Bonsai-4B-Q1_0.gguf)
 #   FLEET_PORT    4B fleet base port             (default: 6465, five instances 6465-6469)
@@ -27,8 +27,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 MODE="${1:-restart}"     # restart | rebuild | check
-LLAMA_SRC="${LLAMA_SRC:-/nzk/git/llama.cpp}"
-LLAMA_BIN="${LLAMA_BIN:-$LLAMA_SRC/build-cuda/bin/llama-server}"
+LLAMA_SRC="${LLAMA_SRC:-$PWD/gitrepos/llama-direct-token-input}"
+LLAMA_BIN="${LLAMA_BIN:-$LLAMA_SRC/build/bin/llama-server}"
 MODEL_27B="${MODEL_27B:-/mnt/data/sda4/models/Bonsai-27B-Q1_0.gguf}"
 MODEL_4B="${MODEL_4B:-/nzk/models/Bonsai-4B-Q1_0.gguf}"
 FLEET_PORT="${FLEET_PORT:-6465}"
@@ -57,10 +57,11 @@ rebuild() {
     echo "llama.cpp source not found: $LLAMA_SRC — skipping rebuild."
     return 0
   fi
+  local BUILD_DIR="$LLAMA_SRC/build"
   echo "==> Rebuilding llama-server from $LLAMA_SRC ..."
-  cmake -S "$LLAMA_SRC" -B "$LLAMA_SRC/build-cuda" \
+  cmake -S "$LLAMA_SRC" -B "$BUILD_DIR" \
     -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF 2>&1 | tail -3
-  cmake --build "$LLAMA_SRC/build-cuda" --target llama-server -j "$(nproc)" 2>&1 | tail -5
+  cmake --build "$BUILD_DIR" --target llama-server -j "$(nproc)" 2>&1 | tail -5
   echo "    rebuilt: $LLAMA_BIN"
 }
 
