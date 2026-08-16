@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise } from "./moe-engine.mjs";
+import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores } from "./moe-engine.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -370,31 +370,53 @@ async function run() {
         const training = trainStep(route, Math.exp(Math.min(0, tPos.chosen.logprob)), 0.5);
         sc = scoreStep({ baseMatches: base, step, is500x }); // config points/penalties
         bonusTotal = sc.bonus;
-        // Attribute the step's points across experts by each expert's routing
-        // VALUE (affinity) — only ACTIVE (top-2 routed) experts earn points, so
-        // per-expert scores differ, and the Σ still equals the total (resets
-        // each token).
+        // Round reset: if the expert state has reached steps_per_round *
+        // rounds_before_reset, reset the accumulators (keeping lastRound for
+        // display) BEFORE scoring the new round.
+        maybeResetMoeState();
+        // Attribute the step's points across ALL experts by their VALUE
+        // (affinity), so every expert shows its own points (not just the top-2
+        // routed ones). Active experts get their value-weighted share of the
+        // step's points; inactive experts keep a value-based standing share.
         const pts = base + baseP + baseEm;
-        const active = route.rows.filter((r) => r.active);
-        const vSum = active.reduce((a, r) => a + (Number(r.value) || 0), 0) || 1;
+        const vAll = route.rows.reduce((a, r) => a + (Number(r.value) || 0), 0) || 1;
+        const perExpertPoints = route.rows.map((r) => ({
+          expert: r.name,
+          score: Number((pts * ((Number(r.value) || 0) / vAll)).toFixed(4)),
+        }));
         const expertScores = route.rows.map((r) => ({
           expert: r.name,
           active: r.active,
           role: r.role,
           mutation: r.mutation,
           weight: Number(r.topk_weight) || 0,
-          // Score is the per-token points BEFORE the expert was updated this
-          // step, attributed only to active experts by their value.
-          score: Number((r.active ? pts * ((Number(r.value) || 0) / vSum) : 0).toFixed(4)),
+          score: Number((pts * ((Number(r.value) || 0) / vAll)).toFixed(4)),
+        }));
+        // Accumulate each expert's score into the persistent round state so all
+        // experts build cumulative points (visible across resets via lastRound).
+        const cumScores = accumulateExpertScores(perExpertPoints);
+        const st = route.state || {};
+        // Per-expert "guess": ONE token per expert. Each expert Ei owns the
+        // student's output position i % STUDENT_STEP, so we tag that chosen
+        // token with the expert (with its affinity/active state) for display.
+        const perExpertGuesses = route.rows.map((r, i) => ({
+          expert: r.name,
+          active: r.active,
+          value: Number(r.value).toFixed(4),
+          token: studentIds[(i % Math.max(1, studentIds.length))],
         }));
         // Surface full detail: each expert's top-k value, active flag, size,
         // layers used, num experts, per-layer training deltas, and the new
         // tokens (compressed + student new tokens this step).
         const cfg = loadConfig();
         moe = {
+          round: st.round ?? 1,
+          cumulative_scores: cumScores,
+          last_round: st.lastRound ?? null,
           num_experts: cfg?.moe?.num_experts ?? route.count,
           expert_topk: route.rows.map((r) => ({ expert: r.name, value: Number(r.value).toFixed(4), active: r.active, role: r.role, mutation: r.mutation, topk_weight: r.topk_weight })),
           expert_scores: expertScores,
+          expert_guesses: perExpertGuesses,
           active: route.rows.filter((r) => r.active).map((r) => r.name),
           layers_used: training.layers,
           layers_total: route.layer_count,
@@ -431,6 +453,7 @@ async function run() {
         ...stepRec,
         teacher_token: teacherToken,
         student_tokens: studentIds,
+        per_expert_guesses: (moe?.expert_guesses || []).map((g) => ({ expert: g.expert, token: g.token })),
         teacher_topk: (tPos.top || []).slice(0, 10).map((x) => x.token),
         student_top100_count: top100All.size,
         compressed_footprint: footprint,
@@ -489,7 +512,13 @@ async function run() {
     // Token ledger: full per-step student guesses (tokens only) so any step can
     // be reviewed later, not just the last 60.
     try {
-      fs.appendFileSync(TOKENS, JSON.stringify({ step, teacher_token: stepRec.teacher_token, teacher_prefix: teacherOutput, student_tokens: stepRec.student_tokens || [] }) + "\n");
+      fs.appendFileSync(TOKENS, JSON.stringify({
+        step,
+        teacher_token: stepRec.teacher_token,
+        teacher_prefix: teacherOutput,
+        student_tokens: stepRec.student_tokens || [],
+        per_expert_guesses: stepRec.per_expert_guesses || [],
+      }) + "\n");
     } catch { /* ledger best-effort */ }
     console.log(`  step ${step}: base=${baseScoreTotal} bonus=${bonusTotal} 500x=${fives} ${stepRec.is_500x_value_generation ? "  <<500x" : ""}`);
 

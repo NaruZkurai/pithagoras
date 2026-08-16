@@ -70,12 +70,67 @@ export function initMoeState(expertNames = ["E1","E2","E3","E4","E5"], layerCoun
     topP: {},       // per-expert top-p summary (persisted)
     kl: {},         // per-expert KL (persisted)
     output: {},     // per-expert output signal history (persisted)
+    scores: {},     // per-expert CUMULATIVE points across this round (all experts, not just top-2)
     noise: 0,       // running noise accumulator
     step: 0,
+    round: 1,
+    lastRound: null, // snapshot of the previous round's final state (for comparison after reset)
   };
   return _moeState;
 }
 export function getMoeState() { return _moeState; }
+
+/**
+ * Round / reset policy. Each expert's values/scores accumulate for
+ * `steps_per_round * rounds_before_reset` total steps, then RESET (fresh start)
+ * while preserving a `lastRound` snapshot of the final values so the UI can
+ * still show the previous round's numbers. The user controls how many rounds
+ * pass before the reset via config training.rounds_before_reset.
+ */
+export function maybeResetMoeState() {
+  if (!_moeState) return false;
+  const t = loadConfig()?.training || {};
+  const stepsPerRound = Number(t.steps_per_round ?? 5);
+  const roundsBeforeReset = Number(t.rounds_before_reset ?? 3);
+  const limit = Math.max(1, stepsPerRound * roundsBeforeReset);
+  if (_moeState.step < limit) return false;
+
+  _moeState.lastRound = {
+    round: _moeState.round,
+    expertValues: { ..._moeState.expertValues },
+    layerSizes: _moeState.layerSizes.slice(),
+    scores: { ..._moeState.scores },
+    topP: { ..._moeState.topP },
+    kl: { ..._moeState.kl },
+    output: { ..._moeState.output },
+    noise: _moeState.noise,
+    step: _moeState.step,
+  };
+  // Reset the current round accumulators (keep per-expert keys).
+  const names = Object.keys(_moeState.expertValues);
+  for (const nm of names) _moeState.expertValues[nm] = 0.5 + 0.4 * noise01((+new Date()) + nm.length);
+  _moeState.topP = {}; _moeState.kl = {}; _moeState.output = {};
+  _moeState.scores = Object.fromEntries(names.map((nm) => [nm, 0]));
+  _moeState.step = 0;
+  _moeState.round += 1;
+  console.log(`  >> MOE round reset: round ${_moeState.round} started (limit ${limit} steps)`);
+  return true;
+}
+
+/**
+ * Accumulate each expert's score into the persistent `_moeState.scores` so all
+ * experts build up their own cumulative points across a round (not just the
+ * top-2 routed experts, and not reset every token). `perExpertPoints` is an
+ * array of { expert, score }.
+ */
+export function accumulateExpertScores(perExpertPoints) {
+  if (!_moeState) initMoeState();
+  for (const { expert, score } of perExpertPoints) {
+    if (expert === undefined) continue;
+    _moeState.scores[expert] = (_moeState.scores[expert] || 0) + (Number(score) || 0);
+  }
+  return _moeState.scores;
+}
 
 /**
  * Per-token noise injection into the layers, meant to be accumulated across the
@@ -194,9 +249,12 @@ export function routeExperts(topKTokens, layerNoise) {
     state: {
       noise: _moeState.noise,
       step: _moeState.step,
+      round: _moeState.round,
       topP: _moeState.topP,
       kl: _moeState.kl,
       output: _moeState.output,
+      scores: { ..._moeState.scores },
+      lastRound: _moeState.lastRound,
       expertValues: { ..._moeState.expertValues },
       layerSizes: _moeState.layerSizes.slice(),
     },

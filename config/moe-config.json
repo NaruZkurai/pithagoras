@@ -125,7 +125,7 @@
     "base": {
       "per_topk_token_match": 13,
       "per_topp_token_match": 13,
-      "per_teacher_emit_match": 1,
+      "per_teacher_emit_match": 10,
       "note": "+1 per token in student's top-n/k that's in teacher's top-n/k; +1 per token in student's top-n/p that's in teacher's top-n/p; +2 per student CHOSEN token that's in the teacher's ACTUAL emitted top-k"
     },
     "bonus": {
@@ -166,6 +166,11 @@
       "topk_gate": 0.5
     }
   },
+  "training": {
+    "steps_per_round": 5,
+    "rounds_before_reset": 3,
+    "note": "expert values/scores persist and accumulate for steps_per_round * rounds_before_reset total steps, then reset (keeping a last_round snapshot for comparison). Set rounds_before_reset to control how many rounds before the reset happens."
+  },
   "ui": {
     "adjustable": [
       "scoring.base.per_topk_token_match",
@@ -180,6 +185,8 @@
       "sampling.emit.student.top_k",
       "sampling.emit.student.top_p",
       "sampling.noise_to_layer",
+      "training.steps_per_round",
+      "training.rounds_before_reset",
       "moe.experts.*.training_formula",
       "moe.experts.*.noise",
       "layers.count",

@@ -364,13 +364,25 @@ async function loadTokens() {
 
 function renderGuess(step) {
   const el = document.getElementById("guessHistory");
-  const rec = tokenLedger.find(x => x.step === step);
+  // Steps reset on prompt change / round reset, so duplicate step numbers
+  // exist in the ledger — use the MOST RECENT entry for the selected step.
+  let rec = null;
+  for (let i = tokenLedger.length - 1; i >= 0; i--) {
+    if (tokenLedger[i].step === step) { rec = tokenLedger[i]; break; }
+  }
   if (!rec) { el.innerHTML = '<div style="color:#8b949e">no ledger entry for this step yet</div>'; return; }
   const st = rec.student_tokens || [];
+  const peg = rec.per_expert_guesses || [];
   el.innerHTML =
-    `<div style="font-size:11px;color:#8b949e;margin-bottom:6px">step ${rec.step} · teacher token «${String(rec.teacher_token).replace(/</g,"&lt;")}»</div>` +
-    st.map(t => `<span class="tok" title="token">${String(t).replace(/</g, "&lt;")}</span>`).join(" ") ||
-    '<div style="color:#8b949e">(no student tokens)</div>';
+    `<div style="font-size:11px;color:#8b949e;margin-bottom:6px">step ${rec.step} · teacher token «${String(rec.teacher_token ?? "").replace(/</g,"&lt;")}»</div>` +
+    (peg.length
+      ? `<div style="font-size:11px;color:#8b949e;margin-bottom:4px">one token per expert guess (${peg.length}):</div>` +
+        peg.map(g => {
+          const c = expColor(g.expert);
+          return `<div class="token-row"><span class="chip" style="background:${c}">${g.expert}</span><span class="tok">${String(g.token ?? "").replace(/</g, "&lt;")}</span></div>`;
+        }).join("")
+      : `<div style="font-size:11px;color:#8b949e;margin-bottom:4px">student tokens (${st.length}):</div>` +
+        st.map(t => `<span class="tok" title="token">${String(t).replace(/</g, "&lt;")}</span>`).join(" ") || '<div style="color:#8b949e">(no tokens)</div>');
 }
 
 document.getElementById("gRange")?.addEventListener("input", () => {
@@ -389,7 +401,9 @@ function renderTokens(d) {
   const last = recent[recent.length - 1];
   if (!last || !last.student_tokens) { el.innerHTML = ""; return; }
   const div = document.createElement("div");
+  const peg = (last.per_expert_guesses || []).map(g => `${g.expert}:«${g.token ?? ""}»`).join(" ");
   div.textContent = `step ${last.step}: teacher «${last.teacher_token}» → [${last.student_tokens.join(" ")}]` +
+    (peg ? ` experts[${peg}]` : "") +
     (last.base_score_total !== undefined ? ` | base+${last.base_step_score} total ${last.total_score}` : "") +
     (last.is_500x_value_generation ? "  ★500×" : "");
   el.appendChild(div);
