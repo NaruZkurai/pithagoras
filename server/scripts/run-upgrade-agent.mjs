@@ -305,23 +305,28 @@ function buildProjectContext(compact = false) {
       "# PROJECT (compact — small-context executor)",
       "",
       "cwd IS the project root; paths are RELATIVE (no /workspace mount).",
-      "WRITE-FIRST: you must EDIT a file this turn. Do not read more than ONE " +
-        "file before you make a change — reading 2+ files without writing is a " +
-        "FAIL. Pick a small, real improvement to the augmentation path and " +
-        "REWRITE that file's content with the write/edit tool now.",
+      "Make ONE small, VERIFIED edit now. Then run `node --check <file>`.",
       "",
-      "Smallest safe, verified edit — pick ONE of these and do it immediately:",
-      "  1. scripts/augment-500mb.mjs — already works (targets 127.0.0.1:6465). " +
-        "Improve it in place: e.g. add a --dry-run flag, add a guards clause, " +
-        "or fix a small robustness issue. Do NOT rewrite the whole file.",
-      "  2. server/scripts/run-upgrade-agent.mjs — a small hardening win.",
-      "  3. server/src/pi/project-token-tools.ts — a small correctness fix.",
+      "CONCRETE EDIT (do this exactly; it is a real, safe improvement):",
+      "In scripts/augment-500mb.mjs, the run() function does a web fetch in " +
+        "complete() that can throw a network error. Add a safe guard so a " +
+        "single failed teacher sample cannot crash the whole collect run: " +
+        "wrap the `const out = await complete(url, prompt);` inside " +
+        "collectTeacher's try/catch so a transport error logs and continues " +
+        "(the per-sample try/catch already exists — if it is missing, add it).",
       "",
-      "Steps: (a) open the file you chose with ONE read, (b) write the edited " +
-        "content, (c) run `node --check <file>` (the .mjs must be valid plain JS " +
-        "- NO TypeScript annotations in .mjs).",
-      "If you cannot make a safe edit, that is a FAIL - do not end the turn with " +
-        "only reading or prose. Make the edit.",
+      "Simplest acceptable edit — DO ONE of these with a write/edit tool:",
+      "A) In collectTeacher, ensure each teacher sample is wrapped so one HTTP " +
+        "500/timeout is caught and logged, not fatal.",
+      "B) Or add a `--dry-run` guard at the top of run() that prints the steps " +
+        "and returns before any network call, when process.argv includes " +
+        "--dry-run.",
+      "",
+      "Steps: (a) ONE read of scripts/augment-500mb.mjs, (b) write the edited " +
+        "content with the edit tool, (c) run `node --check scripts/" +
+        "augment-500mb.mjs` to prove it is valid plain JS.",
+      "Do NOT touch package.json or any lockfile. Do NOT end the turn without " +
+        "an edit + a node --check you ran and saw pass.",
       "",
     ].join("\n");
     return lines;
