@@ -168,7 +168,14 @@ export function updateLosingExperts() {
   const every = Math.max(1, Number(policy.losing_experts_update_every ?? 5));
   if (_moeState.step === 0 || _moeState.step % every !== 0) return null;
   const nExp = moeScoresSize();
-  const losingCount = Math.max(1, Math.min(nExp, Number(policy.update_losing_experts ?? 2)));
+  // AUTOMATIC by default: when update_losing_experts is 0 / "auto", refresh the
+  // bottom ~15% of experts (min 1) so the count adapts to total expert count
+  // instead of being a hardcoded manual number.
+  const raw = policy.update_losing_experts;
+  const auto = (raw === undefined || raw === null || raw === 0 || raw === "auto");
+  const losingCount = auto
+    ? Math.max(1, Math.round(nExp * 0.15))
+    : Math.max(1, Math.min(nExp, Number(raw) || 2));
   const names = Object.keys(_moeState.expertValues);
   const ranked = names.slice().sort((a, b) => (_moeState.scores[b] || 0) - (_moeState.scores[a] || 0));
   const losing = ranked.slice(ranked.length - losingCount);
@@ -181,7 +188,7 @@ export function updateLosingExperts() {
     _moeState.expertValues[nm] = Math.max(0, Math.min(1, seeded));
     _moeState.scores[nm] = 0; // reset the losing expert's score
   }
-  console.log(`  >> update losing experts (every ${every} steps): [${losing.join(",") || "none"}]`);
+  console.log(`  >> update losing experts (every ${every} steps, auto=${auto}, count ${losingCount}): [${losing.join(",") || "none"}]`);
   return losing;
 }
 

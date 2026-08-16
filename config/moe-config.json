@@ -10,7 +10,7 @@
  },
  "moe": {
   "num_experts": 44,
-  "always_active": 6,
+  "always_active": 44,
   "topk_route": 6,
   "experts": {
    "E1": {
@@ -386,13 +386,13 @@
    "note": "500x when the 5-token compression footprint token appears in the top-k of the next-5 AND a match is in the top-100 of the next 5 generated tokens"
   },
   "penalties": {
-   "overconfidence": 6,
+   "overconfidence": 100000,
    "redundant_expert": 0,
    "note": "subtract from total when flagged; adjust live via UI"
   }
  },
  "sampling": {
-  "view_top_k": 500,
+  "view_top_k": 40,
   "emit": {
    "teacher": {
     "top_k": 20,
@@ -422,10 +422,10 @@
   "note": "expert values/scores persist and accumulate for steps_per_round * rounds_before_reset total steps, then reset (keeping a last_round snapshot for comparison). Set rounds_before_reset to control how many rounds before the reset happens."
  },
  "expert_policy": {
-  "top_n_survive": 6,
+  "top_n_survive": 10,
   "update_non_top": true,
-  "update_losing_experts": 44,
-  "losing_experts_update_every": 10,
+  "update_losing_experts": "auto",
+  "losing_experts_update_every": 100,
   "reset_from_last_window": false,
   "note": "at each round reset: top_n_survive experts keep their values. update_losing_experts = how many of the WORST (weakest) experts get updated; every losing_experts_update_every steps those losing experts are re-seeded from the previous window's data (reset_from_last_window=true) or fresh. All adjustable.",
   "bottom_m_refresh": 2

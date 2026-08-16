@@ -168,7 +168,7 @@
         <div class="label" style="font-size:11px;color:#8b949e;margin-bottom:4px">Expert update policy (top-n survive · update losing experts)</div>
         <div class="stats" style="grid-template-columns:1fr 1fr; align-items:end;">
           <div class="stat"><div class="label">Top-n survive</div><input id="cTopN" type="number" step="1" min="0" value="3" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
-          <div class="stat"><div class="label">Update losing experts (how many)</div><input id="cLosing" type="number" step="1" min="0" value="2" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+          <div class="stat"><div class="label">Update losing experts</div><div style="font-size:12px;color:#3fb950;margin-top:6px;padding:6px;background:#0d1117;border:1px solid #30363d;border-radius:6px;">automatic (~15%)</div></div>
           <div class="stat"><div class="label">Update losing experts every N steps</div><input id="cLosingEvery" type="number" step="1" min="1" value="5" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
           <div class="stat"><div class="label"><label style="display:flex;gap:6px;align-items:center;font-size:12px;color:#e6edf3;margin-top:6px"><input id="cUpdMid" type="checkbox" checked> Update non-top</label></div></div>
           <div class="stat"><div class="label"><label style="display:flex;gap:6px;align-items:center;font-size:12px;color:#e6edf3;margin-top:6px"><input id="cFromLast" type="checkbox" checked> Reset from last window</label></div></div>
@@ -191,6 +191,21 @@ const CURRENT_URL = "http://127.0.0.1:4199/";
 const TOKENS_URL = "http://127.0.0.1:4199/tokens";
 let es = null;
 let pollTimer = null;
+
+// Memoize panel rendering: only touch the DOM (innerHTML) when the content
+// actually CHANGED. This preserves text selection + scroll + cursor while the
+// user copies from a panel even when paused or while content is static — the
+// panel is not re-rendered on every SSE tick if nothing about it changed.
+const _memo = {};
+function memoRender(key, sig, render) {
+  if (_memo[key] === sig) return false; // unchanged → leave the DOM alone
+  _memo[key] = sig;
+  render();
+  return true;
+}
+// Cheap-but-effective signature of the parts that matter for each content panel.
+function sigOf(...parts) { return JSON.stringify(parts); }
+
 function applyData(d) {
   renderStats(d);
   renderCharts(d);
@@ -311,15 +326,20 @@ function renderCharts(d) {
 
   // Compressed-token parity bar: for each recent step show student tokens vs
   // whether the compressed token (~token generation) matched (500x).
-  const bar = document.getElementById("compBar");
-  bar.innerHTML = "";
-  recent.slice(-6).reverse().forEach(r => {
-    const row = document.createElement("div");
-    row.className = "row";
-    const match = r.is_500x_value_generation ? '<span class="fivehundred">◉ 500×</span> ' : "";
-    row.innerHTML = `<div style="font-size:11px;color:#8b949e">step ${r.step} — teacher «${r.teacher_token ?? "-"}» → student [${(r.student_tokens||[]).join(" ") || "-"}] ${match}</div>
-      <div style="font-size:11px;color:#8b949e">compressed footprint ${r.compressed_footprint ?? "-"} :: inTopK ${r.in_topk ?? "-"} :: inTop100 ${r.in_top100 ?? "-"} :: base+${r.base_step_score ?? 0}</div>`;
-    bar.appendChild(row);
+  const paritySlice = recent.slice(-6);
+  const psig = sigOf(paritySlice.map(r=>[r.step, r.teacher_token, (r.student_tokens||[]).join(" "),
+        r.compressed_footprint, r.in_topk, r.in_top100, r.base_step_score, r.is_500x_value_generation]));
+  memoRender("compBar", psig, () => {
+    const bar = document.getElementById("compBar");
+    bar.innerHTML = "";
+    paritySlice.reverse().forEach(r => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const match = r.is_500x_value_generation ? '<span class="fivehundred">◉ 500×</span> ' : "";
+      row.innerHTML = `<div style="font-size:11px;color:#8b949e">step ${r.step} — teacher «${r.teacher_token ?? "-"}» → student [${(r.student_tokens||[]).join(" ") || "-"}] ${match}</div>
+        <div style="font-size:11px;color:#8b949e">compressed footprint ${r.compressed_footprint ?? "-"} :: inTopK ${r.in_topk ?? "-"} :: inTop100 ${r.in_top100 ?? "-"} :: base+${r.base_step_score ?? 0}</div>`;
+      bar.appendChild(row);
+    });
   });
 }
 
@@ -368,20 +388,27 @@ function renderMoe(d) {
   const el = document.getElementById("moe");
   const recent = d.recent || [];
   const last = recent[recent.length - 1];
-  if (!last || !last.moe) { el.innerHTML = '<div style="color:#8b949e">waiting…</div>'; return; }
-  const m = last.moe;
-  if (m.error) { el.innerHTML = `<div style="color:#d29922">moe error: ${m.error}</div>`; return; }
-  const rows = (m.expert_topk || []).map(e =>
-    `<div class="token-row"><div class="token-id">${e.expert}${e.active ? " ★" : ""}</div>` +
-    `<div class="token-bar" style="width:${Math.round((e.value||0)*100)}px"></div>` +
-    `<div class="token-val">${e.value}</div><div style="font-size:10px;color:#8b949e;flex:1">${e.mutation||e.role||""}</div></div>`
-  ).join("");
-  const layers = (m.per_layer || []).map(l =>
-    `<div class="token-row"><div class="token-id">${l.layer}</div>` +
-    `<div class="token-bar" style="width:${Math.min(100, Math.round((l.size||0)/4))}px"></div>` +
-    `<div class="token-val">${l.size}</div><div style="font-size:10px;color:#8b949e;flex:1">Δ ${l.delta?.toFixed?.(5) ?? l.delta}</div></div>`
-  ).join("");
-  const nt = m.new_tokens || {};
+  const m = last?.moe || {};
+  // Only touch the DOM when the MoE content changed — preserves selection/cursor
+  // when copying from this panel even while paused or content is static.
+  const sig = sigOf(m.num_experts, m.active, m.layers_used, m.layers_total,
+    m.training_delta, (m.expert_topk||[]).map(e=>[e.expert,e.value,e.active]),
+    (m.per_layer||[]).map(l=>[l.layer,l.size,l.delta]), m.last_snapshot,
+    m.new_tokens && (m.new_tokens.teacher||[]).join(" "), m.new_tokens && m.new_tokens.teacher_anchor);
+  memoRender("moe", sig, () => {
+    if (!last || !last.moe) { el.innerHTML = '<div style="color:#8b949e">waiting…</div>'; return; }
+    if (m.error) { el.innerHTML = `<div style="color:#d29922">moe error: ${m.error}</div>`; return; }
+    const rows = (m.expert_topk || []).map(e =>
+      `<div class="token-row"><div class="token-id">${e.expert}${e.active ? " ★" : ""}</div>` +
+      `<div class="token-bar" style="width:${Math.round((e.value||0)*100)}px"></div>` +
+      `<div class="token-val">${e.value}</div><div style="font-size:10px;color:#8b949e;flex:1">${e.mutation||e.role||""}</div></div>`
+    ).join("");
+    const layers = (m.per_layer || []).map(l =>
+      `<div class="token-row"><div class="token-id">${l.layer}</div>` +
+      `<div class="token-bar" style="width:${Math.min(100, Math.round((l.size||0)/4))}px"></div>` +
+      `<div class="token-val">${l.size}</div><div style="font-size:10px;color:#8b949e;flex:1">Δ ${l.delta?.toFixed?.(5) ?? l.delta}</div></div>`
+    ).join("");
+    const nt = m.new_tokens || {};
   const numActive = (m.active || []).length;
   const hdr = document.querySelector("#moeCard h2") || document.querySelector("h2");
   if (hdr) hdr.textContent = `MoE active experts (top-${numActive || m.num_experts || "?"}) · layers`;
@@ -391,6 +418,7 @@ function renderMoe(d) {
     `<div style="font-size:12px;margin-bottom:4px">expert top-k values:</div>` + rows +
     (layers ? `<div style="font-size:12px;margin-top:6px">layer sizes (training Δ):</div>` + layers : "") +
     (m.last_snapshot ? `<div style="font-size:11px;color:#8b949e;margin-top:6px">saved: ${m.last_snapshot}</div>` : "");
+  });
 }
 
 function renderTeacher(d) {
@@ -403,25 +431,30 @@ function renderTeacher(d) {
   if (cp && document.activeElement !== cp) {
     cp.value = d.teacher_prompt ?? cp.value;
   }
-  // PROMPT window: show the base prompt (head) — separate from the output.
-  const pw = document.getElementById("teachPromptWin");
+  // Only rebuild the prompt/output windows when their content changed, so
+  // selecting/copying inside them isn't reset (even while paused / static).
   const promptText = String(d.teacher_prompt ?? d.prompt ?? "");
-  pw.innerHTML =
-    `<div style="color:#8b949e;margin-bottom:4px">prompt head (${promptText.length} chars${promptText.length > 600 ? ", truncated" : ""}):</div>` +
-    `<div style="word-break:break-word;color:#58a6ff">${promptText.slice(0, 600).replace(/</g, "&lt;")}${promptText.length > 600 ? "…" : ""}</div>`;
-  pw.scrollTop = 0;
+  const sig = sigOf(promptText.slice(0, 600), out.length, out.slice(-100).join("\u0000"));
+  memoRender("teacher", sig, () => {
+    // PROMPT window: show the base prompt (head) — separate from the output.
+    const pw = document.getElementById("teachPromptWin");
+    pw.innerHTML =
+      `<div style="color:#8b949e;margin-bottom:4px">prompt head (${promptText.length} chars${promptText.length > 600 ? ", truncated" : ""}):</div>` +
+      `<div style="word-break:break-word;color:#58a6ff">${promptText.slice(0, 600).replace(/</g, "&lt;")}${promptText.length > 600 ? "…" : ""}</div>`;
+    pw.scrollTop = 0;
 
-  // OUTPUT window: the teacher's emitted tokens, separate.
-  const el = document.getElementById("teachOut");
-  if (!out.length) { el.innerHTML = '<div style="color:#8b949e">waiting for teacher output…</div>'; return; }
-  // Cap the rendered token list so the panel doesn't grow forever (show last 100).
-  const shown = out.slice(-100);
-  const html = shown.map((t, i) =>
-    `<span class="tok" title="token ${out.length - shown.length + i}">${String(t).replace(/</g, "&lt;")}</span>`
-  ).join(" ");
-  el.innerHTML =
-    `<div style="color:#8b949e;margin-bottom:2px">— output tokens (${out.length}${shown.length < out.length ? `, showing last ${shown.length}` : ""}):</div>${html}`;
-  el.scrollTop = el.scrollHeight;
+    // OUTPUT window: the teacher's emitted tokens, separate.
+    const el = document.getElementById("teachOut");
+    if (!out.length) { el.innerHTML = '<div style="color:#8b949e">waiting for teacher output…</div>'; return; }
+    // Cap the rendered token list so the panel doesn't grow forever (show last 100).
+    const shown = out.slice(-100);
+    const html = shown.map((t, i) =>
+      `<span class="tok" title="token ${out.length - shown.length + i}">${String(t).replace(/</g, "&lt;")}</span>`
+    ).join(" ");
+    el.innerHTML =
+      `<div style="color:#8b949e;margin-bottom:2px">— output tokens (${out.length}${shown.length < out.length ? `, showing last ${shown.length}` : ""}):</div>${html}`;
+    el.scrollTop = el.scrollHeight;
+  });
 }
 
 function renderExpertScores(d) {
@@ -429,9 +462,11 @@ function renderExpertScores(d) {
   const recent = d.recent || [];
   const last = recent[recent.length - 1];
   const esScores = (last?.moe?.expert_scores) || [];
-  if (!esScores.length) { el.innerHTML = '<div style="color:#8b949e">waiting for expert scores…</div>'; return; }
   const sb = last?.score_breakdown || {};
-  el.innerHTML = esScores.map(e => {
+  const sig = sigOf((esScores||[]).map(e=>[e.expert,e.score,e.active]), d.total_score, last?.step, sb);
+  memoRender("expertScores", sig, () => {
+    if (!esScores.length) { el.innerHTML = '<div style="color:#8b949e">waiting for expert scores…</div>'; return; }
+    el.innerHTML = esScores.map(e => {
     const c = expColor(e.expert);
     const pct = Math.max(2, Math.min(100, (e.score / (d.total_score || 1)) * 100));
     return `<div class="token-row">
@@ -449,6 +484,7 @@ function renderExpertScores(d) {
    <div style="margin-top:6px;font-size:11px;color:#8b949e">
      step ${last.step}: top-k <b style="color:#58a6ff">+${sb.topk ?? 0}</b> (${sb.inK ?? 0} toks) · top-p <b style="color:#a371f7">+${sb.tpp ?? 0}</b> (${sb.inP ?? 0}) · teacher-emit <b style="color:#f778ba">+${sb.teacher_emit ?? 0}</b> (${sb.inEm ?? 0} chosen toks)
    </div>`;
+  });
 }
 
 let tokenLedger = [];
@@ -502,19 +538,23 @@ setInterval(loadTokens, 2000);
 
 function renderNewTokens(d) {
   const sys = d.new_token_system || {};
-  document.getElementById("newTokSystem").innerHTML =
-    `<div style="margin-bottom:4px"><b style="color:#58a6ff">how new tokens are created:</b></div>` +
-    `<div>${String(sys.how || "compression of output tokens into a single new token whose value = sum of their ids")}</div>` +
-    `<div style="margin-top:4px">sentinel <code>${sys.sentinel ?? "?"}</code> · input per new token <code>${sys.per_step ?? "?"}</code> · <code>${sys.create_rule || "new_token = sum(input)"}</code></div>`;
   const list = d.new_tokens_list || [];
-  const el = document.getElementById("newTokList");
-  if (!list.length) { el.innerHTML = '<div style="color:#8b949e">no new tokens created yet</div>'; return; }
-  const newest = list.slice(-40).reverse(); // show most recent 40
-  el.innerHTML = newest.map(t =>
-    `<div style="font-size:11px;padding:2px;border-bottom:1px solid #1f6feb22">` +
-    `<span style="color:#8b949e">step ${t.step}</span> · input [<span style="color:#a371f7">${(t.input||[]).join(" ")}</span>] → <b style="color:${t.created ? "#3fb950" : "#e6edf3"}">new ${t.new_token}</b>` +
-    (t.created ? ' <span class="fivehundred">★created</span>' : "") + `</div>`
-  ).join("");
+  const newest = list.slice(-40).reverse();
+  const sig = sigOf(sys.how, sys.sentinel, sys.per_step, sys.create_rule,
+    newest.map(t=>[t.step,(t.input||[]).join(" "),t.new_token,t.created]));
+  memoRender("newTokens", sig, () => {
+    document.getElementById("newTokSystem").innerHTML =
+      `<div style="margin-bottom:4px"><b style="color:#58a6ff">how new tokens are created:</b></div>` +
+      `<div>${String(sys.how || "compression of output tokens into a single new token whose value = sum of their ids")}</div>` +
+      `<div style="margin-top:4px">sentinel <code>${sys.sentinel ?? "?"}</code> · input per new token <code>${sys.per_step ?? "?"}</code> · <code>${sys.create_rule || "new_token = sum(input)"}</code></div>`;
+    const el = document.getElementById("newTokList");
+    if (!list.length) { el.innerHTML = '<div style="color:#8b949e">no new tokens created yet</div>'; return; }
+    el.innerHTML = newest.map(t =>
+      `<div style="font-size:11px;padding:2px;border-bottom:1px solid #1f6feb22">` +
+      `<span style="color:#8b949e">step ${t.step}</span> · input [<span style="color:#a371f7">${(t.input||[]).join(" ")}</span>] → <b style="color:${t.created ? "#3fb950" : "#e6edf3"}">new ${t.new_token}</b>` +
+      (t.created ? ' <span class="fivehundred">★created</span>' : "") + `</div>`
+    ).join("");
+  });
 }
 
 function renderTokens(d) {
@@ -522,6 +562,11 @@ function renderTokens(d) {
   const recent = d.recent || [];
   const last = recent[recent.length - 1];
   if (!last || !last.student_tokens) { el.innerHTML = ""; return; }
+  // Only append a new line when the step actually advanced — prevents duplicating
+  // the same line on every SSE tick while paused (and preserves the panel so
+  // copying text isn't disturbed).
+  if (_memo["tokensStep"] === last.step) return;
+  _memo["tokensStep"] = last.step;
   const div = document.createElement("div");
   const peg = (last.per_expert_guesses || []).map(g => `${g.expert}:«${g.token ?? ""}»`).join(" ");
   div.textContent = `step ${last.step}: teacher «${last.teacher_token}» → [${last.student_tokens.join(" ")}]` +
@@ -573,7 +618,6 @@ function renderPolicy(d) {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
   set("cTopN", p.top_n_survive ?? 3);
-  set("cLosing", p.update_losing_experts ?? 2);
   set("cLosingEvery", p.losing_experts_update_every ?? 5);
   chk("cUpdMid", p.update_non_top !== false);
   chk("cFromLast", p.reset_from_last_window !== false);
@@ -611,7 +655,7 @@ document.getElementById("bBase")?.addEventListener("click", () => {
     },
     expert_policy: {
       top_n_survive: Number(document.getElementById("cTopN").value || 3),
-      update_losing_experts: Number(document.getElementById("cLosing").value || 2),
+      update_losing_experts: "auto",
       losing_experts_update_every: Number(document.getElementById("cLosingEvery").value || 5),
       update_non_top: document.getElementById("cUpdMid").checked,
       reset_from_last_window: document.getElementById("cFromLast").checked,
