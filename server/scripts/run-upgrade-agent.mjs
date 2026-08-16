@@ -674,44 +674,45 @@ async function runOnce(cookie, state) {
   const upgradeTask =
     projectContext +
     "\n\n" +
-    "SELF-AUGMENTATION TASK — the KEY is the 500 MB true-ternary Bonsai-4B " +
-    "model. Build one concrete piece of the augmentation pipeline and PROVE it " +
-    "by WRITING a real source file. Do NOT stop after reading files — the " +
-    "deliverable is a written, working edit. If the model gives you empty " +
-    "responses, do not resend; just get on with writing the change.\n\n" +
+    "SELF-AUGMENTATION TASK — GROW the 500 MB true-ternary Bonsai-4B TOWARD 30B, " +
+    "in TRUE TERNARY values, distilled from the REAL 27B teacher, and COMPARE " +
+    "against the 27B.\n" +
+    "The deliverable is a WRITTEN, WORKING source edit that advances THIS " +
+    "pipeline, proven by a green build. Do NOT stop after reading; do NOT write " +
+    "random code — the mission is growing the ternary model from the 27B.\n\n" +
     "The stack that IS in place (verify, don't rediscover):\n" +
-    "- The 500 MB model: /nzk/models/Bonsai-4B-Q1_0.gguf — TRUE TERNARY Q1_0, " +
-    "served locally (llama.cpp) at http://127.0.0.1:6465 OpenAI-compatible.\n" +
-    "- llama.cpp + the direct-token fork gitrepos/llama-direct-token-input " +
-    "(llama-server, llama-tokens, llama-finetune, llama-bench) wrapped by " +
-    "scripts/train-6gb.sh.\n" +
-    "- The repo's token patterns (pre-tokenized): server/scripts/" +
-    "pre-tokenize-project.mjs writes data/project-tokens.json (~161 files, " +
-    "~1.72M tokens) and PROJECT_TOKENS.md in this workspace.\n" +
-    "- The harness that drives this loop: server/scripts/run-upgrade-agent.mjs.\n\n" +
+    "- The 500 MB model to grow: /nzk/models/Bonsai-4B-Q1_0.gguf — TRUE TERNARY " +
+    "Q1_0 (weights {-1,0,+1}), served at http://127.0.0.1:6465 OpenAI-compatible.\n" +
+    "- The REAL 27B teacher: /nzk/models/Bonsai-27B-Q1_0.gguf at " +
+    "http://127.0.0.1:41001 (its values are the benchmark).\n" +
+    "- Direct-token fork gitrepos/llama-direct-token-input (llama-server, " +
+    "llama-tokens, llama-finetune) wrapped by scripts/train-6gb.sh.\n" +
+    "- scripts/augment-500mb.mjs ALREADY WORKS (collect 27B teacher sequences → " +
+    "data/augment/train.jsonl; --grow runs llama-finetune keeping true ternary; " +
+    "--compare scores vs the 27B). Do NOT rewrite it wholesale.\n" +
+    "- scripts/compare-topk.mjs ALREADY WORKS: KV/top-k comparison vs the 27B " +
+    "using EXPANDED TOKENS + TOKEN CHUNK COMPRESSION as new tokens (each " +
+    "compressed token value = sum n1+n2+n3...; effective top-k must match the " +
+    "main only if N == sum n_j).\n\n" +
     "Deliver EXACTLY ONE of these, written as real code, then prove it builds:\n" +
-    "A) scripts/augment-500mb.mjs — a self-augmentation runner that reads " +
-    "data/project-tokens.json, selects repo token patterns as training " +
-    "sequences, and streams them to the 500 MB model at 127.0.0.1:6465 " +
-    "(llama.cpp) to produce an augmentation log / co-evolved token patterns. " +
-    "Wire it so the augmentation is verifiable (e.g. writes an output file and " +
-    "a metric). OR\n" +
-    "B) Improve ANY single real bug/simplification in the augmentation path " +
-    "(server/src/pi/*, server/src/model-server.ts, scripts/train-6gb.sh, or " +
-    "run-upgrade-agent.mjs) that makes the 500 MB self-augmentation more " +
-    "correct or faster.\n\n" +
+    "A) IMPROVE scripts/augment-500mb.mjs IN PLACE: e.g. make --grow CLI-correct " +
+    "for the true-ternary output (verify the grown GGUF is still Q1_0 via " +
+    "llama-server load or llama-tokens), or make --compare use compare-topk.mjs's " +
+    "chunk-compressed top-k parity instead of naive text overlap, or add a " +
+    "--grow chain that compounds toward more capacity while staying ternary. OR\n" +
+    "B) IMPROVE scripts/compare-topk.mjs: e.g. tighten the effective-top-k / " +
+    "KV parity metric, respect the N==sum n_j invariant, or allow per-model " +
+    "expanded-token count so the compressed stream's top-k spread can be " +
+    "compared fairly to the larger model.\n\n" +
     "STEPS — do them, don't stall:\n" +
     "1. WRITE the chosen file with a write/edit tool (or bash). A real change, " +
     "not a plan.\n" +
-    "2. Run the build/typecheck YOURSELF: npm run build -w server (and the web " +
-    "if you touched web). If it fails, FIX it until it passes — a red build is " +
-    "an automatic FAIL. Green build is part of the deliverable, not optional.\n" +
-    "3. If you built A), run it with --dry-run or a bounded MAX_BLOCKS=2 run to " +
-    "show it loads the token patterns and targets 127.0.0.1:6465. Confirm the " +
-    "generated output is real TypeScript (node --check the .mjs; the emitted " +
-    ".ts must typecheck).\n" +
-    "When done, report: the exact file you changed, the diff summary, and the " +
-    "exact build command that passed.\n\n" +
+    "2. Run the build/typecheck YOURSELF: node --check the .mjs (NO TypeScript " +
+    "annotations in .mjs), and npm run build -w server if you touched TS. Fix " +
+    "until it passes — a red build is an automatic FAIL.\n" +
+    "3. Prove it: run the touched script (e.g. node scripts/compare-topk.mjs " +
+    "--tokens 12 --chunk 3) and show real numbers against the 27B.\n" +
+    "When done, report: the exact file changed, the diff, and the passing check.\n\n" +
     "REASONING DISCIPLINE (critical — too much reasoning is the failure mode):\n" +
     "You are a reasoning model, but KEEP REASONING SHORT. Do not write long " +
     "planning essays or re-analyze what you already know. A brief 2-3 sentence " +
