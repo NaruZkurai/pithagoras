@@ -1,24 +1,30 @@
 {
   "model": {
-    "name": "bonsai-4b-ternary-moe",
-    "base_gguf": "/nzk/models/Bonsai-4B-Q1_0.gguf",
+    "name": "bonsai-30b-from-27b-moe",
+    "base_gguf": "/nzk/models/Bonsai-27B-Q1_0.gguf",
     "tokenizer_from": "/nzk/models/Bonsai-27B-Q1_0.gguf",
     "tokenizer_json": "same-vocab-as-27B (embedded in GGUF)",
     "tokenizer_n_vocab": 248320,
     "true_ternary": true,
     "save_dir": "/dev/shm/pithagoras-moe-checkpoints",
-    "n_layers": 36,
-    "n_embd": 2560,
-    "n_ffn": 9728,
-    "n_head": 32,
-    "n_head_kv": 8,
-    "n_vocab": 151669,
+    "ternary_model_dir": "/dev/shm/pithagoras-moe-checkpoints/model-30b/ternary-30b-files",
+    "ternary_model_format": "native ternary per-layer/per-expert files",
+    "n_layers": 64,
+    "n_embd": 5120,
+    "n_ffn": 17408,
+    "n_head": 24,
+    "n_head_kv": 4,
+    "n_vocab": 248320,
     "dtype": "ternary {-1,0,+1} (2-bit packed)",
-    "model_desc": "4B base (Qwen3-4B) ternarized via deterministic Q1_0 formula to {-1,0,+1} MoE"
+    "model_desc": "27B qwen35 MoE (Bonsai-27B) ternary export -> ~30B, kept in the teacher 27B MoE token space (n_vocab 248320)",
+    "compressed_token_input": false,
+    "chunk_size": 4,
+    "chunk_token_offset": 0,
+    "compressed_token_input_note": "Set true (or env COMPRESSED_INPUT=1) to feed the model CHUNKED/compressed tokens (chunk_id = vocab_offset + floor(rawId/chunk_size)) instead of raw ids; the compressed-token scoring (footprint = sum of ids) always runs."
   },
   "moe": {
-    "num_experts": 101,
-    "always_active": 101,
+    "num_experts": 50,
+    "always_active": 50,
     "topk_route": 6,
     "experts": {
       "E1": {
@@ -58,315 +64,315 @@
       },
       "E6": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert6 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E7": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert7 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E8": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert8 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E9": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert9 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E10": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert10 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E11": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert11 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E12": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert12 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E13": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert13 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E14": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert14 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E15": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert15 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E16": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert16 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E17": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert17 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E18": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert18 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E19": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert19 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E20": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert20 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E21": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert21 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E22": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert22 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E23": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert23 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E24": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert24 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E25": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert25 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E26": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert26 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E27": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert27 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E28": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert28 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E29": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert29 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E30": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert30 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E31": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert31 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E32": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert32 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E33": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert33 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E34": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert34 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E35": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert35 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E36": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert36 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E37": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert37 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E38": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert38 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E39": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert39 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E40": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert40 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E41": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert41 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E42": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert42 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E43": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert43 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E44": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert44 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E45": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert45 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E46": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert46 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E47": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert47 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E48": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert48 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E49": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert49 = avg(similar(neurons)) + noise",
         "noise": 0.1
       },
       "E50": {
         "role": "mutation",
-        "mutation": "similar(neurons E1..E101) + noise",
+        "mutation": "similar(neurons E1..E50) + noise",
         "topk_weight": 1,
         "training_formula": "expert50 = avg(similar(neurons)) + noise",
         "noise": 0.1
@@ -736,9 +742,9 @@
   },
   "scoring": {
     "base": {
-      "per_topk_token_match": 5,
-      "per_topp_token_match": 5,
-      "per_teacher_emit_match": 100000,
+      "per_topk_token_match": 25,
+      "per_topp_token_match": 25,
+      "per_teacher_emit_match": 20,
       "note": "+1 per token in student's top-n/k that's in teacher's top-n/k; +1 per token in student's top-n/p that's in teacher's top-n/p; +2 per student CHOSEN token that's in the teacher's ACTUAL emitted top-k"
     },
     "bonus": {
@@ -747,11 +753,11 @@
     },
     "value_generation": {
       "compressed_token_sentinel": 999993,
-      "points_500x": 20,
+      "points_500x": 44,
       "note": "500x when the 5-token compression footprint token appears in the top-k of the next-5 AND a match is in the top-100 of the next 5 generated tokens"
     },
     "penalties": {
-      "overconfidence": 6,
+      "overconfidence": 10,
       "redundant_expert": 0,
       "note": "subtract from total when flagged; adjust live via UI"
     },
@@ -788,11 +794,11 @@
         "temperature": 0.7
       }
     },
-    "noise_to_layer": 0.1,
+    "noise_to_layer": 0.01,
     "note": "top-k sliders are capped at 100 (NOT 100k). view_top_k = how many top tokens the model looks at (logprobs); emit.* limits top-k/top-p/temperature sampling so the teacher stays coherent. noise_to_layer = per-token noise added to layers for the next output token."
   },
   "layers": {
-    "count": 101,
+    "count": 50,
     "each": {
       "training_formula": "layer_weight_adj = lr * (teacher_value - student_value) * topk_gate",
       "lr": 0.01,
@@ -809,7 +815,7 @@
     "top_n_survive": 10,
     "update_non_top": true,
     "update_losing_experts": "auto",
-    "losing_experts_update_every": 100,
+    "losing_experts_update_every": 21,
     "reset_from_last_window": false,
     "note": "at each round reset: top_n_survive experts keep their values. update_losing_experts = how many of the WORST (weakest) experts get updated; every losing_experts_update_every steps those losing experts are re-seeded from the previous window's data (reset_from_last_window=true) or fresh. All adjustable.",
     "bottom_m_refresh": 2
