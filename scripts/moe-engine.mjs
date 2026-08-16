@@ -577,42 +577,59 @@ export function compressionReward({ emittedTokens, perTokenEmitted, textLengthGe
 }
 
 /**
- * SAVE THE TRAINING STATE as a lightweight MoE checkpoint (fast, per-step, does
- * not block training). We store the REAL persistent state we are training:
- * each expert's value/gate logit, layer sizes, cumulative scores, round, and
- * the routing policy. NOTE: this is NOT the full 4B weight dump — the real
- * billions-of-param ternary {-1,0,+1} model is produced deterministically from
- * the 4B base by scripts/export_ternary_model.py (base + deterministic formula).
+ * SAVE THE TRAINING STATE as PER-EXPERT checkpoint DIFFS (small, per-expert).
+ *
+ * We do NOT dump the whole 4B model — that stays in the base GGUF. We only save,
+ * for EACH expert, the trained DELTA from the loaded base (checkpoint diff) plus
+ * its gate/value/role and whether it prefers new tokens. This is the "save the
+ * model on a per expert basis" design. Files are written to:
+ *
+ *   <save_dir>/experts/step-<n>-<ts>/<EXPERT>.json     (one diff file per expert)
+ *   <save_dir>/experts/step-<n>-<ts>/_manifest.json    (routing + step summary)
+ *
+ * The same per-expert deltas are also pushed to the in-RAM checkpoint cache
+ * (see addToCheckpointCache), bounded by the config RAM budget.
  */
 export function saveModel(step, route, training, moeState) {
-  const sv = path.join(REPO, "config", "moe", "model", "save_dir");
-  fs.mkdirSync(sv, { recursive: true });
+  const sv = path.join(REPO, "config", "moe", "model", "save_dir", "experts");
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const file = path.join(sv, `moe-state-step-${step}-${ts}.json`);
+  const dir = path.join(sv, `step-${step}-${ts}`);
+  fs.mkdirSync(dir, { recursive: true });
   const cfg = loadConfig() || {};
   const numExperts = route.count || Object.keys(cfg.moe?.experts || {}).length || 5;
   const layerCount = route.layer_count || cfg.layers?.count || 5;
   const topkRoute = route.topk_route || cfg.moe?.topk_route || 2;
   const names = route.rows.map((r) => r.name);
 
-  // Real persistent per-expert values (the training state), one per expert.
-  const expertStates = names.map((nm) => {
-    const val = _moeState?.expertValues?.[nm] ?? route.rows.find((r) => r.name === nm)?.value ?? 0.5;
+  // Per-expert DIFF from the loaded base value (Δ = current - base). Base value
+  // is the seed: 0.5 for base experts, plus a small new-token bump for bolt-ons.
+  const expertFiles = [];
+  for (const nm of names) {
     const spec = cfg.moe?.experts?.[nm] || {};
-    return {
-      name: nm,
+    const val = _moeState?.expertValues?.[nm] ?? route.rows.find((r) => r.name === nm)?.value ?? 0.5;
+    const prefersNew = spec.prefers_new_tokens === true || /^NT\d+/.test(nm);
+    const baseVal = spec.base_value ?? 0.5;
+    const delta = Number(val) - Number(baseVal);
+    const file = path.join(dir, `${nm}.json`);
+    const expertDiff = {
+      format: "expert-checkpoint-diff",
+      expert: nm,
       role: spec.role || "base",
-      mutation: spec.mutation || "none",
+      prefers_new_tokens: prefersNew,
       value: Number(val.toFixed ? val.toFixed(4) : val),
+      base_value: Number(baseVal),
+      delta: Number(delta.toFixed ? delta.toFixed(6) : delta), // diff from loaded base
       gate_logit: Number(val.toFixed ? val.toFixed(4) : val),
+      mutation: spec.mutation || "none",
       active: !!(route.rows.find((r) => r.name === nm)?.active),
+      step,
     };
-  });
+    fs.writeFileSync(file, JSON.stringify(expertDiff, null, 2));
+    expertFiles.push(file);
+  }
 
-  const snap = {
-    format: "moe-state-checkpoint", // lightweight persistent training state
-    real_model_from: "base_gguf + deterministic ternary formula -> see scripts/export_ternary_model.py",
-    base_model: cfg.model?.base_gguf,
+  const manifest = {
+    format: "moe-expert-manifest",
     step,
     ts: new Date().toISOString(),
     routing: { num_experts: numExperts, layers: layerCount, top_k: topkRoute },
@@ -622,81 +639,203 @@ export function saveModel(step, route, training, moeState) {
       n_ffn: Number(cfg.model?.n_ffn ?? 9728),
       n_layers: Number(cfg.model?.n_layers ?? 36),
     },
-    experts: expertStates,
     layer_sizes: _moeState?.layerSizes ? _moeState.layerSizes.slice() : [],
     scores: _moeState?.scores || {},
     round: _moeState?.round ?? 1,
     noise: _moeState?.noise ?? 0,
-    training: {
-      delta: training.delta,
-      perExpert: training.perExpert,
-    },
+    training: { delta: training.delta, perExpert: training.perExpert },
+    expert_files: expertFiles.map((f) => path.basename(f)),
   };
-  fs.writeFileSync(file, JSON.stringify(snap, null, 2));
-  return file;
+  const mf = path.join(dir, "_manifest.json");
+  fs.writeFileSync(mf, JSON.stringify(manifest, null, 2));
+
+  // Keep per-expert deltas in RAM (bounded by config.model.ram_cache_mb).
+  if (_moeState) {
+    const deltas = {};
+    for (const nm of names) {
+      const val = _moeState.expertValues?.[nm] ?? 0.5;
+      const baseVal = cfg.moe?.experts?.[nm]?.base_value ?? 0.5;
+      deltas[nm] = Number((val - baseVal).toFixed(6));
+    }
+    addToCheckpointCache({ step, round: _moeState.round, deltas, ts: Date.now() });
+  }
+
+  return { manifest: mf, count: expertFiles.length };
 }
+
+// ---- IN-RAM CHECKPOINT / DELTA CACHE ----
+// Keeps the last few checkpoints' per-expert diffs in memory (bounded to ~16 GB
+// worth of tiny records; actual bytes are small here since we store deltas, not
+// full weights). Provides cheap rollback / diff across recent checkpoints.
+const _CHECKPOINT_CACHE = []; // [{ step, round, deltas, ts }]
+let _cacheBytes = 0;
+const CACHE_BUDGET_BYTES = Number(process.env.MOE_RAM_CACHE_MB || 16 * 1024) * 1024 * 1024; // default 16GB
+
+export function addToCheckpointCache(entry) {
+  const bytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
+  _CHECKPOINT_CACHE.push(entry);
+  _cacheBytes += bytes;
+  // Evict oldest until under budget.
+  while (_cacheBytes > CACHE_BUDGET_BYTES && _CHECKPOINT_CACHE.length > 1) {
+    const oldest = _CHECKPOINT_CACHE.shift();
+    _cacheBytes -= Buffer.byteLength(JSON.stringify(oldest), "utf8");
+  }
+  return _CHECKPOINT_CACHE.length;
+}
+
+/** Diff (current) vs the most recent cached checkpoint: per-expert Δ per step. */
+export function diffRecentCheckpoint() {
+  const base = {
+    steps: _CHECKPOINT_CACHE.map((c) => c.step),
+    cache_entries: _CHECKPOINT_CACHE.length,
+    cache_bytes: _cacheBytes,
+    cache_budget_bytes: CACHE_BUDGET_BYTES,
+  };
+  if (_CHECKPOINT_CACHE.length < 2) return { ...base, expert_delta_trend: {}, step_delta: 0 };
+  const cur = _CHECKPOINT_CACHE[_CHECKPOINT_CACHE.length - 1];
+  const prev = _CHECKPOINT_CACHE[_CHECKPOINT_CACHE.length - 2];
+  const expertDeltaTrend = {};
+  for (const nm of Object.keys(cur.deltas)) {
+    const dNow = cur.deltas[nm] ?? 0;
+    const dPrev = prev.deltas[nm] ?? 0;
+    expertDeltaTrend[nm] = dNow - dPrev; // movement of this expert's diff
+  }
+  return { ...base, step_delta: cur.step - prev.step, expert_delta_trend: expertDeltaTrend };
+}
+
+/** Clear the in-RAM checkpoint cache. */
+export function clearCheckpointCache() { _CHECKPOINT_CACHE.length = 0; _cacheBytes = 0; }
+
 function seedBase(nm, li, k) {
   const idx = parseInt(nm.replace(/\D/g, "") || 0, 10);
   return ((+new Date()) % 1e6) + idx * 101 + li * 7 + k * 13;
 }
 
-/** List every saved MoE checkpoint in the save dir (newest first). */
+/**
+ * List every saved MoE checkpoint (per-expert diff dirs + legacy flat files),
+ * newest first. Each checkpoint has: id (dir name), step, path, mtime, size,
+ * expert_count, and a 'type' ('per-expert-diff' | 'legacy').
+ */
 export function listSnapshots() {
-  if (!fs.existsSync(SAVE_DIR)) return [];
+  const out = [];
+  const expertsDir = path.join(SAVE_DIR, "experts");
+  // Per-expert diff checkpoints: <save_dir>/experts/step-<n>-<ts>/_manifest.json
+  if (fs.existsSync(expertsDir)) {
+    try {
+      for (const dir of fs.readdirSync(expertsDir)) {
+        const dp = path.join(expertsDir, dir);
+        if (!fs.statSync(dp).isDirectory()) continue;
+        const manifestPath = path.join(dp, "_manifest.json");
+        if (!fs.existsSync(manifestPath)) continue;
+        let step = 0, round = 1, expertCount = 0, mtime = 0, size = 0;
+        try {
+          const m = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+          step = Number(m.step ?? 0);
+          round = Number(m.round ?? 1);
+          expertCount = Array.isArray(m.expert_files) ? m.expert_files.length : 0;
+        } catch {}
+        try { mtime = fs.statSync(dp).mtimeMs; } catch {}
+        try { size = fs.statSync(manifestPath).size; } catch {}
+        out.push({ id: dir, type: "per-expert-diff", step, round, expert_count: expertCount, path: dp, mtime, size });
+      }
+    } catch {}
+  }
+  // Legacy flat JSON snapshots (moe-state-step-*/ternary-moe-*).
   try {
-    return fs.readdirSync(SAVE_DIR)
-      .filter((f) => f.endsWith(".json"))
-      .map((f) => {
-        const p = path.join(SAVE_DIR, f);
-        let stat = null; try { stat = fs.statSync(p); } catch {}
-        return { file: f, path: p, mtime: stat ? stat.mtimeMs : 0, size: stat ? stat.size : 0 };
-      })
-      .sort((a, b) => b.mtime - a.mtime); // newest first
-  } catch (e) { return []; }
+    for (const f of fs.readdirSync(SAVE_DIR)) {
+      if (!f.endsWith(".json")) continue;
+      const p = path.join(SAVE_DIR, f);
+      let stat = null; try { stat = fs.statSync(p); } catch {}
+      out.push({ id: f, type: "legacy", step: 0, path: p, mtime: stat ? stat.mtimeMs : 0, size: stat ? stat.size : 0 });
+    }
+  } catch {}
+  return out.sort((a, b) => b.mtime - a.mtime);
 }
 
 /**
- * LOAD a saved 'ternary-moe-checkpoint' snapshot back into the live MoE state
- * (resume training from it). Restores per-expert gate weights -> expertValues,
- * the layer count -> layerSizes, and the routing top-k. Returns the loaded
- * summary, or throws on a bad file.
+ * LOAD a saved checkpoint back into the live MoE state (resume training).
+ * Accepts a per-expert diff directory id ('step-<n>-<ts>') or a legacy file.
+ * For per-expert diffs: re-applies each expert's value/base_value/delta onto
+ * _moeState.expertValues and restores layerSizes/scores/round from _manifest.
+ * Returns a summary, or throws on a bad checkpoint.
  */
-export function loadSnapshot(file) {
-  const p = path.isAbsolute(file) ? file : path.join(SAVE_DIR, path.basename(file));
-  if (!fs.existsSync(p)) throw new Error("snapshot not found: " + p);
-  const snap = JSON.parse(fs.readFileSync(p, "utf8"));
-  if (snap.format !== "ternary-moe-checkpoint") throw new Error("unrecognized snapshot format: " + snap.format);
+export function loadSnapshot(idOrFile) {
+  // Resolve the target.
+  let dir = null, file = null;
+  const base = idOrFile ? path.basename(idOrFile) : "";
+  if (fs.existsSync(idOrFile) && fs.statSync(idOrFile).isDirectory()) dir = idOrFile;
+  else if (fs.existsSync(path.join(SAVE_DIR, "experts", base)) && fs.statSync(path.join(SAVE_DIR, "experts", base)).isDirectory()) dir = path.join(SAVE_DIR, "experts", base);
+  else file = path.isAbsolute(idOrFile) ? idOrFile : path.join(SAVE_DIR, base);
+
+  if (dir) {
+    const manifestPath = path.join(dir, "_manifest.json");
+    if (!fs.existsSync(manifestPath)) throw new Error("checkpoint has no _manifest.json: " + dir);
+    const m = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const expertValues = {};
+    const names = [];
+    const layerCount = Math.max(1, Number(m.routing?.layers ?? m.dims?.n_layers ?? 5));
+    if (Array.isArray(m.expert_files)) {
+      for (const ef of m.expert_files) {
+        const ep = path.join(dir, path.basename(ef));
+        if (!fs.existsSync(ep)) continue;
+        const e = JSON.parse(fs.readFileSync(ep, "utf8"));
+        const val = Math.max(0, Math.min(1, Number(e.value ?? e.base_value ?? 0.5)));
+        expertValues[e.expert] = val;
+        names.push(e.expert);
+      }
+    }
+    if (!_moeState) initMoeState(names.length ? names : ["E1","E2","E3","E4","E5"], layerCount);
+    if (Object.keys(expertValues).length) _moeState.expertValues = expertValues;
+    while (_moeState.layerSizes.length < layerCount) _moeState.layerSizes.push(100);
+    _moeState.layerSizes = _moeState.layerSizes.slice(0, layerCount);
+    _moeState.noiseDeltas = Array.from({ length: layerCount }, () => 0);
+    _moeState.scores = Object.fromEntries(Object.keys(_moeState.expertValues).map((nm) => [nm, 0]));
+    _moeState.topP = {}; _moeState.kl = {}; _moeState.output = {};
+    _moeState.step = Number(m.step ?? 0);
+    _moeState.round = Number(m.round ?? 1);
+    _moeState.lastRound = null;
+    return {
+      ok: true, type: "per-expert-diff", id: path.basename(dir),
+      num_experts: Object.keys(_moeState.expertValues).length,
+      layers: layerCount, top_k: Number(m.routing?.top_k ?? 2),
+      step: _moeState.step, round: _moeState.round,
+      base_gguf: m.dims ? undefined : undefined,
+    };
+  }
+
+  // Legacy single-file snapshot.
+  if (!fs.existsSync(file)) throw new Error("checkpoint not found: " + (idOrFile || file));
+  const snap = JSON.parse(fs.readFileSync(file, "utf8"));
+  const fmt = snap.format || "";
   const names = [];
   const expertValues = {};
   const layerCount = Math.max(1, Number(snap.routing?.layers ?? snap.layers?.length ?? 5));
-  const layers = snap.layers || [];
-  for (const layer of layers) {
-    for (const ex of (layer.experts || [])) {
-      if (expertValues[ex.name] === undefined) names.push(ex.name);
-      // gate_weight is the expert's routing value (affinity proxy).
-      expertValues[ex.name] = Math.max(0, Math.min(1, Number(ex.gate_weight ?? ex.value ?? 0.5)));
+  if (snap.experts && Array.isArray(snap.experts)) {
+    for (const ex of snap.experts) {
+      expertValues[ex.name] = Math.max(0, Math.min(1, Number(ex.value ?? 0.5)));
+      names.push(ex.name);
+    }
+  } else if (Array.isArray(snap.layers)) {
+    for (const layer of snap.layers) {
+      for (const ex of (layer.experts || [])) {
+        if (expertValues[ex.name] === undefined) names.push(ex.name);
+        expertValues[ex.name] = Math.max(0, Math.min(1, Number(ex.gate_weight ?? ex.value ?? 0.5)));
+      }
     }
   }
   if (!_moeState) initMoeState(names.length ? names : ["E1","E2","E3","E4","E5"], layerCount);
-  _moeState.expertValues = Object.keys(expertValues).length
-    ? expertValues
-    : Object.fromEntries(names.map((nm, i) => [nm, 0.5]));
+  if (Object.keys(expertValues).length) _moeState.expertValues = expertValues;
   while (_moeState.layerSizes.length < layerCount) _moeState.layerSizes.push(100);
   _moeState.layerSizes = _moeState.layerSizes.slice(0, layerCount);
   _moeState.noiseDeltas = Array.from({ length: layerCount }, () => 0);
   _moeState.scores = Object.fromEntries(Object.keys(_moeState.expertValues).map((nm) => [nm, 0]));
   _moeState.topP = {}; _moeState.kl = {}; _moeState.output = {};
-  _moeState.step = 0;
-  _moeState.round = 1;
-  _moeState.lastRound = null;
+  _moeState.step = 0; _moeState.round = 1; _moeState.lastRound = null;
   return {
-    ok: true,
-    file: path.basename(p),
+    ok: true, type: fmt || "legacy", id: path.basename(file),
     num_experts: Object.keys(_moeState.expertValues).length,
-    layers: layerCount,
-    top_k: Number(snap.routing?.top_k ?? 2),
-    base_gguf: snap.model?.base_gguf,
-    tokenizer_from: snap.model?.tokenizer_from,
+    layers: layerCount, top_k: Number(snap.routing?.top_k ?? 2),
+    base_gguf: snap.model?.base_gguf, tokenizer_from: snap.model?.tokenizer_from,
   };
 }
 

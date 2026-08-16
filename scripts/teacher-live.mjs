@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, bumpMoeStep } from "./moe-engine.mjs";
+import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, bumpMoeStep, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache } from "./moe-engine.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -250,6 +250,56 @@ function startServer() {
       return;
     }
 
+    // /checkpoint GET: list saved per-expert checkpoints (newest first) + the
+    // in-RAM delta cache stats.
+    if (url === "/checkpoint" && req.method === "GET") {
+      try {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ checkpoints: listSnapshots(), ram_cache: diffRecentCheckpoint() }));
+      } catch (e) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(e.message || e) }));
+      }
+      return;
+    }
+    // /checkpoint/load POST: { id } -> load a saved per-expert checkpoint to
+    // resume training from it.
+    if (url.startsWith("/checkpoint/load") && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        try {
+          const patch = JSON.parse(body || "{}");
+          const idOrFile = patch.id || patch.file;
+          if (!idOrFile) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: false, error: "missing id" })); return; }
+          const r = loadSnapshot(idOrFile);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, loaded: r }));
+        } catch (e) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+        }
+      });
+      return;
+    }
+    // /checkpoint/cache POST: { action: "clear" } clears the in-RAM cache.
+    if (url === "/checkpoint/cache" && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        try {
+          const patch = JSON.parse(body || "{}");
+          if (patch.action === "clear") clearCheckpointCache();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ram_cache: diffRecentCheckpoint() }));
+        } catch (e) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+        }
+      });
+      return;
+    }
+
     if (url === "/tokens") {
       // Full per-step student-guess token ledger (tokens only) for review at
       // any step. If only the current step's rows are needed, ?step=N filters.
@@ -390,6 +440,9 @@ async function run() {
     step++;
     bumpMoeStep(); // advance the MoE round/step counter ONCE per harness step
     let stepRec = { step, ts: Date.now() };
+    // Function-scope fallback accumulators so the step catch handler never
+    // throws "identifier is not defined" when a request fails partway through.
+    let _b = 0, _bP = 0, _bE = 0, _cP = 0, _cmp = 0;
     try {
       // Teacher (27B) advances the shared prompt. We send the prompt as RAW
       // TOKEN IDS (direct token input) so the server continues from the exact
@@ -611,11 +664,12 @@ async function run() {
             compressed_token: COMPRESS_AS_TOKEN,
           },
         };
-        // Save the model while generating every SAVE_EVERY steps (emits a REAL
-        // sparse-MoE checkpoint, not a dense snapshot).
+        // Save the trained MoE state PER EXPERT (checkpoint diff from base)
+        // every SAVE_EVERY steps (default 25) — tiny files, one per expert.
         if (step % (Number(process.env.SAVE_EVERY) || 25) === 0) {
-          const f = saveModel(step, route, training, route.state);
-          moe.last_snapshot = f;
+          const saved = saveModel(step, route, training, route.state);
+          moe.last_snapshot = typeof saved === "string" ? saved : (saved?.manifest || `saved ${saved?.count ?? 0} expert diffs`);
+          moe.checkpoint_count = typeof saved === "object" ? saved.count : undefined;
         }
       } catch (e) {
         moe = { error: String(e.message || e) };
@@ -663,8 +717,13 @@ async function run() {
     } catch (e) {
       stepRec.error = String((e && e.message) || e) || "unknown step error";
       console.error("  !! step error:", (e && e.message) || e, e);
-      const sp = (Number(base) || 0) + (Number(baseP) || 0) + (Number(baseEm) || 0)
-        + (Number(curvePoints) || 0) + (Number(compressionPoints) || 0);
+      // The try-scoped accumulators may not be initialized — use safe fallbacks.
+      const b = Number(typeof base !== "undefined" ? base : _b) || 0;
+      const bP = Number(typeof baseP !== "undefined" ? baseP : _bP) || 0;
+      const bE = Number(typeof baseEm !== "undefined" ? baseEm : _bE) || 0;
+      const cPs = Number(typeof curvePoints !== "undefined" ? curvePoints : _cP) || 0;
+      const cmp = Number(typeof compressionPoints !== "undefined" ? compressionPoints : _cmp) || 0;
+      const sp = b + bP + bE + cPs + cmp;
       stepRec.total_score = sp;
       stepRec.step_points = sp;
     }
