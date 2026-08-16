@@ -434,13 +434,13 @@ function renderTeacher(d) {
   // Only rebuild the prompt/output windows when their content changed, so
   // selecting/copying inside them isn't reset (even while paused / static).
   const promptText = String(d.teacher_prompt ?? d.prompt ?? "");
-  const sig = sigOf(promptText.slice(0, 600), out.length, out.slice(-100).join("\u0000"));
+  const sig = sigOf(promptText, out.length, out.slice(-100).join("\u0000"));
   memoRender("teacher", sig, () => {
-    // PROMPT window: show the base prompt (head) — separate from the output.
+    // PROMPT window: show the FULL prompt (scrolls) — separate from the output.
     const pw = document.getElementById("teachPromptWin");
     pw.innerHTML =
-      `<div style="color:#8b949e;margin-bottom:4px">prompt head (${promptText.length} chars${promptText.length > 600 ? ", truncated" : ""}):</div>` +
-      `<div style="word-break:break-word;color:#58a6ff">${promptText.slice(0, 600).replace(/</g, "&lt;")}${promptText.length > 600 ? "…" : ""}</div>`;
+      `<div style="color:#8b949e;margin-bottom:4px">prompt (${promptText.length} chars):</div>` +
+      `<div style="word-break:break-word;color:#58a6ff">${promptText.replace(/</g, "&lt;")}</div>`;
     pw.scrollTop = 0;
 
     // OUTPUT window: the teacher's emitted tokens, separate.
