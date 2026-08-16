@@ -330,7 +330,14 @@ function renderCharts(d) {
   const recent = d.recent || [];
   const steps = recent.map(r => r.step);
   const last = recent[recent.length - 1];
-  const experts = last?.moe?.cumulative_scores ? Object.keys(last.moe.cumulative_scores).sort((a, b) => (parseInt(a.replace(/\D/g,"")||0) - parseInt(b.replace(/\D/g,"")||0))) : [];
+  // REAL TRAINABLE EXPERTS only — exclude the TEACHER reference from the
+  // per-expert chart (it is not a trained expert; it would render as the top
+  // "expert" line and skew the graph).
+  const experts = last?.moe?.cumulative_scores
+    ? Object.keys(last.moe.cumulative_scores)
+        .filter((k) => k !== "TEACHER")
+        .sort((a, b) => (parseInt(a.replace(/\D/g,"")||0) - parseInt(b.replace(/\D/g,"")||0)))
+    : [];
 
   // ---- SCORE CHART: one colored line PER EXPERT (no more "Total" line) ----
   scoreChart.data.labels = steps;

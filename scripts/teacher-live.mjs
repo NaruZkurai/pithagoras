@@ -595,11 +595,21 @@ function sendCurrent(extra = {}) {
   // loop (a 1.3MB current.json written synchronously every step froze the HTTP
   // UI on :4199). The UI polls/SSE reads current.json; a momentary write lag is
   // fine.
-  const json = JSON.stringify(payload, null, 2);
-  fs.writeFile(CURRENT, json, () => {});
+  //
+  // ATOMIC WRITE: write to a temp file in the same dir then rename over
+  // current.json, so current.json is NEVER left 0-byte / half-written (a giant
+  // payload that failed a direct write left current.json empty -> the UI showed
+  // "not running"/frozen with Step 0 even though the loop was stepping). On
+  // failure we keep the previous current.json rather than truncate it.
+  try {
+    const json = JSON.stringify(payload, null, 2);
+    const tmp = CURRENT + ".tmp";
+    fs.writeFileSync(tmp, json); // sync small-ish; ~bounded payload keeps it OK
+    fs.renameSync(tmp, CURRENT);
+    latest = payload;
+  } catch (e) { /* keep last good current.json on write failure */ }
   rotateHistoryIfNeeded(); // before appending, cap the oversized history file
-  fs.appendFile(HISTORY, json + "\n", () => {});
-  latest = payload;
+  try { fs.appendFileSync(HISTORY, JSON.stringify(payload) + "\n"); } catch {}
   return payload;
 }
 
@@ -1062,8 +1072,10 @@ async function run() {
         if (winRefToks && winRefToks.length) {
           teacherOutput.length = 0;
           teacherOutput.push(...winRefToks);
-          liveEtokStats.last_teacher_topk_per_pos = (winRefTopKPerPos || []).map((k) =>
-            (k || []).slice(0, 10).map((x) => ({ id: x.id, token: x.token, logprob: x.logprob }))
+          // Bound the stored per-position top-k (top-5, max 16 positions) so the
+          // payload / current.json stays small and the UI doesn't freeze.
+          liveEtokStats.last_teacher_topk_per_pos = (winRefTopKPerPos || []).slice(0, 16).map((k) =>
+            (k || []).slice(0, 5).map((x) => ({ id: x.id, token: x.token, logprob: x.logprob }))
           );
           // Feed the SAME window chunk through the e-tokenizer (Etokens.json
           // update) — the "token generated chunk of the teacher" the e-tokenizer
@@ -1898,8 +1910,10 @@ async function run() {
       teacher_prompt: PROMPT,
       teacher_output: teacherOutput,
       // The teacher's top-k distribution PER emitted token (file-loaded), so the
-      // UI can render "topk per token emitted".
-      teacher_topk_per_pos: liveEtokStats.last_teacher_topk_per_pos || [],
+      // UI can render "topk per token emitted". BOUNDED (top-5 per position,
+      // max 16 positions) so current.json doesn't blow up and the page stays
+      // responsive — the full per-position sort is kept in Etokens, not here.
+      teacher_topk_per_pos: (liveEtokStats.last_teacher_topk_per_pos || []).slice(0, 16).map((k) => (k || []).slice(0, 5)),
       teacher_prompt_output_tokens: (PROMPT + " " + teacherOutput.join(" ")).trim().split(/\s+/).length,
       recent,
       prompt: shared,
