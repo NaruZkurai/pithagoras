@@ -834,11 +834,11 @@
     },
     "compare": {
       "mode": "topk_first",
-      "identical_settings": true,
+      "identical_settings": false,
       "top_k": 20,
       "top_p": 0.95,
       "temperature": 0.7,
-      "note": "USER DIRECTIVE: for the teacher/student top-k comparison, DON'T generate new tokens \u2014 ANALYZE THE TOP-K OF THE FIRST TOKEN ONLY, AT IDENTICAL SETTINGS. mode='topk_first' requests max_tokens=1 (llama.cpp logprobs still return the full next-token top-k) so the comparison uses ONLY the first token's top-k distribution, no sequence is generated/consumed. identical_settings=true makes BOTH teacher and student use the SAME top_k/top_p/temperature above (a fair head-to-head), instead of each having its own emit settings. Set mode='sequence' to revert to the old multi-token generation comparison."
+      "note": "USER DIRECTIVE + ROOT-CAUSE FIX: analyse the teacher/student top-k head-to-head. identical_settings=false (CHANGED 2026-08-16) so the TEACHER uses top_k/top_p/temperature above (cold, coherent) while the STUDENT uses its OWN emit settings (sampling.emit.student: temperature 2.0, top_k 100, top_p 0.99) — the TQ1_0 student verifiably COLLAPSES to a single repeated token ('apart') at cold temp 0.7, flattening the score graph. Hot student sampling breaks the collapse so its top-k can overlap the teacher's coherent top-k. Both now generate a real multi-token chunk (compareN=STUDENT_STEP) instead of a single top-1 token."
     }
   },
   "sampling": {
