@@ -949,8 +949,20 @@ async function run() {
       // Fold the code-DB baseline "genuine" token values into the new-token
       // target set, so generated tokens matching real code patterns earn the
       // compression/curve reward (recognized as genuine, not random).
+      // NOTE: newTokenSet (used by curve/compression rewards) intentionally
+      // includes the RAW input tokens so those rewards stay as before.
       const newTokenSet = new Set(newTokens.flatMap((t) => [String(t.new_token), ...(t.input || []).map(String)]));
       for (const b of codeBaselineSet()) newTokenSet.add(b);
+      // GENUINE COMPRESSOR TOKEN SET: the true compressed/formulaic tokens a
+      // compressor network may emit/express — the footprint new_token values,
+      // the sentinel, and code-baseline chunk-hash values. It deliberately does
+      // NOT include the raw input tokens (those would make phase-1 compression-
+      // favor trivially true for ANY emitted token = vacuous). Used by the
+      // compressor-only constraint and the two-phase compression/reconstruction
+      // rewards so they discriminate REAL compressed emissions.
+      const compressorTokenSet = new Set(newTokens.map((t) => String(t.new_token)));
+      compressorTokenSet.add(String(COMPRESS_AS_TOKEN));
+      for (const b of codeBaselineSet()) compressorTokenSet.add(b);
       let curveRw = { reward: 0, overlapFraction: 0, matched: 0, numSlots: 0, compressedMatched: false, compressedSlotRank: -1 };
       let compressRw = { reward: 0, compressionRatio: 0, tokensSaved: 0, newTokenMatchPct: 0, appliedMultiplier: 1 };
       if (cfgRew.curve?.enabled !== false) {
@@ -1037,7 +1049,7 @@ async function run() {
           // may only score tokens that are compressor tokens (newTokenSet), never
           // the general vocabulary.
           const isCompr = isCompressorExpert(r.name) && (loadConfig()?.moe?.compressor_tokens_only ?? true);
-          const comprSet = isCompr ? newTokenSet : null;
+          const comprSet = isCompr ? compressorTokenSet : null;
           const sSetK = narrowTokenSet(st?.top || [], emitFor("student").top_k, 1);
           const isNew = isNewNetwork(r.name);
           const isMtp = r.name === "EMTP";
@@ -1059,16 +1071,18 @@ async function run() {
                         : ahead && tSetK.has(ahead.chosen.token)) m += 10; // next-token emit-match boost
             // MTP AIDED-COMPRESSION: if the MTP's forward target (ahead token) is
             // a compressed/new token, bonus it — the MTP is aiding compression by
-            // predicting the compressed next token.
-            if (phase1 && ahead && newTokenSet.has(String(ahead.chosen.token))) {
+            // predicting the compressed next token. Uses the GENUINE compressor
+            // token set so this is only meaningful for real compressed emissions.
+            if (phase1 && ahead && compressorTokenSet.has(String(ahead.chosen.token))) {
               m += newNetW; phaseInfo[i].mtpAid = newNetW;
             }
             return m;
           }
           // Phase 1 — new networks FAVOR compressed tokens: if a new network's
-          // position emitted a compressed/new token, bonus it (this is what makes
-          // the added layers become token-COMPRESSORS).
-          if (phase1 && isNew && st && newTokenSet.has(String(st.chosen.token))) {
+          // position emitted a genuine compressed token (in compressorTokenSet,
+          // NOT any raw token), bonus it — this is what makes the added layers
+          // become real token-COMPRESSORS.
+          if (phase1 && isNew && st && compressorTokenSet.has(String(st.chosen.token))) {
             m += newNetW; phaseInfo[i].p1 = newNetW; phaseInfo[i].newTok = true;
           }
           // Constrain to compressor tokens ONLY for compressor experts.
