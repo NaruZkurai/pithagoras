@@ -1614,19 +1614,29 @@ async function run() {
         // token with the expert (with its affinity/active state) for display.
         const perExpertGuesses = route.rows.map((r, i) => {
           const rawTok = studentIds[(i % Math.max(1, studentIds.length))];
-          // For a NEW-3B / COMPRESSOR expert the display token should be the
-          // E-TOKEN it is being trained to emit — a UNIQUE id outside the base
-          // tokenizer (in the reserved range) that decompresses to an identical
-          // base-tokenizer token sequence. NOT a random base token the student
-          // sampled (that was showing « 아니며», «不看», etc. — meaningless).
+          // For a NEW-3B / COMPRESSOR expert the display token is the E-TOKEN it
+          // is being trained to emit — a UNIQUE reserved-range id that
+          // decompresses to an identical base-tokenizer token sequence. It is
+          // derived PER-POSITION from the TEACHER's top-k at that position (the
+          // etoken encodes the teacher's probable token ids there), so different
+          // experts at different positions target DIFFERENT, relevant etokens —
+          // fixing the 'all experts show one static etoken' defect.
           const is3b = isNewNetwork(r.name) || isCompressorExpert(r.name);
-          if (is3b && typeof lastFpId === "number") {
-            const decomp = etoken(lastFpId);            // base tokenizer ids (identical sequence)
-            const isRec = getEtokens()?.tokens ? hasEtoken(lastFpId) : false;
-            const display = isRec
-              ? `${lastFpId}→[${(decomp || []).join(",")}]`   // unique etoken + its base tokens
-              : `${lastFpId}→[…]`;
-            return { expert: r.name, active: r.active, value: Number(r.value).toFixed(4), token: display, etoken: lastFpId, decompressed: decomp || [] };
+          if (is3b) {
+            const pos = i % Math.max(1, studentIds.length);
+            // Per-position teacher top-k ids (fall back to the current etoken).
+            let topkIds = (winRefTopKPerPos && winRefTopKPerPos[pos]) ? winRefTopKPerPos[pos].map((x) => x.id).filter((v) => Number.isFinite(Number(v))) : null;
+            if (!topkIds || !topkIds.length) topkIds = [(studentIdNums && studentIdNums.length ? studentIdNums : [0, 1, 2, 3, 4])[pos % 5], ...(winRefTopKPerPos?.[pos] || winRefTopK || []).slice(1, 4).map((x) => x.id)];
+            // Hash this position's teacher top-k ids into the reserved etoken
+            // range (deterministic, decompressible).
+            const pf = compressFootprint(topkIds.length ? topkIds : [pos + 1]);
+            const eId = pf.id;
+            const decomp = etoken(eId);
+            const isRec = getEtokens()?.tokens ? hasEtoken(eId) : false;
+            // Ensure the etoken is recorded (recallable) so it decompresses.
+            if (!isRec) putEtoken({ id: eId, tuple: topkIds.length ? topkIds : [eId], live: true, audit: `per-pos@step${step}` });
+            const display = `${eId}→[${((decomp || topkIds) || []).join(",")}]`;
+            return { expert: r.name, active: r.active, value: Number(r.value).toFixed(4), token: display, etoken: eId, decompressed: (decomp || topkIds) || [] };
           }
           // Base 27B experts: keep the student's raw token (they reproduce the
           // normal base shape, not etokens).
