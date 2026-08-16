@@ -507,11 +507,22 @@ function renderTeacher(d) {
     if (!out.length) { el.innerHTML = '<div style="color:#8b949e">waiting for teacher output…</div>'; return; }
     // Cap the rendered token list so the panel doesn't grow forever (show last 100).
     const shown = out.slice(-100);
-    const html = shown.map((t, i) =>
-      `<span class="tok" title="token ${out.length - shown.length + i}">${String(t).replace(/</g, "&lt;")}</span>`
-    ).join(" ");
+    // Per-token top-k, aligned by position (from the file-loaded per-pos top-k).
+    const perPos = Array.isArray(d.teacher_topk_per_pos) ? d.teacher_topk_per_pos : [];
+    const html = shown.map((t, i) => {
+      const abs = out.length - shown.length + i;
+      const tk = perPos[abs] || perPos[perPos.length - 1] || [];
+      const topkHtml = tk.slice(0, 8).map((x, k) =>
+        `<span class="topk" style="color:#8b949e">${x.token!=null?String(x.token).replace(/</g,"&lt;"):"?"}</span>`
+      ).join(" ");
+      return `<div class="teach-tok" style="margin-bottom:4px">
+        <span class="tok" title="token ${abs}">${String(t).replace(/</g, "&lt;")}</span>
+        <span style="color:#484f58;font-size:10px"> topk:</span>
+        <span style="font-size:10px">${topkHtml || "<i style='color:#484f58'>–</i>"}</span>
+      </div>`;
+    }).join("\n");
     el.innerHTML =
-      `<div style="color:#8b949e;margin-bottom:2px">— output tokens (${out.length}${shown.length < out.length ? `, showing last ${shown.length}` : ""}):</div>${html}`;
+      `<div style="color:#8b949e;margin-bottom:2px">— output tokens (${out.length}${shown.length < out.length ? `, showing last ${shown.length}` : ""}) with top-k per token emitted:</div>${html}`;
     el.scrollTop = el.scrollHeight;
   });
 }

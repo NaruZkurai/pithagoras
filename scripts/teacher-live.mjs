@@ -895,7 +895,9 @@ async function run() {
   let winTierIdx = 0;        // index into win.tiers
   let winStepInTier = 0;     // steps completed within the current tier
   let winRefIds = [];        // fixed reference window (teacher token ids)
+  let winRefToks = [];       // fixed reference window TEXT tokens (per position)
   let winRefTopK = null;     // teacher top-k over the reference window (shared by all)
+  let winRefTopKPerPos = []; // per-position teacher top-k lists (topk per emitted token)
   let winSeq = 0;            // sequence number (for the payload)
   let bestWinOverlap = 0;    // best student↔window overlap seen within the current tier
   let lastConvergedStep = -1;// step at which the student last hit identity_tolerance
@@ -989,20 +991,35 @@ async function run() {
           if (top.length) {
             winRefTopK = top.map((t) => ({ id: t.id, token: t.token, logprob: Number.isFinite(t.logprob) ? t.logprob : 0 }));
           }
-          // Populate the reference window ids/tokens from the file rows (the
-          // teacher_id / teacher_token recorded per row) — no teacher call.
+          // Populate the reference window ids + TEXT tokens + PER-POSITION top-k
+          // from the file rows (the LAST baseLen rows = one per emitted token).
+          // This is what lets the Teacher-Output panel show the real emitted
+          // tokens AND the top-k per token emitted — no raw numeric fallbacks.
           if (!winRefIds.length) {
-            const ids = rows.map((r) => r.teacher_id).filter((v) => Number.isFinite(Number(v)));
-            const toks = rows.map((r) => r.teacher_token).filter((t) => t !== undefined);
+            const windowRows = rows.slice(-baseLen);
+            const ids = windowRows.map((r) => r.teacher_id).filter((v) => Number.isFinite(Number(v)));
+            const toks = windowRows.map((r) => r.teacher_token).filter((t) => t !== undefined);
             winRefIds.push(...ids.slice(0, baseLen).map(Number));
+            winRefToks = toks.slice(0, baseLen);
+            // Per-position top-k lists (topk per token emitted), defaulting to
+            // the anchor top-k for rows that have none so every position shows one.
+            winRefTopKPerPos = windowRows.slice(0, baseLen).map((r, i) => {
+              const rk = Array.isArray(r?.top_k) ? r.top_k : (winRefTopK || []);
+              return rk.map((t) => ({ id: t.id, token: t.token, logprob: Number.isFinite(t.logprob) ? t.logprob : 0 }));
+            });
             teacherOutput.length = 0;
-            teacherOutput.push(...toks.slice(0, baseLen));
+            teacherOutput.push(...winRefToks);
           }
         }
         // Ensure the window has at least one token id (guard) mirroring the old
         // fallback, and always ensure a non-empty teacher top-k reference.
         if (winRefIds.length === 0) winRefIds = [2413];
+        if (winRefToks.length === 0) winRefToks = winRefIds.map((id) => {
+          const hit = (winRefTopK || []).find((x) => String(x?.id) === String(id));
+          return hit?.token != null ? hit.token : String(id);
+        });
         if (!winRefTopK || !winRefTopK.length) winRefTopK = winRefTopK || [{ id: 279, token: " the", logprob: -1 }];
+        if (!winRefTopKPerPos.length) winRefTopKPerPos = winRefToks.map(() => winRefTopK);
         // E-tokenize the file-derived teacher chunk (same tokens + top-k data
         // already recorded) — Etokens.json stays fed with NO teacher generation.
         if (winRefIds.length && loadConfig()?.etokens?.live_update !== false) {
@@ -1038,16 +1055,16 @@ async function run() {
         tPos = { chosen: { token: firstRef?.token, id: firstRef?.id, logprob: 0 }, top: winRefTopK || [] };
         teacher = [];
         // The teacher's token chunk = the fixed reference window (same first N).
-        // Populate the Teacher-output panel from it (join the reference token ids
-        // renders their text via the window's top-k tokens).
-        if (winRefIds && winRefIds.length) {
-          const refToks = [];
-          for (const id of winRefIds) {
-            const hit = (winRefTopK || []).find((x) => String(x?.id) === String(id));
-            refToks.push(hit?.token != null ? hit.token : String(id));
-          }
+        // Populate the Teacher-output panel from the recorded TEXT tokens
+        // (winRefToks) plus the per-position top-k (winRefTopKPerPos), so the
+        // panel shows the real emitted tokens AND the topk per token emitted —
+        // not raw numeric fallbacks.
+        if (winRefToks && winRefToks.length) {
           teacherOutput.length = 0;
-          teacherOutput.push(...refToks);
+          teacherOutput.push(...winRefToks);
+          liveEtokStats.last_teacher_topk_per_pos = (winRefTopKPerPos || []).map((k) =>
+            (k || []).slice(0, 10).map((x) => ({ id: x.id, token: x.token, logprob: x.logprob }))
+          );
           // Feed the SAME window chunk through the e-tokenizer (Etokens.json
           // update) — the "token generated chunk of the teacher" the e-tokenizer
           // consumes, driven by the same tokens + top-k above.
@@ -1854,6 +1871,9 @@ async function run() {
       // Teacher: the total prompt + accumulated output tokens.
       teacher_prompt: PROMPT,
       teacher_output: teacherOutput,
+      // The teacher's top-k distribution PER emitted token (file-loaded), so the
+      // UI can render "topk per token emitted".
+      teacher_topk_per_pos: liveEtokStats.last_teacher_topk_per_pos || [],
       teacher_prompt_output_tokens: (PROMPT + " " + teacherOutput.join(" ")).trim().split(/\s+/).length,
       recent,
       prompt: shared,
