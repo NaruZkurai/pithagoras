@@ -46,6 +46,28 @@ export function loadConfig() {
 
 export function saveConfig(c) { _cfg = c; fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2)); }
 
+/**
+ * Resolve where to write MoE checkpoints. On Linux the user allows INFINITE
+ * file writes IF they land on a RAM disk (tmpfs), so when model.save_dir is set
+ * (or MOE_SAVE_DIR env / /dev/shm exists) we prefer a RAM-backed path — the
+ * per-step checkpoint diff files are tiny and written constantly, and won't
+ * wear out a real disk. Falls back to the on-review config dir otherwise.
+ */
+function getSaveDir() {
+  const cfgPath = loadConfig()?.model?.save_dir;
+  if (cfgPath) return path.resolve(REPO, cfgPath);
+  if (process.env.MOE_SAVE_DIR) return process.env.MOE_SAVE_DIR;
+  // /dev/shm is tmpfs (RAM-backed) on Linux.
+  try {
+    if (fs.existsSync("/dev/shm")) {
+      const d = path.join("/dev/shm", "pithagoras-moe-checkpoints");
+      fs.mkdirSync(d, { recursive: true });
+      return d;
+    }
+  } catch {}
+  return SAVE_DIR;
+}
+
 /** Deterministic gaussian noise from a seeded/lcg value (0..1). */
 export function noise01(seed) {
   const x = Math.sin((seed % 1e9) * 12.9898) * 43758.5453;
@@ -591,7 +613,7 @@ export function compressionReward({ emittedTokens, perTokenEmitted, textLengthGe
  * (see addToCheckpointCache), bounded by the config RAM budget.
  */
 export function saveModel(step, route, training, moeState) {
-  const sv = path.join(REPO, "config", "moe", "model", "save_dir", "experts");
+  const sv = path.join(getSaveDir(), "experts");
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const dir = path.join(sv, `step-${step}-${ts}`);
   fs.mkdirSync(dir, { recursive: true });
@@ -718,7 +740,7 @@ function seedBase(nm, li, k) {
  */
 export function listSnapshots() {
   const out = [];
-  const expertsDir = path.join(SAVE_DIR, "experts");
+  const expertsDir = path.join(getSaveDir(), "experts");
   // Per-expert diff checkpoints: <save_dir>/experts/step-<n>-<ts>/_manifest.json
   if (fs.existsSync(expertsDir)) {
     try {
@@ -742,9 +764,10 @@ export function listSnapshots() {
   }
   // Legacy flat JSON snapshots (moe-state-step-*/ternary-moe-*).
   try {
-    for (const f of fs.readdirSync(SAVE_DIR)) {
+    const saveDir = getSaveDir();
+    for (const f of fs.readdirSync(saveDir)) {
       if (!f.endsWith(".json")) continue;
-      const p = path.join(SAVE_DIR, f);
+      const p = path.join(saveDir, f);
       let stat = null; try { stat = fs.statSync(p); } catch {}
       out.push({ id: f, type: "legacy", step: 0, path: p, mtime: stat ? stat.mtimeMs : 0, size: stat ? stat.size : 0 });
     }
@@ -761,11 +784,12 @@ export function listSnapshots() {
  */
 export function loadSnapshot(idOrFile) {
   // Resolve the target.
+  const saveDir = getSaveDir();
   let dir = null, file = null;
   const base = idOrFile ? path.basename(idOrFile) : "";
   if (fs.existsSync(idOrFile) && fs.statSync(idOrFile).isDirectory()) dir = idOrFile;
-  else if (fs.existsSync(path.join(SAVE_DIR, "experts", base)) && fs.statSync(path.join(SAVE_DIR, "experts", base)).isDirectory()) dir = path.join(SAVE_DIR, "experts", base);
-  else file = path.isAbsolute(idOrFile) ? idOrFile : path.join(SAVE_DIR, base);
+  else if (fs.existsSync(path.join(saveDir, "experts", base)) && fs.statSync(path.join(saveDir, "experts", base)).isDirectory()) dir = path.join(saveDir, "experts", base);
+  else file = path.isAbsolute(idOrFile) ? idOrFile : path.join(saveDir, base);
 
   if (dir) {
     const manifestPath = path.join(dir, "_manifest.json");
