@@ -36,6 +36,10 @@
     "skip_teacher_when_poor": true,
     "poor_topk_threshold": 0.1,
     "self_update_when_poor": true,
+    "new_token_base": 200000,
+    "new_token_count": 512,
+    "create_new_token_experts": true,
+    "new_token_formula_note": "USER CORRECTION: the compressed token must be a GENUINELY NEW token (a reserved id in [new_token_base, new_token_base+new_token_count)), NOT sum%n_vocab folded onto an existing vocab token. Its VALUE = the sum of the constituent token ids (footprint); its reserved id = new_token_base + (rawSum % new_token_count) — deterministic and decompressible (the rawSum is recoverable). create_new_token_experts=true makes the harness ADD a new MoE expert per distinct new token (NT<idx>) so each new token has its own network that learns to emit it, then steering/logit-bias 'convinces' the model to use that new token.",
     "compressor_role": "mutations",
     "compressor_note": "EACH COMPRESSOR MUST USE ONLY COMPRESSOR TOKENS: experts designated as compressors (role starts with 'compr' or listed in compressor_experts) may only route/emit tokens from the compressor-token set (the compressed-chunk / formulaic tokens in newTokenSet), never the general vocabulary. This is what makes the extra layers fight to become token-COMPRESSOR layers (they can only express compressed tokens). allow_new_token_output=true lets those compressor experts actually EMIT the compressed new token as part of the scored output (so 500x can fire), instead of only matching it one-directionally. skip_teacher_when_poor / self_update_when_poor: when the student top-k is BAD (best overlap < poor_topk_threshold), DON'T spend resources having the teacher generate a fresh top-k \u2014 reuse the existing reference and just update the COMPRESSION experts from the student's own generation output instead.",
     "compressor_experts": [

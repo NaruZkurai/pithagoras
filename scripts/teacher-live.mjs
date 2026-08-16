@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, bumpMoeStep, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk } from "./moe-engine.mjs";
+import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, bumpMoeStep, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk } from "./moe-engine.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -410,19 +410,67 @@ async function profileRetry(url, prompt, n, who = "teacher", tries = 3, logitBia
 }
 
 /**
- * The compression footprint: a single token ID whose VALUE represents the sum
- * of the constituent token ids (the n1+n2+n3 convention). To be a MEANINGFUL
- * token the model can actually emit/match, we fold the (potentially huge) raw
- * sum into the model's valid vocab range via modulo n_vocab — otherwise a sum
- * like 500942 (> n_vocab 248320) is out-of-vocab, can never appear in top-k,
- * and the 500x detector can never fire. Returns {id, rawSum}.
+ * THE COMPRESSION FORMULA (user-corrected):
+ *   tokens [a,b,c,e,q]  ->  newtoken index [E Token a1]
+ *
+ * The 5 raw token ids are COMPRESSED into ONE genuinely NEW token — a reserved
+ * id in [new_token_base, new_token_base + new_token_count) — NOT folded onto an
+ * existing vocab token (the old sum % n_vocab was wrong: it produced an
+ * arbitrary EXISTING token, not a new one). 
+ *
+ *  - VALUE: the new token's value = the SUM of the constituent token ids
+ *    (the n1+n2+n3 footprint, fully recoverable from the new token id via rawSum).
+ *  - INDEX (a1): newTokenId = new_token_base + (rawSum % new_token_count).
+ *    The low index (a1) is the entry in the reserved new-token table.
+ *  - EXPERT (E): each distinct new-token index is owned by its OWN added MoE
+ *    expert "ETE<a1>" (E Token a1) created dynamically (create_new_token_experts).
+ *  - "convince it to use the new token": steering (logit_bias) toward
+ *    newTokenId, and it joins the GENUINE compressor token set so phase-1
+ *    rewards its emission.
+ *
+ * Returns { id, rawSum, index, label, expert }.
  */
+const NEW_TOKEN_BASE = () => Number(loadConfig()?.moe?.new_token_base ?? 200000);
+const NEW_TOKEN_COUNT = () => Math.max(1, Number(loadConfig()?.moe?.new_token_count ?? 512));
 function compressFootprint(tokens) {
-  const nv = Number(loadConfig()?.model?.n_vocab
-    ?? loadConfig()?.model?.tokenizer_n_vocab ?? 248320);
   const rawSum = (tokens || []).reduce((a, t) => a + (Number(t) || 0), 0);
-  const id = rawSum % Math.max(1, nv); // valid in-vocab token id
-  return { id, rawSum };
+  // E Token Nx: the reserved new-token table entry (a1, a2, ...) for this chunk.
+  const index = rawSum % NEW_TOKEN_COUNT();
+  const label = `a${index + 1}`;            // a1, a2, ...
+  const expert = `ETE${label}`;             // E Token a1 -> expert name
+  // BEST BIDIRECTIONAL as TWO SEPARATE INDICES (user): the compressed new token is
+  // the pair [original-tokenizer-index, E-Token-Nx-index]:
+  //   - origIndex = the ORIGINAL tokenizer index this chunk maps from (the first
+  //     token id of the chunk = its position in the original token space).
+  //   - tokenIndex = the NEW E-Token-Nx reserved index (a1..).
+  // They are kept as two SEPARATE indices, NOT folded into one.
+  const origIndex = (tokens && tokens.length) ? (Number(tokens[0]) || 0) : 0;
+  // The composite reserved token id the model can be steered to emit stays a REAL
+  // new token (in resolved reserved range) that decompresses back to the pair.
+  const id = NEW_TOKEN_BASE() + index;
+  return { id, rawSum, index, label, expert, origIndex, tokenIndex: index, pair: [origIndex, index] };
+}
+
+// DYNAMICALLY add a NEW expert for a new token (E Token a1). Each distinct
+// new-token index owns its own added MoE expert (role "new_token", a compressor
+// that may only emit the new-token set). Registered into config moe.experts so
+// routing sees it next step; bumps moe.num_experts. Idempotent per index.
+let _newTokenExperts = new Set();
+function ensureNewTokenExpert(index, label) {
+  const moe = loadConfig()?.moe || {};
+  if (!moe.experts) moe.experts = {};
+  const name = `ETEa${index + 1}`;
+  if (_newTokenExperts.has(name)) return name;
+  moe.experts[name] = {
+    role: "new_token",
+    mutation: `new-token expert (E Token a${index + 1}) — emits only the compressed new-token id ${NEW_TOKEN_BASE() + index}`,
+    topk_weight: 1,
+    prefers_new_tokens: true,
+    noise: 0.05,
+  };
+  moe.num_experts = Object.keys(moe.experts).length;
+  _newTokenExperts.add(name);
+  return name;
 }
 
 
@@ -977,9 +1025,20 @@ async function run() {
       const studentIds = student.map((s) => s.chosen.token);          // TEXT (display)
       const studentIdNums = student.map((s) => Number(s?.chosen?.id)).filter((v) => Number.isFinite(v)); // NUMERIC ids (compression math)
       const footprint = compressFootprint(studentIdNums.length ? studentIdNums : student.map((_, i) => i + 1));
-      const fpId = footprint.id;                    // valid in-vocab compressed token id
+      const fpId = footprint.id;                    // GENUINELY NEW compressed token id (reserved range)
       const fpRaw = footprint.rawSum;               // raw (huge) sum for display/debug
+      const fpIndex = footprint.index;              // E Token Nx index into the reserved new-token table
+      const fpLabel = footprint.label;              // "a1", "a2", ...
+      const fpExpert = footprint.expert;            // "ETEa1" (E Token a1) — the new-token's own expert
+      const fpOrigIdx = footprint.origIndex;        // ORIGINAL tokenizer index
+      const fpPair = footprint.pair;                // [original-tokenizer-index, E-Token-Nx] — two separate indices
       lastFpId = fpId; lastFpRaw = fpRaw;           // remember for next-step steering
+      // DYNAMICALLY CREATE a new MoE expert for this new token (E Token a1) if
+      // create_new_token_experts is on. Each distinct new-token index owns its
+      // own added expert, so "new token -> new expert" is real, not static.
+      if (loadConfig()?.moe?.create_new_token_experts !== false) {
+        ensureNewTokenExpert(fpIndex, fpLabel);
+      }
       const top100All = new Set(student.flatMap((s) => (s.top || []).map((x) => x.token)));
 
       // ---- ALLOW NEW TOKENS ON OUTPUT ----
@@ -1020,8 +1079,13 @@ async function run() {
         step,
         input_ids: studentIdNums.length ? studentIdNums : student.map((s) => Number(s?.chosen?.id) || 0), // the 5 token ids being compressed
         input: studentIds,           // the 5 token TEXT being compressed (display)
-        new_token: fpId,             // MEANINGFUL compressed token id (sum % n_vocab — valid in-vocab)
-        new_token_text: `${fpId} (sum ${fpRaw} % n_vocab = in-vocab token)`,
+        new_token: fpId,             // GENUINELY NEW reserved token id (E Token Nx)
+        new_token_pair: fpPair,      // [original-tokenizer-index, E-Token-Nx] — TWO SEPARATE indices
+        new_token_orig_index: fpOrigIdx, // original tokenizer index
+        new_token_token_index: fpIndex,  // E Token Nx index
+        new_token_text: `[${studentIdNums.join(",")}] -> [orig ${fpOrigIdx}, E Token ${fpLabel} (id ${fpId})]`,
+        new_token_label: fpLabel,    // "a1"
+        new_token_expert: fpExpert,  // "ETEa1" (E Token a1)
         raw_sum: fpRaw,              // the raw (unfolded) sum, for debug
         sentinel: COMPRESS_AS_TOKEN, // the fixed sentinel this scheme matches
         created: is500x,             // true when this new token appears in top-k AND top-100
