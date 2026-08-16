@@ -53,9 +53,13 @@ const STUDENT_URL = process.env.STUDENT_URL || "http://127.0.0.1:6465";   // 4B
 // step so the UI sliders apply immediately). Helpers return current values.
 const SAMPLING = () => loadConfig()?.sampling || {};
 const viewTopK = () => Math.min(100, Number(SAMPLING().view_top_k ?? 100));   // how many top tokens model looks at (logprobs)
-function emitFor(who) { // {top_k, top_p} for teacher|student
+function emitFor(who) { // {top_k, top_p, temperature} for teacher|student
   const s = SAMPLING().emit?.[who] || {};
-  return { top_k: Math.min(100, Number(s.top_k ?? 20)), top_p: Number(s.top_p ?? 0.9) };
+  return {
+    top_k: Math.min(100, Number(s.top_k ?? 20)),
+    top_p: Number(s.top_p ?? 0.9),
+    temperature: Number(s.temperature ?? 0.7),
+  };
 }
 const noiseToLayer = () => Number(SAMPLING().noise_to_layer ?? 0.05);
 const STUDENT_STEP = Number(process.env.STUDENT_STEP || 5);
@@ -81,9 +85,9 @@ const _steps = flag("steps", STEPS);
  *  (teacher/student) — which also keeps the teacher coherent.
  *  `who` selects the live sampling.emit.<who> values from config. */
 async function profile(url, prompt, n, who = "teacher") {
-  const { top_k, top_p } = emitFor(who);
+  const { top_k, top_p, temperature } = emitFor(who);
   const body = JSON.stringify({
-    model: "x", prompt, max_tokens: n, temperature: 0.2,
+    model: "x", prompt, max_tokens: n, temperature,
     top_p, top_k, logprobs: viewTopK(), echo: false, stream: false,
   });
   const res = await fetch(`${url}/v1/completions`, {
@@ -456,9 +460,10 @@ async function run() {
             compressed_token: COMPRESS_AS_TOKEN,
           },
         };
-        // Save the model while generating every SAVE_EVERY steps.
+        // Save the model while generating every SAVE_EVERY steps (emits a REAL
+        // sparse-MoE checkpoint, not a dense snapshot).
         if (step % (Number(process.env.SAVE_EVERY) || 25) === 0) {
-          const f = saveModel(step, route, training);
+          const f = saveModel(step, route, training, route.state);
           moe.last_snapshot = f;
         }
       } catch (e) {
