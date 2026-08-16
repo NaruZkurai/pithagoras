@@ -584,6 +584,8 @@ async function run() {
   let winRefIds = [];        // fixed reference window (teacher token ids)
   let winRefTopK = null;     // teacher top-k over the reference window (shared by all)
   let winSeq = 0;            // sequence number (for the payload)
+  let bestWinOverlap = 0;    // best student↔window overlap seen within the current tier
+  let lastConvergedStep = -1;// step at which the student last hit identity_tolerance
   const curWindowTier = () => win && win.tiers ? win.tiers[Math.min(winTierIdx, win.tiers.length - 1)] : null;
 
   while (!ended && (alwaysRun || step < _steps)) {
@@ -1100,10 +1102,19 @@ async function run() {
       const tier = curWindowTier();
       const tol = win.identityTolerance;
       const overlap = stepRec.score_breakdown?.curve_overlap ?? 0;
+      // Track the best overlap seen THIS tier so the UI can show whether the
+      // student is converging on the window (0.0 = still collapsed / no match).
+      bestWinOverlap = Math.max(bestWinOverlap, overlap);
       const graduated = overlap >= tol;
+      stepRec.window = {
+        ...(stepRec.window || {}),
+        overlap, graduated, best_overlap: bestWinOverlap, tol,
+      };
+      if (graduated) lastConvergedStep = step;
       if (tier && (winStepInTier >= tier.rounds || graduated)) {
         if (graduated) console.log(`  >> window tier ${tier.tokens}: student matched teacher top-k (${overlap.toFixed(3)} >= ${tol}) — graduating early`);
         winStepInTier = tier.rounds; // force the advance next step
+        bestWinOverlap = 0;          // reset best-overlap for the next tier
       }
     }
 
@@ -1125,7 +1136,7 @@ async function run() {
       num_experts: stepRec.moe?.num_experts ?? loadConfig()?.moe?.num_experts ?? 5,
       layers_total: stepRec.moe?.layers_total ?? loadConfig()?.layers?.count ?? 5,
       pause_every_n_steps: Number(loadConfig()?.training?.pause_every_n_steps ?? 0),
-      windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000 } : undefined,
+      windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000, overlap: stepRec.window?.overlap ?? 0, best_overlap: bestWinOverlap, tol: win.identityTolerance, graduated: !!(stepRec.window?.graduated), last_converged_step: lastConvergedStep } : undefined,
       // PER-EXPERT scored/training detail (surfaced so the UI shows EVERY expert
       // getting a value/delta, not just the active top-k). Pulls from the moe
       // object built during the step.
