@@ -54,6 +54,7 @@ const OUT = path.join(REPO, "output");
 const AUG = path.join(REPO, "data", "augment");
 const TEACHER_DIR = path.join(AUG, "teacher");
 const TRAIN_JSONL = path.join(AUG, "train.jsonl");
+const TRAIN_TXT = path.join(AUG, "train.txt");
 const METRICS_FILE = path.join(OUT, "augmentation.metrics.json");
 const LOG_FILE = path.join(OUT, "augmentation.log");
 const COMPARE_FILE = path.join(OUT, "compare.json");
@@ -161,7 +162,15 @@ async function collectTeacher(url) {
   }
   fs.mkdirSync(AUG, { recursive: true });
   fs.writeFileSync(TRAIN_JSONL, seqs.map((s) => JSON.stringify({ prompt: s.prompt, completion: s.continuation })).join("\n") + "\n");
-  console.log(`[collect] ${seqs.length} teacher sequences -> ${TRAIN_JSONL}`);
+  // llama-finetune -f expects a SINGLE plain-text file (tokenized into one
+  // next-token-prediction dataset), not JSONL. Build prompt -> completion
+  // text blocks separated by a clear EOS-style delimiter so the model learns
+  // teacher-style continuations directly.
+  const TEX = seqs
+    .map((s) => `${s.prompt}\n\n${s.continuation}\n\n<|endoftext|>\n`)
+    .join("\n");
+  fs.writeFileSync(TRAIN_TXT, TEX);
+  console.log(`[collect] ${seqs.length} teacher sequences -> ${TRAIN_JSONL} and ${TRAIN_TXT}`);
   return seqs;
 }
 
@@ -172,20 +181,21 @@ async function collectTeacher(url) {
 // semantic size toward 30B while weights stay {-1,0,+1}.
 // ===========================================================================
 function growModel() {
+  const trainFile = [TRAIN_TXT, TRAIN_JSONL].find((f) => fs.existsSync(f));
   if (DRY) {
-    console.log(`[grow --dry-run] would run: scripts/train-6gb.sh llama-finetune -m ${TERNARY_MODEL} -f ${TRAIN_JSONL} -o ${GROWN_MODEL} --epochs 1`);
+    console.log(`[grow --dry-run] would run: scripts/train-6gb.sh llama-finetune -m ${TERNARY_MODEL} -f ${trainFile} -o ${GROWN_MODEL} --epochs 1`);
     return;
   }
-  if (!fs.existsSync(TRAIN_JSONL)) {
-    console.warn("[grow] no train.jsonl yet; run --collect first");
+  if (!trainFile) {
+    console.warn("[grow] no train file yet; run --collect first");
     return;
   }
-  console.log(`[grow] finetuning TRUE-TERNARY ${TERNARY_MODEL} from teacher data -> ${GROWN_MODEL}`);
+  console.log(`[grow] finetuning TRUE-TERNARY ${TERNARY_MODEL} from teacher data (${trainFile}) -> ${GROWN_MODEL}`);
   fs.mkdirSync(path.dirname(GROWN_MODEL), { recursive: true });
   // 6GiB system-RAM cap + GPU offload via the wrapper.
   execFileSync(
     "scripts/train-6gb.sh",
-    ["llama-finetune", "--gpu", "-m", TERNARY_MODEL, "-f", TRAIN_JSONL, "-o", GROWN_MODEL, "--epochs", process.env.GROW_EPOCHS || "1"],
+    ["llama-finetune", "--gpu", "-m", TERNARY_MODEL, "-f", trainFile, "-o", GROWN_MODEL, "--epochs", process.env.GROW_EPOCHS || "1"],
     { cwd: ROOT, stdio: "inherit", timeout: (Number(process.env.GROW_TIMEOUT) || 60) * 60_000 }
   );
   console.log(`[grow] grown true-ternary model written: ${GROWN_MODEL}`);
