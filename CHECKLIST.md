@@ -105,9 +105,23 @@ only if `N == sum n_j`).
 
 Set this when pausing:
 ```
-LAST_ACTION (date):
-LAST_PARITY_STATE:
-HARNESS_RUNNING (pid):
+LAST_ACTION (2026-08-15): autonomous run —
+  - M1 grow blocked: llama-finetune SIGABRT in ggml_build_backward_expand
+    (ggml.c:7309 assert; Q1_0/ternary op gradient unsupported). Documented
+    in roadmap + this checklist. Needs fork backward-pass patch.
+  - M2 compare: compare-topk.mjs works; hardens + appends to output/grow-ledger.
+  - Harness: found + fixed a destructive-stub hole — a 'concrete edit'
+    directive made the 4B replace augment-500mb.mjs with a 3-line stub that
+    still 'built', wrongly committed as NET-POSITIVE. Reverted + added a
+    'no destructive file collapse' gate (>55% line-loss rejected) + a HARD
+    no-stub rule + narrowly-scoped additive directive. Verified the gate
+    catches stub edits and allows benign ones.
+  - Harness relaunched safely (pid 2562640, session fuauF7WTnCkd), routing to
+    local-4b/bonsai-4b, now can only commit genuine non-collapsing works.
+  - Real repo clean; HEAD = ab16ed5 (no-collapse gate).
+HARNESS_RUNNING (pid): 2562640
+NEXT: let harness iterate; if a NET-POSITIVE lands, sync the workspace commit
+      back to the real repo (the agent only edits the sandbox copy).
 ```
 
 ---
