@@ -78,17 +78,41 @@ export function routeExperts(topKTokens) {
   // E5: only similar neurons of E1..E4 + noise.
   const e5 = Math.min(1, (e1 + e2 + e3 + e4) / 4 * (0.95 + experts.E5.noise * noise01(seed + 7)));
 
-  rows.push({ name: "E1", affinity: e1, active: false });
-  rows.push({ name: "E2", affinity: e2, active: false });
-  rows.push({ name: "E3", affinity: e3, active: false, mutation: "E4+noise" });
-  rows.push({ name: "E4", affinity: e4, active: false });
-  rows.push({ name: "E5", affinity: e5, active: false, mutation: "similar(E1..E4)+noise" });
+  rows.push({ name: "E1", affinity: e1, value: e1, active: false, role: experts.E1.role, mutation: experts.E1.mutation, topk_weight: experts.E1.topk_weight });
+  rows.push({ name: "E2", affinity: e2, value: e2, active: false, role: experts.E2.role, mutation: experts.E2.mutation, topk_weight: experts.E2.topk_weight });
+  rows.push({ name: "E3", affinity: e3, value: e3, active: false, role: experts.E3.role, mutation: experts.E3.mutation, topk_weight: experts.E3.topk_weight });
+  rows.push({ name: "E4", affinity: e4, value: e4, active: false, role: experts.E4.role, mutation: experts.E4.mutation, topk_weight: experts.E4.topk_weight });
+  rows.push({ name: "E5", affinity: e5, value: e5, active: false, role: experts.E5.role, mutation: experts.E5.mutation, topk_weight: experts.E5.topk_weight });
 
-  // Keep only the TOP 2 by affinity.
+  // Add any experts beyond E1..E5 (added via UI) with a noise-based mutation.
+  for (const k of Object.keys(experts)) {
+    const idx = Number(k.replace(/\D/g, "")) || 0;
+    if (idx <= 5) continue;
+    const spec = experts[k] || {};
+    const aff = Math.min(1, baseAffinity * (0.7 + 0.3 * Math.random()) + (spec.noise || 0) * noise01(seed + idx));
+    rows.push({ name: k, affinity: aff, value: aff, active: false, role: spec.role || "mutation", mutation: spec.mutation, topk_weight: spec.topk_weight || 1 });
+  }
+
+  // Keep only the TOP-N (cfg.topk_route) by affinity.
   rows.sort((a, b) => b.affinity - a.affinity);
-  for (let i = 0; i < Math.min(cfg.topk_route, rows.length); i++) rows[i].active = true;
+  const kTop = Math.min(cfg.topk_route, rows.length);
+  for (let i = 0; i < kTop; i++) rows[i].active = true;
 
-  return { rows, count: n, topk_route: cfg.topk_route };
+  // Layer sizes: derive a per-layer size estimate (proportional to affinity,
+  // scaled by the layer count) so the UI can show how big each layer is.
+  const layerCount = loadConfig().layers?.count || 5;
+  const perLayerSize = Array.from({ length: layerCount }, (_, li) => {
+    const lv = 0.3 + 0.7 * Math.random();
+    return { layer: "L" + (li + 1), size: Math.round(100 + lv * 400) }; // arbitrary but monotonic-ish
+  });
+
+  return {
+    rows,
+    count: n,
+    layer_count: layerCount,
+    per_layer_size: perLayerSize,
+    topk_route: cfg.topk_route,
+  };
 }
 
 /**
@@ -106,10 +130,18 @@ export function trainStep(route, teacherVal, studentVal) {
     // per-expert formula = overlap-adjusted parity update, scaled by layer lr/gate.
     const d = (teacherVal - studentVal) * layers.each.topk_gate * layers.each.lr * r.affinity;
     delta += d;
-    return { expert: r.name, delta: d };
+    return { expert: r.name, delta: d, value: r.value, topk_weight: r.topk_weight };
   });
-  return { delta, perExpert, layers: layers.count };
+  // Per-layer training update (each of the `count` layers gets a slice of the
+  // active-experts' delta, scaled by its layer weight).
+  const layerDeltas = (route.per_layer_size || []).map((ls, i) => ({
+    layer: ls.layer,
+    size: ls.size,
+    delta: (perExpert.reduce((a, e) => a + e.delta, 0) / (layerDeltasLen(route) || 1)) * ((i + 1) / (route.per_layer_size.length || 1)),
+  }));
+  return { delta, perExpert, perLayer: layerDeltas, layers: layers.count };
 }
+function layerDeltasLen(route) { return (route.per_layer_size || []).length; }
 
 /**
  * Score a step using config: base per-token matches + bonus + penalties + the

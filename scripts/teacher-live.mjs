@@ -86,6 +86,24 @@ async function profile(url, prompt, n) {
   }));
 }
 
+/**
+ * Resilient profile: retry transient errors (esp. HTTP 500 from a busy teacher
+ * box) so a single flaky call never corrupts a whole step into {error}. Gives
+ * up after ~3 tries over ~6s; the caller then skips the step cleanly.
+ */
+async function profileRetry(url, prompt, n, tries = 3) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await profile(url, prompt, n);
+    } catch (e) {
+      last = e;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  throw last;
+}
+
 /** The 5-token compression footprint: a single token id whose VALUE equals the
  *  sum of the 5 constituent token ids (the n1+n2+n3 convention). */
 function compressFootprint(tokens) {
@@ -183,15 +201,15 @@ async function run() {
     step++;
     let stepRec = { step, ts: Date.now() };
     try {
-      // Teacher (27B) adds ONE token.
-      const teacher = await profile(TEACHER_URL, shared, 1);
+      // Teacher (27B) adds ONE token (retry transient 500s).
+      const teacher = await profileRetry(TEACHER_URL, shared, 1);
       const tPos = teacher[0];
       if (!tPos || tPos.chosen.token === undefined) { stepRec.note = "teacher empty"; ended = true; break; }
       const teacherToken = tPos.chosen.token;
       shared += " " + teacherToken;
 
       // Student (4B) emits 5 tokens from the SAME (teacher-appended) prompt.
-      const student = await profile(STUDENT_URL, shared, STUDENT_STEP);
+      const student = await profileRetry(STUDENT_URL, shared, STUDENT_STEP);
       if (!student.length) { stepRec.note = "student empty"; ended = true; break; }
 
       // Base score: +1 per position where student chosen token is in teacher top-k.
@@ -212,14 +230,32 @@ async function run() {
       const is500x = inTopK && inTop100;
       if (is500x) fives++;
 
-      // ---- MoE: route through the 5 expert layers (top-2), train, score ----
+      // ---- MoE: route through the expert layers (top-2), train, score ----
       let moe = null, sc = null;
       try {
         const route = routeExperts((tPos.top || []).map((x) => x.token));
         const training = trainStep(route, Math.exp(Math.min(0, tPos.chosen.logprob)), 0.5);
         sc = scoreStep({ baseMatches: base, step, is500x }); // config points/penalties
         bonusTotal = sc.bonus;
-        moe = { active: route.rows.filter((r) => r.active).map((r) => r.name), training_delta: training.delta, layers: training.layers };
+        // Surface full detail: each expert's top-k value, active flag, size,
+        // layers used, num experts, per-layer training deltas, and the new
+        // tokens (compressed + student new tokens this step).
+        const cfg = loadConfig();
+        moe = {
+          num_experts: cfg?.moe?.num_experts ?? route.count,
+          expert_topk: route.rows.map((r) => ({ expert: r.name, value: Number(r.value).toFixed(4), active: r.active, role: r.role, mutation: r.mutation, topk_weight: r.topk_weight })),
+          active: route.rows.filter((r) => r.active).map((r) => r.name),
+          layers_used: training.layers,
+          layers_total: route.layer_count,
+          per_layer: training.perLayer || [],
+          training_delta: training.delta,
+          new_tokens: {
+            teacher: studentIds.map((_, i) => student[i].chosen.token), // student new tokens
+            teacher_anchor: teacherToken,
+            compressed: footprint,       // 5-token compression footprint
+            compressed_token: COMPRESS_AS_TOKEN,
+          },
+        };
         // Save the model while generating every SAVE_EVERY steps.
         if (step % (Number(process.env.SAVE_EVERY) || 25) === 0) {
           const f = saveModel(step, route, training);
@@ -266,6 +302,8 @@ async function run() {
       step, base_score: baseScoreTotal, bonus_score: bonusTotal,
       total_score: baseScoreTotal + bonusTotal,
       "500x_generations": fives,
+      num_experts: stepRec.moe?.num_experts ?? loadConfig()?.moe?.num_experts ?? 5,
+      layers_total: stepRec.moe?.layers_total ?? loadConfig()?.layers?.count ?? 5,
       recent,
       prompt: shared,
       ts: Date.now(),

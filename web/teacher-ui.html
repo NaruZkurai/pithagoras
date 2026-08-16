@@ -60,6 +60,8 @@
         <div class="stat"><div class="label">Base score</div><div id="sBase" class="value">0</div></div>
         <div class="stat"><div class="label">Bonus</div><div id="sBonus" class="value">0</div></div>
         <div class="stat"><div class="label">Total</div><div id="sTotal" class="value">0</div></div>
+        <div class="stat"><div class="label">Experts</div><div id="sExperts" class="value good">0</div></div>
+        <div class="stat"><div class="label">Layers</div><div id="sLayers" class="value good">0</div></div>
         <div class="stat"><div class="label">500× gens</div><div id="s500" class="value good">0</div></div>
       </div>
     </div>
@@ -121,6 +123,8 @@ function renderStats(d) {
   document.getElementById("sBase").textContent = d.base_score ?? 0;
   document.getElementById("sBonus").textContent = d.bonus_score ?? 0;
   document.getElementById("sTotal").textContent = d.total_score ?? 0;
+  document.getElementById("sExperts").textContent = d.num_experts ?? 0;
+  document.getElementById("sLayers").textContent = d.layers_total ?? 0;
   document.getElementById("s500").textContent = d["500x_generations"] ?? 0;
   document.getElementById("models").textContent =
     `teacher ${d.teacher} → student ${d.student} · top-k ${d.top_k} · student step ${d.student_step_tokens}`;
@@ -141,8 +145,8 @@ function renderCharts(d) {
     const row = document.createElement("div");
     row.className = "row";
     const match = r.is_500x_value_generation ? '<span class="fivehundred">◉ 500×</span> ' : "";
-    row.innerHTML = `<div style="font-size:11px;color:#8b949e">step ${r.step} — teacher «${r.teacher_token}» → student [${(r.student_tokens||[]).join(" ")}] ${match}</div>
-      <div style="font-size:11px;color:#8b949e">compressed footprint ${r.compressed_footprint} :: inTopK ${r.in_topk} :: inTop100 ${r.in_top100} :: base+${r.base_step_score}</div>`;
+    row.innerHTML = `<div style="font-size:11px;color:#8b949e">step ${r.step} — teacher «${r.teacher_token ?? "-"}» → student [${(r.student_tokens||[]).join(" ") || "-"}] ${match}</div>
+      <div style="font-size:11px;color:#8b949e">compressed footprint ${r.compressed_footprint ?? "-"} :: inTopK ${r.in_topk ?? "-"} :: inTop100 ${r.in_top100 ?? "-"} :: base+${r.base_step_score ?? 0}</div>`;
     bar.appendChild(row);
   });
 }
@@ -166,13 +170,24 @@ function renderMoe(d) {
   const last = recent[recent.length - 1];
   if (!last || !last.moe) { el.innerHTML = '<div style="color:#8b949e">waiting…</div>'; return; }
   const m = last.moe;
-  let html;
-  if (m.error) html = `<div style="color:#d29922">moe error: ${m.error}</div>`;
-  else html =
-    `<div>active experts (top-2): <b>${(m.active||[]).join(", ")}</b></div>` +
-    `<div>training delta: <b>${typeof m.training_delta === "number" ? m.training_delta.toFixed(5) : m.training_delta}</b> · layers: ${m.layers}</div>` +
-    (m.last_snapshot ? `<div style="font-size:11px;color:#8b949e">saved: ${m.last_snapshot}</div>` : "");
-  el.innerHTML = html;
+  if (m.error) { el.innerHTML = `<div style="color:#d29922">moe error: ${m.error}</div>`; return; }
+  const rows = (m.expert_topk || []).map(e =>
+    `<div class="token-row"><div class="token-id">${e.expert}${e.active ? " ★" : ""}</div>` +
+    `<div class="token-bar" style="width:${Math.round((e.value||0)*100)}px"></div>` +
+    `<div class="token-val">${e.value}</div><div style="font-size:10px;color:#8b949e;flex:1">${e.mutation||e.role||""}</div></div>`
+  ).join("");
+  const layers = (m.per_layer || []).map(l =>
+    `<div class="token-row"><div class="token-id">${l.layer}</div>` +
+    `<div class="token-bar" style="width:${Math.min(100, Math.round((l.size||0)/4))}px"></div>` +
+    `<div class="token-val">${l.size}</div><div style="font-size:10px;color:#8b949e;flex:1">Δ ${l.delta?.toFixed?.(5) ?? l.delta}</div></div>`
+  ).join("");
+  const nt = m.new_tokens || {};
+  el.innerHTML =
+    `<div style="font-size:12px;color:#8b949e;margin-bottom:4px">experts on model: <b>${m.num_experts}</b> · top-2 active: <b>${(m.active||[]).join(", ")}</b> · layers used: <b>${m.layers_used}/${m.layers_total}</b> · Δ ${m.training_delta?.toFixed?.(5) ?? m.training_delta}</div>` +
+    `<div style="font-size:12px;margin-bottom:4px">new tokens: teacher «${nt.teacher_anchor}» → [${(nt.teacher||[]).join(" ")}] · compressed⨯${nt.compressed}</div>` +
+    `<div style="font-size:12px;margin-bottom:4px">expert top-k values:</div>` + rows +
+    (layers ? `<div style="font-size:12px;margin-top:6px">layer sizes (training Δ):</div>` + layers : "") +
+    (m.last_snapshot ? `<div style="font-size:11px;color:#8b949e;margin-top:6px">saved: ${m.last_snapshot}</div>` : "");
 }
 
 function renderTokens(d) {
@@ -231,7 +246,7 @@ function appendStream(d) {
   if (last) {
     const five = last.is_500x_value_generation ? ' <span class="fivehundred">[500×]</span>' : "";
     const line = document.createElement("div");
-    line.innerHTML = `step ${last.step}: base+${last.base_step_score} → total ${last.total_score}${five}`;
+    line.innerHTML = `step ${last.step}: base+${last.base_step_score ?? 0} → total ${last.total_score ?? 0}${five}`;
     s.appendChild(line);
     s.scrollTop = s.scrollHeight;
   }
