@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Teacher-Anchored Live — 27B → 4B top-k parity</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root { color-scheme: dark; --bg:#0d1117; --panel:#161b22; --line:#30363d; --txt:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --good:#3fb950; --warn:#d29922;}
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:18px; font-weight:650; }
+  .status { font-size:12px; color:var(--dim); padding:4px 10px; border:1px solid var(--line); border-radius:20px; }
+  .status.live { color:var(--good); border-color:var(--good); }
+  .status.offline { color:var(--warn); border-color:var(--warn); }
+  .wrap { padding:18px 20px; display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:16px; }
+  @media (max-width: 900px){ .wrap{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .card h2 { margin:0 0 12px; font-size:14px; color:var(--dim); font-weight:600; text-transform:uppercase; letter-spacing:.04em;}
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; }
+  .stat { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .stat .label { font-size:11px; color:var(--dim); }
+  .stat .value { font-size:24px; font-weight:700; margin-top:4px; }
+  .stat .value.good { color:var(--good); }
+  .token-row { display:flex; align-items:center; gap:8px; margin:3px 0; }
+  .token-bar { height:14px; border-radius:3px; background:var(--accent); min-width:2px; }
+  .token-id { font-family:ui-monospace,monospace; font-size:11px; color:var(--dim); width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .token-val { font-family:ui-monospace,monospace; font-size:11px; width:64px; text-align:right; color:var(--dim); }
+  .footer { padding:10px 20px; color:var(--dim); font-size:12px; border-top:1px solid var(--line); }
+  canvas { max-height:260px; }
+  .stream { font-family:ui-monospace,monospace; font-size:12px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; height:220px; overflow-y:auto; }
+  .fivehundred { color:var(--good); font-weight:700; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Teacher-Anchored Parity — 27B teacher → 4B student</h1>
+  <span id="conn" class="status offline">connecting…</span>
+</header>
+<div class="wrap">
+  <!-- LEFT: graphs -->
+  <div style="display:grid; gap:16px;">
+    <div class="card">
+      <h2>Score over time (training)</h2>
+      <canvas id="scoreChart" height="120"></canvas>
+    </div>
+    <div class="card">
+      <h2>Compressed-token parity ≈ token generation (top-100 window)</h2>
+      <div id="compBar" style="display:grid; gap:8px;"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: live stats + top-100 tokens -->
+  <div style="display:grid; gap:16px;">
+    <div class="card">
+      <h2>Live statistics</h2>
+      <div class="stats">
+        <div class="stat"><div class="label">Step</div><div id="sStep" class="value">0</div></div>
+        <div class="stat"><div class="label">Base score</div><div id="sBase" class="value">0</div></div>
+        <div class="stat"><div class="label">Bonus</div><div id="sBonus" class="value">0</div></div>
+        <div class="stat"><div class="label">Total</div><div id="sTotal" class="value">0</div></div>
+        <div class="stat"><div class="label">500× gens</div><div id="s500" class="value good">0</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Top-100 tokens (next-5 window)</h2>
+      <div id="top100" style="max-height:340px; overflow-y:auto;"></div>
+    </div>
+    <div class="card">
+      <h2>Live stream</h2>
+      <div id="stream" class="stream"></div>
+    </div>
+  </div>
+</div>
+<div class="footer" id="models"></div>
+
+<script>
+const SSE_URL = "http://127.0.0.1:4199/events";
+let es = null;
+const scoreChart = new Chart(document.getElementById("scoreChart"), {
+  type: "line",
+  data: { labels: [], datasets: [
+    { label: "Total score", data: [], borderColor: "#58a6ff", backgroundColor: "rgba(88,166,255,.15)", fill: true, tension: .3, pointRadius: 0 },
+    { label: "Base score", data: [], borderColor: "#3fb950", tension: .3, pointRadius: 0 },
+  ] },
+  options: { responsive: true, animation: false, scales: { x: { ticks: { color: "#8b949e", maxTicksLimit: 12 } }, y: { ticks: { color: "#8b949e" } } }, plugins: { legend: { labels: { color: "#e6edf3" } } } }
+});
+
+function setConn(live) {
+  const c = document.getElementById("conn");
+  c.textContent = live ? "● connected" : "● offline";
+  c.className = "status " + (live ? "live" : "offline");
+}
+
+function renderStats(d) {
+  document.getElementById("sStep").textContent = d.step ?? 0;
+  document.getElementById("sBase").textContent = d.base_score ?? 0;
+  document.getElementById("sBonus").textContent = d.bonus_score ?? 0;
+  document.getElementById("sTotal").textContent = d.total_score ?? 0;
+  document.getElementById("s500").textContent = d["500x_generations"] ?? 0;
+  document.getElementById("models").textContent =
+    `teacher ${d.teacher} → student ${d.student} · top-k ${d.top_k} · student step ${d.student_step_tokens}`;
+}
+
+function renderCharts(d) {
+  const recent = d.recent || [];
+  scoreChart.data.labels = recent.map(r => r.step);
+  scoreChart.data.datasets[0].data = recent.map(r => r.total_score);
+  scoreChart.data.datasets[1].data = recent.map(r => r.base_step_score !== undefined ? r.base_score_total : 0);
+  scoreChart.update();
+
+  // Compressed-token parity bar: for each recent step show student tokens vs
+  // whether the compressed token (~token generation) matched (500x) .
+  const bar = document.getElementById("compBar");
+  bar.innerHTML = "";
+  recent.slice(-6).reverse().forEach(r => {
+    const row = document.createElement("div");
+    row.className = "row";
+    const match = r.is_500x_value_generation ? '<span class="fivehundred">◉ 500×</span> ' : "";
+    row.innerHTML = `<div style="font-size:11px;color:#8b949e">step ${r.step} — teacher «${r.teacher_token}» → student [${(r.student_tokens||[]).join(" ")}] ${match}</div>
+      <div style="font-size:11px;color:#8b949e">compressed footprint ${r.compressed_footprint} :: inTopK ${r.in_topk} :: inTop100 ${r.in_top100} :: base+${r.base_step_score}</div>`;
+    bar.appendChild(row);
+  });
+}
+
+function renderTop100(d) {
+  const recent = d.recent || [];
+  const last = recent[recent.length - 1];
+  const el = document.getElementById("top100");
+  if (!last || !last.student_tokens) { el.innerHTML = '<div style="color:#8b949e">waiting for tokens…</div>'; return; }
+  // Show the student's last 5 chosen tokens + their top-k (top-100 sample).
+  const rows = [];
+  (last.student_top100_count ? last : {}); // top-100 count available
+  el.innerHTML =
+    `<div style="font-size:11px;color:#8b949e;margin-bottom:6px">last student tokens: <b>[${last.student_tokens.join(" ")}]</b> · teacher top-k sample: [${(last.teacher_topk||[]).join(" ")}] · top-100 tokens present: ${last.student_top100_count ?? "?"}</div>` +
+    `<div style="font-size:11px;color:#8b949e">(full per-position top-100 streams via /v1/completions?logprobs=100)</div>`;
+}
+
+function appendStream(d) {
+  const s = document.getElementById("stream");
+  const recent = d.recent || [];
+  const last = recent[recent.length - 1];
+  if (last) {
+    const five = last.is_500x_value_generation ? ' <span class="fivehundred">[500×]</span>' : "";
+    const line = document.createElement("div");
+    line.innerHTML = `step ${last.step}: base+${last.base_step_score} → total ${last.total_score}${five}`;
+    s.appendChild(line);
+    s.scrollTop = s.scrollHeight;
+  }
+}
+
+function connect() {
+  es = new EventSource(SSE_URL);
+  es.onopen = () => setConn(true);
+  es.onerror = () => setConn(false);
+  es.onmessage = (ev) => {
+    try {
+      const d = JSON.parse(ev.data);
+      renderStats(d);
+      renderCharts(d);
+      renderTop100(d);
+      appendStream(d);
+    } catch (e) { /* ignore partial */ }
+  };
+}
+connect();
+</script>
+</body>
+</html>
