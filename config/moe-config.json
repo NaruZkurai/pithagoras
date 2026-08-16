@@ -28,6 +28,10 @@
     "topk_route": 6,
     "mtp_trained": true,
     "mtp_expert": "EMTP",
+    "compressor_tokens_only": true,
+    "compressor_role": "mutations",
+    "compressor_note": "EACH COMPRESSOR MUST USE ONLY COMPRESSOR TOKENS: experts designated as compressors (role starts with 'compr' or listed in compressor_experts) may only route/emit tokens from the compressor-token set (the compressed-chunk / formulaic tokens in newTokenSet), never the general vocabulary. This is what makes the extra layers fight to become token-COMPRESSOR layers (they can only express compressed tokens).",
+    "compressor_experts": ["EMTP", "E101", "E100", "E99"],
     "experts": {
       "E1": {
         "role": "base",

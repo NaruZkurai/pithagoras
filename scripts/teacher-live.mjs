@@ -203,6 +203,37 @@ function windowSchedule() {
   };
 }
 
+// ---- COMPRESSOR-TOKEN CONSTRAINT (user spec: "EACH COMPRESSOR MUST USE ONLY
+//      COMPRESSOR TOKENS") ----
+// A "compressor" is an expert whose ROLE starts with "compr" OR is listed in
+// moe.compressor_experts (config). Compressors may ONLY route/emit/score tokens
+// from the compressor-token set (the compressed-chunk / formulaic tokens), never
+// the general vocabulary. This is what makes the extra layers fight to become
+// token-COMPRESSOR layers — they can only express compressed tokens.
+function compressorExpertSet() {
+  const m = loadConfig()?.moe || {};
+  const set = new Set();
+  for (const nm of m.compressor_experts || []) set.add(nm);
+  const ex = m.experts || {};
+  for (const nm of Object.keys(ex)) {
+    const role = String(ex[nm]?.role || "").toLowerCase();
+    if (role.startsWith("compr")) set.add(nm);
+  }
+  return set;
+}
+function isCompressorExpert(name) {
+  return compressorExpertSet().has(name);
+}
+// Constrain a raw token top-k list to ONLY compressor tokens (for a compressor
+// expert). Returns a Set of token strings that are BOTH in `top` AND compressor.
+function compressorConstrained(top, compressor) {
+  const out = new Set();
+  for (const t of (top || [])) {
+    if (compressor.has(String(t))) out.add(t);
+  }
+  return out;
+}
+
 // Token used to denote the 5-token compression footprint (e.g. token 999993
 // == the token ids 9,4,3,200,2). We treat "compressed token == sum of its
 // constituent token ids" as the signature the 500x detector looks for.
@@ -828,6 +859,11 @@ async function run() {
         const expertMatch = route.rows.map((r, i) => {
           const pos = i % Math.max(1, student.length);
           const st = student[pos];
+          // EACH COMPRESSOR MUST USE ONLY COMPRESSOR TOKENS: a compressor expert
+          // may only score tokens that are compressor tokens (newTokenSet), never
+          // the general vocabulary.
+          const isCompr = isCompressorExpert(r.name) && (loadConfig()?.moe?.compressor_tokens_only ?? true);
+          const comprSet = isCompr ? newTokenSet : null;
           const sSetK = narrowTokenSet(st?.top || [], emitFor("student").top_k, 1);
           let m = 0;
           // MTP HEAD (+1 forward): the MTP expert predicts the NEXT token, so it
@@ -836,12 +872,19 @@ async function run() {
           if (r.name === "EMTP") {
             const ahead = student[(pos + 1) % Math.max(1, student.length)];
             const aheadSet = narrowTokenSet(ahead?.top || [], emitFor("student").top_k, 1);
-            for (const tok of aheadSet) if (tSetK.has(tok)) m++;
-            if (ahead && tSetK.has(ahead.chosen.token)) m += 10; // next-token emit-match boost
+            // MTP is a compressor: constrain to compressor tokens only.
+            const aheadSetUse = isCompr ? compressorConstrained(aheadSet, comprSet) : aheadSet;
+            for (const tok of aheadSetUse) if (tSetK.has(tok)) m++;
+            if (isCompr ? comprSet.has(String(ahead?.chosen?.token)) && tSetK.has(ahead?.chosen?.token)
+                        : ahead && tSetK.has(ahead.chosen.token)) m += 10; // next-token emit-match boost
             return m;
           }
-          for (const tok of sSetK) if (tSetK.has(tok)) m++;
-          if (st && tSetK.has(st.chosen.token)) m += 10; // strong emit-match boost
+          // Constrain to compressor tokens ONLY for compressor experts.
+          const sSetUse = isCompr ? compressorConstrained(sSetK, comprSet) : sSetK;
+          for (const tok of sSetUse) if (tSetK.has(tok)) m++;
+          const chosenOk = isCompr ? (st && comprSet.has(String(st.chosen.token)) && tSetK.has(st.chosen.token))
+                                   : (st && tSetK.has(st.chosen.token));
+          if (chosenOk) m += 10; // strong emit-match boost (compressor: only when it's a compressor token)
           return m;
         });
         const training = trainStep(route, Math.exp(Math.min(0, tPos.chosen.logprob)), 0.5, expertMatch);
@@ -907,12 +950,17 @@ async function run() {
         // Per-expert "guess": ONE token per expert. Each expert Ei owns the
         // student's output position i % STUDENT_STEP, so we tag that chosen
         // token with the expert (with its affinity/active state) for display.
-        const perExpertGuesses = route.rows.map((r, i) => ({
-          expert: r.name,
-          active: r.active,
-          value: Number(r.value).toFixed(4),
-          token: studentIds[(i % Math.max(1, studentIds.length))],
-        }));
+        const perExpertGuesses = route.rows.map((r, i) => {
+          const rawTok = studentIds[(i % Math.max(1, studentIds.length))];
+          // EACH COMPRESSOR MUST USE ONLY COMPRESSOR TOKENS: a compressor expert's
+          // emitted/display token must come from the compressor-token set.
+          let token = rawTok;
+          if (isCompressorExpert(r.name) && (loadConfig()?.moe?.compressor_tokens_only ?? true)) {
+            const firstCompr = [...newTokenSet].find((t) => String(t) === String(rawTok)) ?? [...newTokenSet][0];
+            token = firstCompr ?? rawTok;
+          }
+          return { expert: r.name, active: r.active, value: Number(r.value).toFixed(4), token };
+        });
         // Surface full detail: each expert's top-k value, active flag, size,
         // layers used, num experts, per-layer training deltas, and the new
         // tokens (compressed + student new tokens this step).
