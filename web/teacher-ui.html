@@ -14,18 +14,18 @@
   .status { font-size:12px; color:var(--dim); padding:4px 10px; border:1px solid var(--line); border-radius:20px; }
   .status.live { color:var(--good); border-color:var(--good); }
   .status.offline { color:var(--warn); border-color:var(--warn); }
-  .wrap { padding:18px 20px; display:flex; gap:16px; align-items:flex-start; }
-  .wrap > div { flex:1 1 0; min-width:0; display:grid; gap:16px; align-content:start; }
+  .wrap { padding:4px 6px; display:flex; gap:4px; align-items:flex-start; }
+  .wrap > div { flex:1 1 0; min-width:0; display:grid; gap:4px; align-content:start; }
   .wrap > div:first-child { flex:1.35 1 0; max-width:66vw; }
   @media (max-width: 900px){ .wrap{ flex-direction:column; } .wrap > div:first-child{ flex:1 1 auto; max-width:none; } }
-  .moe-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:start; }
+  .moe-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:start; gap:4px; }
   @media (max-width: 1100px){ .moe-row{ grid-template-columns:1fr; } }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
-  .card h2 { margin:0 0 12px; font-size:14px; color:var(--dim); font-weight:600; text-transform:uppercase; letter-spacing:.04em;}
-  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; }
-  .stat { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
+  .card h2 { margin:0 0 4px; font-size:13px; color:var(--dim); font-weight:600; text-transform:uppercase; letter-spacing:.04em;}
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:4px; }
+  .stat { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+  .stat .value { font-size:20px; font-weight:700; margin-top:2px; }
   .stat .label { font-size:11px; color:var(--dim); }
-  .stat .value { font-size:24px; font-weight:700; margin-top:4px; }
   .stat .value.good { color:var(--good); }
   .token-row { display:flex; align-items:center; gap:8px; margin:3px 0; }
   .token-bar { height:14px; border-radius:3px; background:var(--accent); min-width:2px; }
@@ -54,7 +54,7 @@
 </header>
 <div class="wrap">
   <!-- LEFT: stats + graphs -->
-  <div style="display:grid; gap:16px;">
+  <div style="display:grid; gap:4px;">
     <div class="card">
       <h2>Live statistics</h2>
       <div class="stats">
@@ -110,8 +110,8 @@
   </div>
 
   <!-- RIGHT: live stats + top-100 tokens -->
-  <div style="display:grid; gap:16px;">
-    <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px;" class="moe-row">
+  <div style="display:grid; gap:4px;">
+    <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:4px;" class="moe-row">
       <div class="card" id="moeCard">
         <h2>MoE active experts · layers</h2>
         <div id="moe" style="font-size:13px; max-height:430px; overflow-y:auto;"></div>
