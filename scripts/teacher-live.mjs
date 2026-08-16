@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward } from "./moe-engine.mjs";
+import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, resetMoeForNewPrompt } from "./moe-engine.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -328,6 +328,10 @@ async function run() {
       teacherOutput.length = 0;
       newTokens.length = 0;      // clear the created new-token list on a new prompt
       layerNoiseState = null;
+      // Reset the MoE expert/layer state so a new prompt starts a FRESH training
+      // run (fresh expert values, scores, and layer sizes) — not accumulated
+      // across unrelated prompts.
+      try { resetMoeForNewPrompt(); } catch (e) { console.error("  !! moe reset on prompt change:", (e && e.message) || e); }
       recent.length = 0;
       step = 0;
       console.log(`  >> prompt changed to: ${JSON.stringify(PROMPT.slice(0, 80))}... (restarting generation)`);

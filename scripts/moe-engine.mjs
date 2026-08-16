@@ -82,6 +82,20 @@ export function initMoeState(expertNames = ["E1","E2","E3","E4","E5"], layerCoun
 export function getMoeState() { return _moeState; }
 
 /**
+ * RESET THE MOE EXPERT/LAYER STATE for a NEW PROMPT. When the user sets a fresh
+ * prompt, the whole training run is conceptually restarted, so the expert
+ * values/scores and layer sizes are re-initialized from the current config.
+ * Returns the new (fresh) state.
+ */
+export function resetMoeForNewPrompt() {
+  const cfg = loadConfig() || {};
+  const experts = Object.keys(cfg.moe?.experts || {});
+  const names = experts.length ? experts : ["E1", "E2", "E3", "E4", "E5"];
+  const layerCount = Math.max(1, Number(cfg.layers?.count ?? 5));
+  return initMoeState(names, layerCount);
+}
+
+/**
  * Round / reset policy. Each expert's values/scores accumulate for
  * `steps_per_round * rounds_before_reset` total steps, then RESET (fresh start)
  * while preserving a `lastRound` snapshot of the final values so the UI can
@@ -113,7 +127,12 @@ export function maybeResetMoeState() {
   const policy = loadConfig()?.expert_policy || {};
   const nExp = moeScoresSize();
   const topSurvive = Math.max(0, Math.min(nExp, Number(policy.top_n_survive ?? 3)));
-  const losingCount = Math.max(0, Math.min(nExp, Number(policy.update_losing_experts ?? 2)));
+  // update_losing_experts may be "auto"/0 (automatic) — then refresh ~15%.
+  const rawLosing = policy.update_losing_experts;
+  const autoLosing = (rawLosing === undefined || rawLosing === null || rawLosing === 0 || rawLosing === "auto");
+  const losingCount = autoLosing
+    ? Math.max(1, Math.round(nExp * 0.15))
+    : Math.max(0, Math.min(nExp, Number(rawLosing) || 2));
   const fromLast = policy.reset_from_last_window !== false;
   const doUpdateNonTop = policy.update_non_top !== false;
 

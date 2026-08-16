@@ -264,7 +264,16 @@ const scoreChart = new Chart(document.getElementById("scoreChart"), {
   data: { labels: [], datasets: [] },
   options: {
     responsive: true, maintainAspectRatio: false, animation: false,
-    scales: { x: { ticks: { color: "#8b949e", maxTicksLimit: 12 } }, y: yScaleOpts },
+    scales: {
+      x: { ticks: { color: "#8b949e", maxTicksLimit: 12 } },
+      y: yScaleOpts,
+      // Second axis (0..1) for the student↔teacher overlap reference line.
+      y1: {
+        position: "right", beginAtZero: true, max: 1,
+        grid: { drawOnChartArea: false },
+        ticks: { color: "#8b949e", callback: (v) => v },
+      },
+    },
     // Per-expert colors are identified in the "Score by expert" panel (colored
     // chips). Hide the 50+ item legend here so it doesn't eat chart space.
     plugins: {
@@ -307,6 +316,19 @@ function renderCharts(d) {
   scoreChart.data.datasets = Object.values(expertChartDatasets).filter(ds => kept.has(ds.label));
   scoreChart.data.datasets.forEach(ds => {
     ds.data = recent.map(r => (r.moe?.cumulative_scores || {})[ds.label] ?? null);
+  });
+  // TEACHER line: how close the student's token curve is to the (perfect)
+  // teacher, per step (0..1 overlap of student top-k slots vs teacher top-k).
+  // Kept separate so it's visible even though the scale differs from expert pts.
+  scoreChart.data.datasets.push({
+    label: "teacher ↔ overlap",
+    data: recent.map(r => r.score_breakdown?.curve_overlap ?? null),
+    borderColor: "#ffffff",
+    borderDash: [5, 3],
+    borderWidth: 1.5,
+    tension: .3,
+    pointRadius: 0,
+    yAxisID: "y1",
   });
   scoreChart.update();
 
