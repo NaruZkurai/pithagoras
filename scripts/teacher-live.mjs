@@ -29,6 +29,15 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
+import { loadConfig, routeExperts, trainStep, scoreStep, saveModel } from "./moe-engine.mjs";
+
+/** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
+function deepMerge(base, patch) {
+  if (patch === null || typeof patch !== "object" || Array.isArray(patch)) return patch;
+  const out = { ...(base && typeof base === "object" && !Array.isArray(base) ? base : {}) };
+  for (const [k, v] of Object.entries(patch)) out[k] = deepMerge(out[k], v);
+  return out;
+}
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(ROOT, "..");
@@ -98,7 +107,44 @@ function startServer() {
   fs.mkdirSync(LIVE, { recursive: true });
   const server = http.createServer((req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
-    if ((req.url || "").startsWith("/events")) {
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    const url = req.url || "";
+    if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+
+    // /config GET: return the live MoE config (point values, formulas, experts).
+    if (url === "/config" && req.method === "GET") {
+      const cfg = loadConfig() || {};
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(cfg));
+      return;
+    }
+    // /config POST: MERGE edited MoE config onto the existing one (points,
+    // penalties, formulas, experts). Shallow+deep merge so a partial update
+    // never clobbers the rest of the config.
+    if (url === "/config" && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        try {
+          const patch = JSON.parse(body || "{}");
+          const cfgPath = path.join(REPO, "config", "moe-config.json");
+          const existing = fs.existsSync(cfgPath)
+            ? JSON.parse(fs.readFileSync(cfgPath, "utf8"))
+            : {};
+          const merged = deepMerge(existing, patch);
+          fs.writeFileSync(cfgPath, JSON.stringify(merged, null, 2));
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, saved: true }));
+        } catch (e) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+        }
+      });
+      return;
+    }
+
+    if (url.startsWith("/events")) {
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
       const push = () => {
         if (latest) { res.write("data: " + JSON.stringify(latest) + "\n\n"); }
@@ -154,10 +200,6 @@ async function run() {
       for (const s of student) if (teacherTopK.has(s.chosen.token)) base++;
       baseScoreTotal += base;
 
-      // Bonus: 100 * n_step points (cumulative running total; n = step number).
-      const bonus = 100 * step;
-      bonusTotal = bonus;
-
       // 500x detector: the 5-token compression footprint of the student's step
       // (value = sum of constituent token ids). If that "compressed token" is
       // in the top-k of this window and a match is in the top-100 of the 5
@@ -168,8 +210,26 @@ async function run() {
       const inTopK = student.some((s) => (s.top || []).some((x) => x.token === COMPRESS_AS_TOKEN));
       const inTop100 = top100All.has(COMPRESS_AS_TOKEN) || top100All.has(footprint);
       const is500x = inTopK && inTop100;
-
       if (is500x) fives++;
+
+      // ---- MoE: route through the 5 expert layers (top-2), train, score ----
+      let moe = null, sc = null;
+      try {
+        const route = routeExperts((tPos.top || []).map((x) => x.token));
+        const training = trainStep(route, Math.exp(Math.min(0, tPos.chosen.logprob)), 0.5);
+        sc = scoreStep({ baseMatches: base, step, is500x }); // config points/penalties
+        bonusTotal = sc.bonus;
+        moe = { active: route.rows.filter((r) => r.active).map((r) => r.name), training_delta: training.delta, layers: training.layers };
+        // Save the model while generating every SAVE_EVERY steps.
+        if (step % (Number(process.env.SAVE_EVERY) || 25) === 0) {
+          const f = saveModel(step, route, training);
+          moe.last_snapshot = f;
+        }
+      } catch (e) {
+        moe = { error: String(e.message || e) };
+        bonusTotal = 100 * step;
+        sc = { base, bonus: bonusTotal, gain: 0, penalty: 0, totalGain: base + bonusTotal };
+      }
 
       stepRec = {
         ...stepRec,
@@ -182,8 +242,10 @@ async function run() {
         in_topk: inTopK,
         in_top100: inTop100,
         is_500x_value_generation: is500x,
+        moe,
         base_step_score: base,
-        bonus_step_score: bonus,
+        penalty: sc ? sc.penalty : 0,
+        step_gain: sc ? sc.totalGain : 0,
         base_score_total: baseScoreTotal,
         bonus_total: bonusTotal,
         total_score: baseScoreTotal + bonusTotal,

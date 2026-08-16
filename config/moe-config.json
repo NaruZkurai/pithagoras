@@ -1,0 +1,95 @@
+{
+  "model": {
+    "name": "bonsai-4b-moe",
+    "base_gguf": "/nzk/models/Bonsai-4B-Q1_0.gguf",
+    "true_ternary": true,
+    "save_dir": "models/snapshots"
+  },
+  "moe": {
+    "num_experts": 5,
+    "always_active": 5,
+    "topk_route": 2,
+    "experts": {
+      "E1": {
+        "role": "base",
+        "mutation": "none",
+        "topk_weight": 1,
+        "training_formula": "parity_update = teacher_topk_overlap(student, expert)",
+        "noise": 0
+      },
+      "E2": {
+        "role": "base",
+        "mutation": "none",
+        "topk_weight": 1,
+        "training_formula": "parity_update = teacher_topk_overlap(student, expert)",
+        "noise": 0
+      },
+      "E3": {
+        "role": "mutation",
+        "mutation": "E4 + noise",
+        "topk_weight": 1,
+        "training_formula": "expert3 = expert4_weights + gaussian(noise_scale)",
+        "noise": 0.15
+      },
+      "E4": {
+        "role": "base",
+        "mutation": "none",
+        "topk_weight": 1,
+        "training_formula": "parity_update = teacher_topk_overlap(student, expert)",
+        "noise": 0
+      },
+      "E5": {
+        "role": "mutation",
+        "mutation": "similar neurons of E1,E2,E3,E4 + noise",
+        "topk_weight": 1,
+        "training_formula": "expert5 = avg(similar(neuron(E1),neuron(E2),neuron(E3),neuron(E4))) + noise",
+        "noise": 0.1
+      }
+    },
+    "routing": {
+      "type": "top-2",
+      "note": "only the TOP 2 experts by top-k affinity are kept active for the token set"
+    }
+  },
+  "scoring": {
+    "base": {
+      "per_topk_token_match": 1,
+      "note": "+1 per token position where the student's chosen token is in the teacher's top-k (1 teacher token == 1 student token)"
+    },
+    "bonus": {
+      "points_per_step_times_100": true,
+      "note": "bonus = 100 * step (running); top-k allowed is wide now, will narrow later"
+    },
+    "value_generation": {
+      "compressed_token_sentinel": 999993,
+      "points_500x": 500,
+      "note": "500x when the 5-token compression footprint token appears in the top-k of the next-5 AND a match is in the top-100 of the next 5 generated tokens"
+    },
+    "penalties": {
+      "overconfidence": 0,
+      "redundant_expert": 0,
+      "note": "subtract from total when flagged; adjust live via UI"
+    }
+  },
+  "layers": {
+    "count": 5,
+    "each": {
+      "training_formula": "layer_weight_adj = lr * (teacher_value - student_value) * topk_gate",
+      "lr": 0.01,
+      "topk_gate": 0.5
+    }
+  },
+  "ui": {
+    "adjustable": [
+      "scoring.base.per_topk_token_match",
+      "scoring.bonus.points_per_step_times_100",
+      "scoring.value_generation.points_500x",
+      "scoring.penalties.overconfidence",
+      "moe.experts.*.training_formula",
+      "moe.experts.*.noise",
+      "layers.count",
+      "moe.num_experts",
+      "moe.topk_route"
+    ]
+  }
+}

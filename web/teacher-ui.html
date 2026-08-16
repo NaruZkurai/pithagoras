@@ -64,12 +64,35 @@
       </div>
     </div>
     <div class="card">
+      <h2>MoE active experts (top-2) · layers</h2>
+      <div id="moe" style="font-size:13px;"></div>
+    </div>
+    <div class="card">
       <h2>Top-100 tokens (next-5 window)</h2>
       <div id="top100" style="max-height:340px; overflow-y:auto;"></div>
     </div>
     <div class="card">
+      <h2>Each token generated (recent)</h2>
+      <div id="tokens" style="max-height:240px; overflow-y:auto; font-family:ui-monospace,monospace; font-size:12px;"></div>
+    </div>
+    <div class="card">
       <h2>Live stream</h2>
       <div id="stream" class="stream"></div>
+    </div>
+    <div class="card">
+      <h2>Config / controls (live, applies next step)</h2>
+      <div class="stats" style="grid-template-columns:1fr 1fr; align-items:end;">
+        <div class="stat"><div class="label">Base pts / top-k match</div><input id="cBase" type="number" step="1" value="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+        <div class="stat"><div class="label">500× pts</div><input id="c500" type="number" step="10" value="500" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+        <div class="stat"><div class="label">Penalty (overconfidence)</div><input id="cPen" type="number" step="1" value="0" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+        <div class="stat"><div class="label">Expert count (add)</div><input id="cExp" type="number" step="1" value="5" min="5" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+      </div>
+      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="bBase" style="background:#238636;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">Apply points</button>
+        <button id="bAddExp" style="background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">+ Add expert/layer</button>
+        <button id="bSave" style="background:#6e7681;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">Save snapshot</button>
+        <span id="cfgStatus" style="font-size:12px;color:#8b949e;align-self:center"></span>
+      </div>
     </div>
   </div>
 </div>
@@ -137,6 +160,70 @@ function renderTop100(d) {
     `<div style="font-size:11px;color:#8b949e">(full per-position top-100 streams via /v1/completions?logprobs=100)</div>`;
 }
 
+function renderMoe(d) {
+  const el = document.getElementById("moe");
+  const recent = d.recent || [];
+  const last = recent[recent.length - 1];
+  if (!last || !last.moe) { el.innerHTML = '<div style="color:#8b949e">waiting…</div>'; return; }
+  const m = last.moe;
+  let html;
+  if (m.error) html = `<div style="color:#d29922">moe error: ${m.error}</div>`;
+  else html =
+    `<div>active experts (top-2): <b>${(m.active||[]).join(", ")}</b></div>` +
+    `<div>training delta: <b>${typeof m.training_delta === "number" ? m.training_delta.toFixed(5) : m.training_delta}</b> · layers: ${m.layers}</div>` +
+    (m.last_snapshot ? `<div style="font-size:11px;color:#8b949e">saved: ${m.last_snapshot}</div>` : "");
+  el.innerHTML = html;
+}
+
+function renderTokens(d) {
+  const el = document.getElementById("tokens");
+  const recent = d.recent || [];
+  const last = recent[recent.length - 1];
+  if (!last || !last.student_tokens) { el.innerHTML = ""; return; }
+  const div = document.createElement("div");
+  div.textContent = `step ${last.step}: teacher «${last.teacher_token}» → [${last.student_tokens.join(" ")}]` +
+    (last.base_score_total !== undefined ? ` | base+${last.base_step_score} total ${last.total_score}` : "") +
+    (last.is_500x_value_generation ? "  ★500×" : "");
+  el.appendChild(div);
+  while (el.childElementCount > 30) el.removeChild(el.firstChild);
+}
+
+const CONFIG_URL = "http://127.0.0.1:4199/config";
+async function postCfg(patch, note) {
+  document.getElementById("cfgStatus").textContent = "saving…";
+  try {
+    const r = await fetch(CONFIG_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
+    const j = await r.json();
+    document.getElementById("cfgStatus").textContent = (j.ok ? "saved ✓ " : "err ✗ ") + (note || "");
+  } catch (e) { document.getElementById("cfgStatus").textContent = "offline"; document.getElementById("cfgStatus").textContent += " (config server on :4199)"; }
+}
+
+document.getElementById("bBase")?.addEventListener("click", () => {
+  postCfg({
+    scoring: {
+      base: { per_topk_token_match: Number(document.getElementById("cBase").value || 1) },
+      value_generation: { points_500x: Number(document.getElementById("c500").value || 500) },
+      penalties: { overconfidence: Number(document.getElementById("cPen").value || 0) },
+    },
+  }, "points/penalty");
+});
+
+document.getElementById("bAddExp")?.addEventListener("click", () => {
+  const n = Number(document.getElementById("cExp").value || 5);
+  const experts = {};
+  for (let i = 1; i <= n; i++) {
+    experts["E" + i] = i <= 5
+      ? { role: "base", mutation: "none", topk_weight: 1, training_formula: "parity_update = teacher_topk_overlap(student, expert)", noise: 0 }
+      : { role: "mutation", mutation: "similar(neurons E1..E" + n + ") + noise", topk_weight: 1, training_formula: "expert" + i + " = avg(similar(neurons)) + noise", noise: 0.1 };
+  }
+  const moePatch = { moe: { num_experts: n, always_active: n, experts }, layers: { count: n } };
+  postCfg(moePatch, "experts/layers=" + n);
+});
+
+document.getElementById("bSave")?.addEventListener("click", () => {
+  postCfg({ "_request_save_snapshot": true }, "snapshot");
+});
+
 function appendStream(d) {
   const s = document.getElementById("stream");
   const recent = d.recent || [];
@@ -160,6 +247,8 @@ function connect() {
       renderStats(d);
       renderCharts(d);
       renderTop100(d);
+      renderMoe(d);
+      renderTokens(d);
       appendStream(d);
     } catch (e) { /* ignore partial */ }
   };
