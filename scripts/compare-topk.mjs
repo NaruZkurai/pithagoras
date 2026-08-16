@@ -183,7 +183,24 @@ async function run() {
         : "small model's compressed top-k spread does not yet match the larger model",
   };
   fs.writeFileSync(OUT_FILE, JSON.stringify(result, null, 2));
-  console.log(`\n=== RESULT ==="`);
+  // Append to a grow ledger so parity across grow iterations is tracked.
+  try {
+    const ledger = path.join(OUT, "grow-ledger.jsonl");
+    fs.appendFileSync(
+      ledger,
+      JSON.stringify({
+        at: new Date().toISOString(),
+        invariant,
+        parity: effParity,
+        parity_gated: gatedParity,
+        small_spread: smallSpread,
+        large_spread: largeSpread,
+        raw_tokens: rawN,
+        chunk: CHUNK,
+      }) + "\n"
+    );
+  } catch { /* ledger is best-effort */ }
+  console.log(`\n=== RESULT ===`);
   console.log(`  raw tokens generated: ${rawN}; chunk-count sum: ${sumChunkCounts}; invariant (N==sum n_j): ${invariant}`);
   console.log(`  small effective top-k mass: ${smallTopk.topkMass.toFixed(3)}  spread: ${smallSpread.toFixed(3)}`);
   console.log(`  large effective top-k mass: ${largeTopk.topkMass.toFixed(3)}  spread: ${largeSpread.toFixed(3)}`);
