@@ -45,6 +45,31 @@ const LIVE = path.join(REPO, "output", "live");
 const CURRENT = path.join(LIVE, "current.json");
 const HISTORY = path.join(LIVE, "history.jsonl");
 const TOKENS = path.join(LIVE, "tokens.jsonl"); // full per-step student-guess token ledger
+// TOP-K CURVE DATASET: one JSONL line per emitted teacher token, recording its
+// FULL top-n (k) distribution (id + token + logprob). This is the reference
+// "top-k curve" the student is trained to reproduce — the model should learn to
+// output a top-k distribution matching the teacher's at each step.
+const TOP_K_CURVE = path.join(LIVE, "topk-curve.jsonl");
+const TOP_K_TO_SAVE = Number(process.env.TOP_K_TO_SAVE || 40); // how many top tokens per line
+
+// Append one step's teacher top-k curve to the dataset file (best-effort; never
+// crashes the step if the disk write fails).
+function saveTopKCurve({ step, promptCtx, teacherToken, teacherId, top }) {
+  try {
+    const row = {
+      step,
+      ctx: String(promptCtx ?? "").slice(0, 400),           // short prompt context
+      teacher_token: teacherToken,
+      teacher_id: teacherId,
+      top_k: (top || []).slice(0, TOP_K_TO_SAVE).map((t) => ({
+        id: t.id, token: t.token, logprob: t.logprob,
+      })),
+      top_k_size: (top || []).length,
+      ts: Date.now(),
+    };
+    fs.appendFileSync(TOP_K_CURVE, JSON.stringify(row) + "\n");
+  } catch (e) { /* best-effort */ }
+}
 const PORT = Number(process.env.LIVE_PORT || 4199);
 
 const TEACHER_URL = process.env.TEACHER_URL || "http://127.0.0.1:41001"; // 27B
@@ -530,6 +555,15 @@ async function run() {
       const tPos = teacher[0];
       if (!tPos || tPos.chosen.token === undefined) { stepRec.note = "teacher empty"; ended = true; break; }
       const teacherToken = tPos.chosen.token;
+      // Record this teacher token's full top-k curve to the reference dataset
+      // (the "top-k curve" the student is trained to reproduce).
+      saveTopKCurve({
+        step,
+        promptCtx: shared.slice(-400),
+        teacherToken,
+        teacherId: tPos.chosen.id,
+        top: tPos.top,
+      });
       const teacherAdvance = teacher.map((x) => x.chosen.token).filter((t) => t !== undefined);
       // Track BOTH the token ids (direct input) and the text tokens (display).
       const teacherAdvanceIds = teacher.map((x) => x.chosen.id).filter((v) => Number.isFinite(v));
@@ -574,6 +608,25 @@ async function run() {
       if (step % 10 === 0) console.log(`    [dbg] student model input tokens: ${_stuPrompt.length} (raw ${sharedIds.length}, chunked ${compressedInputEnabled()}, cap ${studentCtxCap()})`);
       const student = await profileRetry(STUDENT_URL, _stuPrompt, STUDENT_STEP, "student");
       if (!student.length) { stepRec.note = "student empty"; ended = true; break; }
+
+      // STUDENT DEGENERACY GUARD: a 1-bit/ternary model can collapse to ONE
+      // repeated token (e.g. all "/") — its output distribution is a single
+      // attractor. Detect it (all chosen + top tokens are the same) and flag it
+      // so the collapse is visible instead of silently training on the same
+      // token forever. (The teacher has an equivalent guard + flush; this logs
+      // the student collapse without disrupting the loop.)
+      {
+        const stuChosen = student.map((s)=>({id:s.chosen?.id, t:s.chosen?.token}));
+        const stuTopVals = student.map((s)=>((s.top||[]).length>0? s.top[0].token : null));
+        const chosenSet = new Set(stuChosen.map((x)=>x.id));
+        const topSet = new Set(stuTopVals);
+        const collaped = chosenSet.size === 1 && topSet.size === 1;
+        if (collaped) {
+          stepRec.student_collapsed = true;
+          stepRec.student_collapse_token = stuChosen[0]?.t;
+          if (step % 5 === 0) console.log(`  !! student collapse: all ${stuChosen.length} outputs = «${stuChosen[0]?.t}» (1-bit ternary attractor) — training on a single repeated token`);
+        }
+      }
 
       // Scoring per-token: the student's narrowed top-n/k ∩ top-n/p set at each
       // output position vs the teacher's narrowed top-n/k ∩ top-n/p set.
@@ -819,6 +872,8 @@ async function run() {
         in_topk: inTopK,
         in_top100: inTop100,
         is_500x_value_generation: is500x,
+        student_collapsed: stepRec.student_collapsed || false,
+        student_collapse_token: stepRec.student_collapse_token,
         moe,
         base_step_score: base,
         score_breakdown: {
