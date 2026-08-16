@@ -1006,15 +1006,22 @@ async function run() {
         // narrowed top-k across the student output positions. The compressed new
         // networks must reconstruct this shape in phase 2.
         const baseRefTopK = new Set();
+        // baseShapeIds[pos] = the CHOSEN token id the base-role expert owning
+        // position `pos` emitted (the exact "shape" of the un-attached base). A
+        // new network compresses the 5 raw ids (studentIdNums) into one footprint
+        // token; phase 2 checks that decompressing it returns the base shape.
+        const baseShapeIds = [];
+        const nPos = Math.max(1, student.length);
         route.rows.forEach((r, i) => {
           if (expertRole(r.name) !== "base") return;
-          const pos = i % Math.max(1, student.length);
+          const pos = i % nPos;
           const st = student[pos];
           for (const tok of narrowTokenSet(st?.top || [], emitFor("student").top_k, 1)) baseRefTopK.add(String(tok));
+          if (Number.isFinite(Number(st?.chosen?.id))) baseShapeIds[pos] = Number(st.chosen.id);
         });
         // Per-expert phase deltas (phase1 compression bonus, phase2 recon bonus,
         // mtp-aids bonus) surfaced in the UI + added to expertMatch.
-        const phaseInfo = route.rows.map(() => ({ p1: 0, p2: 0, mtpAid: 0, newTok: false, reconOverlap: 0, isNew: false, isMtp: false }));
+        const phaseInfo = route.rows.map(() => ({ p1: 0, p2: 0, mtpAid: 0, newTok: false, reconOverlap: 0, isNew: false, isMtp: false, decompHit: 0 }));
         // PER-EXPERT TEACHER-MATCH differential: each expert Ei owns student
         // output position i % STUDENT_STEP. Its own "match" = how many tokens
         // in that position's NARROWED top-k also appear in the teacher's top-k
@@ -1070,15 +1077,29 @@ async function run() {
           const chosenOk = isCompr ? (st && comprSet.has(String(st.chosen.token)) && tSetK.has(st.chosen.token))
                                    : (st && tSetK.has(st.chosen.token));
           if (chosenOk) m += 10; // strong emit-match boost (compressor: only when it's a compressor token)
-          // Phase 2 — reproduce the base shape: a new network's position top-k
-          // must match the BASE (un-attached) experts' top-k. overlap with
-          // baseRefTopK * reconstruct_weight when it clears reconstruct_min_overlap.
-          if (phase2 && isNew && baseRefTopK.size) {
-            let hit = 0;
-            for (const tok of sSetK) if (baseRefTopK.has(String(tok))) hit++;
-            const overlap = hit / Math.max(1, reconTopK);
-            phaseInfo[i].reconOverlap = Number(overlap.toFixed(3));
-            if (overlap >= reconMin) { m += reconW * overlap; phaseInfo[i].p2 = reconW * overlap; }
+          // Phase 2 — reproduce the base shape ("same shape as if not attached"):
+          // the new network compressed the raw output ids (studentIdNums) into a
+          // single footprint token fpId. It reproduces the base shape iff its
+          // decompressed ids match the BASE (un-attached) experts' chosen ids at
+          // the same positions. CRITICAL: this only counts when the new network
+          // ACTUALLY emitted a compressed/new token (pi.newTok) — otherwise the
+          // decompressed set is trivially identical to the raw base set (overlap
+          // 1.0 for everyone) and the reward is vacuous noise. Gating on newTok
+          // means phase 2 only rewards networks that genuinely produce the
+          // compressed representation AND reconstruct the base shape from it.
+          if (phase2 && isNew && pi.newTok && baseShapeIds.length) {
+            const decompIds = (studentIdNums && studentIdNums.length ? studentIdNums : []);
+            if (decompIds.length) {
+              const bg = new Set();
+              for (const p of baseShapeIds) if (Number.isFinite(Number(p))) bg.add(String(p));
+              let shared = 0;
+              const decompSet = new Set(decompIds.map(String));
+              for (const b of bg) if (decompSet.has(b)) shared++;
+              const overlap = bg.size ? shared / bg.size : 0;
+              phaseInfo[i].reconOverlap = Number(overlap.toFixed(3));
+              phaseInfo[i].decompHit = shared;
+              if (overlap >= reconMin) { m += reconW * overlap; phaseInfo[i].p2 = reconW * overlap; }
+            }
           }
           return m;
         });
@@ -1135,6 +1156,7 @@ async function run() {
             phase2_reconstruction: Number((pi.p2 || 0).toFixed ? (pi.p2 || 0).toFixed(2) : pi.p2 || 0),
             mtp_aid: Number((pi.mtpAid || 0).toFixed ? (pi.mtpAid || 0).toFixed(2) : pi.mtpAid || 0),
             recon_overlap: pi.reconOverlap || 0,
+            decomp_hit: pi.decompHit || 0,
             emitted_new_token: !!pi.newTok,
           };
         });
@@ -1341,6 +1363,7 @@ async function run() {
           phase2_reconstruction: es.phase2_reconstruction ?? 0,
           mtp_aid: es.mtp_aid ?? 0,
           recon_overlap: es.recon_overlap ?? 0,
+          decomp_hit: es.decomp_hit ?? 0,
           emitted_new_token: !!es.emitted_new_token,
         };
       }),
@@ -1394,6 +1417,7 @@ async function run() {
       }) + "\n");
     } catch { /* ledger best-effort */ }
     console.log(`  step ${step}: base=${baseScoreTotal} bonus=${bonusTotal} 500x=${fives} ${stepRec.is_500x_value_generation ? "  <<500x" : ""}`);
+    if (step % 25 === 0) { const tp2 = twoPhaseCfg(); console.log(`  [two-phase] phase=${tp2.phase} newNetW=${tp2.new_net_compression_weight} reconW=${tp2.reconstruct_weight}`); }
 
     // Small gap so the UI can render; not a sleep hack, just pacing.
     await new Promise((r) => setTimeout(r, 250));
