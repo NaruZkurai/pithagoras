@@ -577,66 +577,56 @@ export function compressionReward({ emittedTokens, perTokenEmitted, textLengthGe
 }
 
 /**
- * SAVE THE MODEL as a REAL Mixture-of-Experts (NOT dense). Each layer carries
- * `num_experts` distinct ternary expert weight banks (W_up/W_gate/W_down) plus
- * a learned routing gate; only the top-k experts are active per token — a true
- * sparse-MoE structure, not a flat dense snapshot.
- *
- * Weight format: true ternary {-1, 0, +1}, kept per-expert so a runtime (or the
- * direct-token fork's finetune) can consume them as MoE layers. $moeState values
- * seed each expert's gate/bank and are extended by the latest training step.
+ * SAVE THE TRAINING STATE as a lightweight MoE checkpoint (fast, per-step, does
+ * not block training). We store the REAL persistent state we are training:
+ * each expert's value/gate logit, layer sizes, cumulative scores, round, and
+ * the routing policy. NOTE: this is NOT the full 4B weight dump — the real
+ * billions-of-param ternary {-1,0,+1} model is produced deterministically from
+ * the 4B base by scripts/export_ternary_model.py (base + deterministic formula).
  */
 export function saveModel(step, route, training, moeState) {
   const sv = path.join(REPO, "config", "moe", "model", "save_dir");
   fs.mkdirSync(sv, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const file = path.join(sv, `moe-moe-step-${step}-${ts}.json`);
+  const file = path.join(sv, `moe-state-step-${step}-${ts}.json`);
   const cfg = loadConfig() || {};
   const numExperts = route.count || Object.keys(cfg.moe?.experts || {}).length || 5;
   const layerCount = route.layer_count || cfg.layers?.count || 5;
   const topkRoute = route.topk_route || cfg.moe?.topk_route || 2;
   const names = route.rows.map((r) => r.name);
 
-  const buildTernary = (seed, nCols) => {
-    // deterministic {-1,0,+1} bank from a seed; non-neg values drive gate logits
-    return Array.from({ length: nCols }, () =>
-      Math.round(noise01(seed) * 2) - 1); // maps 0,1,2 -> -1,0,+1
-  };
-
-  // REAL sparse-MoE layers: per layer, per-expert ternary FFN banks + a router.
-  const layers = Array.from({ length: layerCount }, (_, li) => {
-    const experts = names.map((nm, ei) => {
-      const val = _moeState?.expertValues?.[nm] ?? route.rows[ei]?.value ?? 0.5;
-      return {
-        name: nm,
-        role: cfg.moe?.experts?.[nm]?.role || "base",
-        mutation: cfg.moe?.experts?.[nm]?.mutation || "none",
-        w_up: buildTernary(seedBase(nm, li, 0), 128),   // expert up-projection (ternary)
-        w_gate: buildTernary(seedBase(nm, li, 1), 128), // expert gate-projection (ternary)
-        w_down: buildTernary(seedBase(nm, li, 2), 128), // expert down-projection (ternary)
-        gate_weight: Number(val.toFixed ? val.toFixed(4) : val), // routing logit for this expert
-      };
-    });
+  // Real persistent per-expert values (the training state), one per expert.
+  const expertStates = names.map((nm) => {
+    const val = _moeState?.expertValues?.[nm] ?? route.rows.find((r) => r.name === nm)?.value ?? 0.5;
+    const spec = cfg.moe?.experts?.[nm] || {};
     return {
-      layer: "L" + (li + 1),
-      router: { type: "top-" + topkRoute, gate: Object.fromEntries(experts.map((e) => [e.name, e.gate_weight])) },
-      experts, // one expert bank per expert — real MoE
+      name: nm,
+      role: spec.role || "base",
+      mutation: spec.mutation || "none",
+      value: Number(val.toFixed ? val.toFixed(4) : val),
+      gate_logit: Number(val.toFixed ? val.toFixed(4) : val),
+      active: !!(route.rows.find((r) => r.name === nm)?.active),
     };
   });
 
   const snap = {
-    format: "ternary-moe-checkpoint", // real MoE, not dense
-    architecture: "sparse-moe",
+    format: "moe-state-checkpoint", // lightweight persistent training state
+    real_model_from: "base_gguf + deterministic ternary formula -> see scripts/export_ternary_model.py",
+    base_model: cfg.model?.base_gguf,
     step,
     ts: new Date().toISOString(),
-    true_ternary: true,
     routing: { num_experts: numExperts, layers: layerCount, top_k: topkRoute },
-    model: {
-      base_gguf: cfg.model?.base_gguf,
-      tokenizer_from: cfg.model?.tokenizer_from,
-      tokenizer_json: cfg.model?.tokenizer_json,
+    dims: {
+      n_vocab: Number(cfg.model?.n_vocab ?? 151669),
+      n_embd: Number(cfg.model?.n_embd ?? 2560),
+      n_ffn: Number(cfg.model?.n_ffn ?? 9728),
+      n_layers: Number(cfg.model?.n_layers ?? 36),
     },
-    layers,
+    experts: expertStates,
+    layer_sizes: _moeState?.layerSizes ? _moeState.layerSizes.slice() : [],
+    scores: _moeState?.scores || {},
+    round: _moeState?.round ?? 1,
+    noise: _moeState?.noise ?? 0,
     training: {
       delta: training.delta,
       perExpert: training.perExpert,
@@ -649,3 +639,84 @@ function seedBase(nm, li, k) {
   const idx = parseInt(nm.replace(/\D/g, "") || 0, 10);
   return ((+new Date()) % 1e6) + idx * 101 + li * 7 + k * 13;
 }
+
+/** List every saved MoE checkpoint in the save dir (newest first). */
+export function listSnapshots() {
+  if (!fs.existsSync(SAVE_DIR)) return [];
+  try {
+    return fs.readdirSync(SAVE_DIR)
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => {
+        const p = path.join(SAVE_DIR, f);
+        let stat = null; try { stat = fs.statSync(p); } catch {}
+        return { file: f, path: p, mtime: stat ? stat.mtimeMs : 0, size: stat ? stat.size : 0 };
+      })
+      .sort((a, b) => b.mtime - a.mtime); // newest first
+  } catch (e) { return []; }
+}
+
+/**
+ * LOAD a saved 'ternary-moe-checkpoint' snapshot back into the live MoE state
+ * (resume training from it). Restores per-expert gate weights -> expertValues,
+ * the layer count -> layerSizes, and the routing top-k. Returns the loaded
+ * summary, or throws on a bad file.
+ */
+export function loadSnapshot(file) {
+  const p = path.isAbsolute(file) ? file : path.join(SAVE_DIR, path.basename(file));
+  if (!fs.existsSync(p)) throw new Error("snapshot not found: " + p);
+  const snap = JSON.parse(fs.readFileSync(p, "utf8"));
+  if (snap.format !== "ternary-moe-checkpoint") throw new Error("unrecognized snapshot format: " + snap.format);
+  const names = [];
+  const expertValues = {};
+  const layerCount = Math.max(1, Number(snap.routing?.layers ?? snap.layers?.length ?? 5));
+  const layers = snap.layers || [];
+  for (const layer of layers) {
+    for (const ex of (layer.experts || [])) {
+      if (expertValues[ex.name] === undefined) names.push(ex.name);
+      // gate_weight is the expert's routing value (affinity proxy).
+      expertValues[ex.name] = Math.max(0, Math.min(1, Number(ex.gate_weight ?? ex.value ?? 0.5)));
+    }
+  }
+  if (!_moeState) initMoeState(names.length ? names : ["E1","E2","E3","E4","E5"], layerCount);
+  _moeState.expertValues = Object.keys(expertValues).length
+    ? expertValues
+    : Object.fromEntries(names.map((nm, i) => [nm, 0.5]));
+  while (_moeState.layerSizes.length < layerCount) _moeState.layerSizes.push(100);
+  _moeState.layerSizes = _moeState.layerSizes.slice(0, layerCount);
+  _moeState.noiseDeltas = Array.from({ length: layerCount }, () => 0);
+  _moeState.scores = Object.fromEntries(Object.keys(_moeState.expertValues).map((nm) => [nm, 0]));
+  _moeState.topP = {}; _moeState.kl = {}; _moeState.output = {};
+  _moeState.step = 0;
+  _moeState.round = 1;
+  _moeState.lastRound = null;
+  return {
+    ok: true,
+    file: path.basename(p),
+    num_experts: Object.keys(_moeState.expertValues).length,
+    layers: layerCount,
+    top_k: Number(snap.routing?.top_k ?? 2),
+    base_gguf: snap.model?.base_gguf,
+    tokenizer_from: snap.model?.tokenizer_from,
+  };
+}
+
+/**
+ * CHUNKED-TOKEN BASE INPUT: in non-training (inference) usage the model
+ * tokenizes the input, so we map the original tokenizer.json token ids into
+ * "chunked" token groups (N raw tokens -> 1 chunk). The chunked ids become the
+ * base input tokens of the MoE. Returns the chunk id for a raw token id.
+ *   chunk = floor(rawId / chunkSize)
+ * A chunk can optionally be re-expressed via a tokenizer codebook (offset) so
+ * distinct chunks map to distinct integer handles.
+ */
+export function tokenToChunk(rawTokenId, chunkSize = 4, vocabOffset = 0) {
+  const cs = Math.max(1, Math.floor(Number(chunkSize) || 4));
+  const id = Number(rawTokenId) || 0;
+  return vocabOffset + Math.floor(id / cs);
+}
+
+/** Convert an array of raw token ids into an array of chunked base tokens. */
+export function chunkTokenIds(rawIds, chunkSize = 4, vocabOffset = 0) {
+  return (rawIds || []).map((id) => tokenToChunk(id, chunkSize, vocabOffset));
+}
+
