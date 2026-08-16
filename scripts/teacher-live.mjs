@@ -801,7 +801,12 @@ async function run() {
         if (need > 0 && !skipTeacher) {
           try {
             // Advance teacher from the CURRENT base prompt to fill `need` tokens.
-            const tch = await profileRetry(TEACHER_URL, sharedIds, Math.min(need, TEACHER_BATCH), "teacher");
+            // In COMPARE topk_first mode we only need the FIRST token's top-k for
+            // the reference (the whole comparison is first-token-top-k), so request
+            // ONE token (fast) instead of TEACHER_BATCH — generating N tokens each
+            // returning viewTopK logprobs on the 27B teacher times out.
+            const refN = compareFirstOnly() ? 1 : Math.min(need, TEACHER_BATCH);
+            const tch = await profileRetry(TEACHER_URL, sharedIds, refN, "teacher");
             const tpos0 = tch[0];
             if (tpos0 && tpos0.chosen.token !== undefined) {
               winRefTopK = tpos0.top || [];                    // shared across all experts + MTP
