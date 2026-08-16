@@ -244,6 +244,36 @@ function verifyChanges() {
       verdicts.push({ name: "root manifest intact", ok: false, detail: "package.json unparseable" });
     }
   }
+  // 1b) No destructive file collapse. A "verified" edit that guts a working
+  //     source file down to a stub (e.g. 325 lines -> 3) is a REGRESSION, not
+  //     an improvement — it passes `node --check`/build because a stub parses.
+  //     Reject any modified source file that lost > 55% of its lines.
+  try {
+    const diff = execFileSync("git", ["diff", "--numstat"], {
+      cwd: WS, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    });
+    const collapses = [];
+    for (const line of (diff || "").split("\n").filter(Boolean)) {
+      const [add, del, file] = line.split("\t");
+      if (!/\.(ts|js|mjs|jsx|tsx|py|sh)$/i.test(file || "")) continue;
+      // Baseline = committed lines before this change (approx a+b, since a
+      // stub replacing a big file shows tiny add vs huge del).
+      const delN = Number(del || 0);
+      const addN = Number(add || 0);
+      if (delN > 0 && delN - addN > 0 && (delN - addN) / (delN + Math.max(1, addN)) > 0.55) {
+        collapses.push({ file, delN, addN });
+      }
+    }
+    verdicts.push({
+      name: "no destructive file collapse",
+      ok: collapses.length === 0,
+      detail: collapses.length
+        ? collapses.map((c) => `${c.file} -${c.delN}+${c.addN}`).join(", ")
+        : "no source file lost >55% of its lines",
+    });
+  } catch {
+    verdicts.push({ name: "no destructive file collapse", ok: true, detail: "git diff unavailable — skipped" });
+  }
   // 2) The repo builds / typechecks (whatever tool the project exposes).
   const checks = [
     ["npm", "run", "build"],
@@ -307,26 +337,30 @@ function buildProjectContext(compact = false) {
       "cwd IS the project root; paths are RELATIVE (no /workspace mount).",
       "Make ONE small, VERIFIED edit now. Then run `node --check <file>`.",
       "",
-      "CONCRETE EDIT (do this exactly; it is a real, safe improvement):",
-      "In scripts/augment-500mb.mjs, the run() function does a web fetch in " +
-        "complete() that can throw a network error. Add a safe guard so a " +
-        "single failed teacher sample cannot crash the whole collect run: " +
-        "wrap the `const out = await complete(url, prompt);` inside " +
-        "collectTeacher's try/catch so a transport error logs and continues " +
-        "(the per-sample try/catch already exists — if it is missing, add it).",
+      "HARD RULE: NEVER replace a real file with a stub, and never delete most " +
+        "of a file's code. A 'simplification' that guts a working file into a " +
+        "one-line require is a REGRESSION and is REJECTED. Keep every existing " +
+        "function working; make a real additive or narrowly-fixing edit.",
       "",
-      "Simplest acceptable edit — DO ONE of these with a write/edit tool:",
-      "A) In collectTeacher, ensure each teacher sample is wrapped so one HTTP " +
-        "500/timeout is caught and logged, not fatal.",
-      "B) Or add a `--dry-run` guard at the top of run() that prints the steps " +
-        "and returns before any network call, when process.argv includes " +
-        "--dry-run.",
+      "SAFE MICRO-EDIT (pick ONE, keep the file fully working):",
+      "A) In scripts/augment-500mb.mjs, add a `--dry-run` early return at the " +
+        "top of run() (when process.argv includes --dry-run, print the steps " +
+        "and return before any network/finetune call). Keep all existing " +
+        "functions intact.",
+      "B) In scripts/augment-500mb.mjs collectTeacher, add an inner try/catch " +
+        "around the complete() call so one HTTP 500/timeout is logged and " +
+        "skipped rather than ending the loop. Keep everything else intact.",
+      "C) In scripts/compare-topk.mjs, guard the profile() against an empty " +
+        "logprobs content array so a model returning 0 logits logs a clear " +
+        "message and returns an empty profile instead of throwing. Keep all " +
+        "existing logic.",
       "",
-      "Steps: (a) ONE read of scripts/augment-500mb.mjs, (b) write the edited " +
-        "content with the edit tool, (c) run `node --check scripts/" +
-        "augment-500mb.mjs` to prove it is valid plain JS.",
-      "Do NOT touch package.json or any lockfile. Do NOT end the turn without " +
-        "an edit + a node --check you ran and saw pass.",
+      "Steps: (a) ONE read of the file, (b) apply ONE narrowly-scoped edit with " +
+        "the edit tool (do not rewrite the whole file), (c) run `node --check " +
+        "scripts/<file>` to prove it is valid plain JS.",
+      "Do NOT touch package.json or any lockfile. Do NOT reduce the file to a " +
+        "stub. Do NOT end the turn without an edit + a node --check you ran " +
+        "and saw pass.",
       "",
     ].join("\n");
     return lines;
