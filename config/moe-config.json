@@ -1,12 +1,20 @@
 {
  "model": {
-  "name": "bonsai-27b-ternary-moe",
-  "base_gguf": "/nzk/models/Ternary-Bonsai-27B-heretic-ja-Q1_0.gguf",
+  "name": "bonsai-4b-ternary-moe",
+  "base_gguf": "/nzk/models/Bonsai-4B-Q1_0.gguf",
   "tokenizer_from": "/nzk/models/Bonsai-27B-Q1_0.gguf",
   "tokenizer_json": "same-vocab-as-27B (embedded in GGUF)",
   "tokenizer_n_vocab": 248320,
   "true_ternary": true,
-  "save_dir": "models/snapshots"
+  "save_dir": "models/snapshots",
+  "n_layers": 36,
+  "n_embd": 2560,
+  "n_ffn": 9728,
+  "n_head": 32,
+  "n_head_kv": 8,
+  "n_vocab": 151669,
+  "dtype": "ternary {-1,0,+1} (2-bit packed)",
+  "model_desc": "4B base (Qwen3-4B) ternarized via deterministic Q1_0 formula to {-1,0,+1} MoE"
  },
  "moe": {
   "num_experts": 44,
@@ -371,8 +379,8 @@
  },
  "scoring": {
   "base": {
-   "per_topk_token_match": 53009,
-   "per_topp_token_match": 53009,
+   "per_topk_token_match": 5,
+   "per_topp_token_match": 5,
    "per_teacher_emit_match": 100000,
    "note": "+1 per token in student's top-n/k that's in teacher's top-n/k; +1 per token in student's top-n/p that's in teacher's top-n/p; +2 per student CHOSEN token that's in the teacher's ACTUAL emitted top-k"
   },
@@ -392,17 +400,17 @@
   },
   "curve": {
    "enabled": true,
-   "exp_base": 2.0,
-   "exp_scaler": 4.0,
+   "exp_base": 2,
+   "exp_scaler": 4,
    "note": "exponential reward for matching the (perfect) teacher's top-k curve: each matched teacher slot i pays per_topk_token_match * exp_base^((i+1)/exp_scaler), so MORE matches = MORE reward (progressively). A compressed token that lands on a teacher slot counts and is multiplied by compressed_token_mult. New-token-system tokens in the teacher top-k are also heavily rewarded.",
-   "compressed_token_mult": 4.0
+   "compressed_token_mult": 4
   },
   "compression": {
    "enabled": true,
    "base_effective_tokens": 5,
    "reference_tokens": 23,
-   "text_length_factor": 1.0,
-   "multiplier": 1.0,
+   "text_length_factor": 1,
+   "multiplier": 1,
    "new_token_match_mult": 1.001,
    "new_token_match_min_pct": 0.2,
    "tally_before_reset": true,
