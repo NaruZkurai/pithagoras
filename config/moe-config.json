@@ -1,7 +1,10 @@
 {
   "model": {
-    "name": "bonsai-4b-moe",
-    "base_gguf": "/nzk/models/Bonsai-4B-Q1_0.gguf",
+    "name": "bonsai-27b-ternary-moe",
+    "base_gguf": "/nzk/models/Ternary-Bonsai-27B-heretic-ja-Q1_0.gguf",
+    "tokenizer_from": "/nzk/models/Bonsai-27B-Q1_0.gguf",
+    "tokenizer_json": "same-vocab-as-27B (embedded in GGUF)",
+    "tokenizer_n_vocab": 248320,
     "true_ternary": true,
     "save_dir": "models/snapshots"
   },
@@ -138,7 +141,7 @@
       "note": "500x when the 5-token compression footprint token appears in the top-k of the next-5 AND a match is in the top-100 of the next 5 generated tokens"
     },
     "penalties": {
-      "overconfidence": 53,
+      "overconfidence": 530,
       "redundant_expert": 0,
       "note": "subtract from total when flagged; adjust live via UI"
     }
@@ -174,7 +177,7 @@
   "expert_policy": {
     "top_n_survive": 3,
     "update_non_top": true,
-    "bottom_m_refresh": 2,
+    "bottom_m_refresh": 8,
     "reset_from_last_window": true,
     "note": "at each round reset: top_n_survive experts keep their values (survive), non-top experts keep being updated (trainStep), and the bottom_m_refresh worst experts get refreshed — either re-seeded from the previous window's data (reset_from_last_window=true) or fresh. All adjustable."
   },

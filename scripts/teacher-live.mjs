@@ -272,6 +272,7 @@ async function run() {
 
   let shared = PROMPT;
   const teacherOutput = []; // teacher's accumulated output tokens (1 per step)
+  const newTokens = [];     // current list of NEW tokens created (compressed chunks + sentinel)
   let baseScoreTotal = 0;
   let bonusTotal = 0;
   let layerNoiseState = null; // per-token noise accumulator for layer states
@@ -356,6 +357,19 @@ async function run() {
       const inTop100 = top100All.has(COMPRESS_AS_TOKEN) || top100All.has(footprint);
       const is500x = inTopK && inTop100;
       if (is500x) fives++;
+      // THE NEW-TOKEN SYSTEM (visible): each step, the student's 5 output
+      // tokens are COMPRESSED into ONE new token whose value = their sum
+      // (footprint). We record it as a created new token + a table describing
+      // how the compression works, so the UI can show the system + current list.
+      newTokens.push({
+        step,
+        input: studentIds,           // the 5 tokens being compressed
+        new_token: footprint,        // the created new token (sum of input ids)
+        sentinel: COMPRESS_AS_TOKEN, // the fixed sentinel this scheme matches
+        created: is500x,             // true when this new token appears in top-k AND top-100
+        ts: Date.now(),
+      });
+      if (newTokens.length > 200) newTokens.shift(); // keep the list bounded
 
       // ---- MoE: route through the expert layers (top-2), train, score ----
       let moe = null, sc = null;
@@ -501,6 +515,14 @@ async function run() {
       "500x_generations": fives,
       num_experts: stepRec.moe?.num_experts ?? loadConfig()?.moe?.num_experts ?? 5,
       layers_total: stepRec.moe?.layers_total ?? loadConfig()?.layers?.count ?? 5,
+      // NEW-TOKEN SYSTEM: how new tokens are created + the current created list.
+      new_token_system: {
+        how: "Each step, the student's STUDENT_STEP output tokens are COMPRESSED into ONE new token whose VALUE = the sum of their token ids (footprint). A fixed sentinel (COMPRESS_AS_TOKEN) marks the compression; when that new token appears in the model's top-k of the space AND a match is in the top-100 of the emitted tokens, it counts as a 500x value generation.",
+        sentinel: COMPRESS_AS_TOKEN,
+        per_step: STUDENT_STEP,
+        create_rule: "new_token = sum(input tokens)",
+      },
+      new_tokens_list: newTokens,
       // Teacher: the total prompt + accumulated output tokens.
       teacher_prompt: PROMPT,
       teacher_output: teacherOutput,

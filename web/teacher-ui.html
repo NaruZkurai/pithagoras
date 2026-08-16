@@ -65,6 +65,11 @@
       <div id="teachOut" class="teacher-out"><div style="color:#8b949e">waiting for teacher output…</div></div>
     </div>
     <div class="card">
+      <h2>New-token system · current new tokens</h2>
+      <div id="newTokSystem" style="font-size:12px;color:#8b949e;margin-bottom:8px">…</div>
+      <div id="newTokList" class="guess-history" style="max-height:220px;"><div style="color:#8b949e">waiting for new tokens…</div></div>
+    </div>
+    <div class="card">
       <h2>Student guesses — any step (tokens only)</h2>
       <div class="scrub">
         <label style="font-size:11px;color:#8b949e">step</label>
@@ -174,6 +179,7 @@ function applyData(d) {
   renderExpertScores(d);
   renderSampling(d);
   renderPolicy(d);
+  renderNewTokens(d);
   renderTokens(d);
   appendStream(d);
 }
@@ -404,6 +410,23 @@ document.getElementById("gStep")?.addEventListener("change", () => {
   curGuess = v; document.getElementById("gRange").value = v; renderGuess(v);
 });
 setInterval(loadTokens, 2000);
+
+function renderNewTokens(d) {
+  const sys = d.new_token_system || {};
+  document.getElementById("newTokSystem").innerHTML =
+    `<div style="margin-bottom:4px"><b style="color:#58a6ff">how new tokens are created:</b></div>` +
+    `<div>${String(sys.how || "compression of output tokens into a single new token whose value = sum of their ids")}</div>` +
+    `<div style="margin-top:4px">sentinel <code>${sys.sentinel ?? "?"}</code> · input per new token <code>${sys.per_step ?? "?"}</code> · <code>${sys.create_rule || "new_token = sum(input)"}</code></div>`;
+  const list = d.new_tokens_list || [];
+  const el = document.getElementById("newTokList");
+  if (!list.length) { el.innerHTML = '<div style="color:#8b949e">no new tokens created yet</div>'; return; }
+  const newest = list.slice(-40).reverse(); // show most recent 40
+  el.innerHTML = newest.map(t =>
+    `<div style="font-size:11px;padding:2px;border-bottom:1px solid #1f6feb22">` +
+    `<span style="color:#8b949e">step ${t.step}</span> · input [<span style="color:#a371f7">${(t.input||[]).join(" ")}</span>] → <b style="color:${t.created ? "#3fb950" : "#e6edf3"}">new ${t.new_token}</b>` +
+    (t.created ? ' <span class="fivehundred">★created</span>' : "") + `</div>`
+  ).join("");
+}
 
 function renderTokens(d) {
   const el = document.getElementById("tokens");
