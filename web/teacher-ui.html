@@ -51,6 +51,9 @@
   <h1>Teacher-Anchored Parity — 27B teacher → 4B student</h1>
   <span id="conn" class="status offline">connecting…</span>
   <button id="bPause" style="background:#6e7681;color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer;font-weight:600">Pause training</button>
+  <span style="color:#8b949e;font-size:11px">pause every:</span>
+  <input id="cPauseEvery" type="number" min="0" value="0" style="width:60px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:6px;padding:4px 6px" title="Auto-pause every N training steps (0 = never). Re-seeds prompt as default input on each pause.">
+  <button id="bPauseEvery" style="background:#444;color:#fff;border:0;border-radius:6px;padding:6px 10px;cursor:pointer">set</button>
 </header>
 <div class="wrap">
   <!-- LEFT: stats + graphs -->
@@ -386,6 +389,10 @@ function setPausedUI(p) {
 
 function renderStats(d) {
   document.getElementById("sStep").textContent = d.step ?? 0;
+  // Set the auto-pause interval input once from the first payload (never
+  // overwrite after — it holds what the user typed until "set").
+  const _pi = document.getElementById("cPauseEvery");
+  if (_pi && !_pi.dataset.inited) { _pi.dataset.inited = "1"; _pi.value = d.pause_every_n_steps ?? 0; }
   document.getElementById("sBase").textContent = d.base_score ?? 0;
   document.getElementById("sBonus").textContent = d.bonus_score ?? 0;
   document.getElementById("sTotal").textContent = d.total_score ?? 0;
@@ -778,6 +785,20 @@ document.getElementById("bPause")?.addEventListener("click", async () => {
     const j = await r.json();
     setPausedUI(j.paused);
   } catch (e) { /* server offline; keep optimistic */ }
+});
+
+// Set auto-pause interval: POST /config {training:{pause_every_n_steps:N}}.
+document.getElementById("bPauseEvery")?.addEventListener("click", async () => {
+  const v = Math.max(0, Math.floor(Number(document.getElementById("cPauseEvery").value) || 0));
+  document.getElementById("cfgStatus").textContent = "setting pause interval…";
+  try {
+    const r = await fetch("http://127.0.0.1:4199/config", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ training: { pause_every_n_steps: v } }),
+    });
+    const j = await r.json();
+    document.getElementById("cfgStatus").textContent = j.ok ? `pause every ${v} ✓` : "err ✗ " + (j.error || "");
+  } catch (e) { document.getElementById("cfgStatus").textContent = "offline (config :4199)"; }
 });
 
 let _lastStreamStep = null;

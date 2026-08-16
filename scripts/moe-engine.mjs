@@ -402,21 +402,27 @@ export function routeExperts(topKTokens, layerNoise) {
 
 /**
  * Training-update per expert + per layer from the config formulas.
- * We model a small weight adjustment (true-ternary-flavored) so growing stays
- * ternary and is saved.
+ * EVERY expert is updated (not just the active top-k): active experts get the
+ * full parity update, inactive experts get a smaller standing update (so even a
+ * non-routed expert keeps learning/scoring instead of freezing). We model a
+ * small weight adjustment (true-ternary-flavored) so growing stays ternary and
+ * is saved.
  */
 export function trainStep(route, teacherVal, studentVal) {
   const cfg = loadConfig();
   const layers = cfg.layers;
-  const group = route.rows.filter((r) => r.active);
   if (!_moeState) initMoeState(route.rows.map((r) => r.name), route.layer_count);
   let delta = 0;
-  const perExpert = group.map((r) => {
-    const spec = cfg.moe.experts[r.name];
-    // per-expert formula = overlap-adjusted parity update, scaled by layer lr/gate.
-    const d = (teacherVal - studentVal) * layers.each.topk_gate * layers.each.lr * r.affinity;
+  const perExpert = route.rows.map((r) => {
+    const spec = cfg.moe.experts[r.name] || {};
+    const isActive = !!r.active;
+    // active expert: full overlap-adjusted parity update.
+    // inactive expert: small standing drift (still scored/trained, not frozen).
+    const activeTerm = (teacherVal - studentVal) * layers.each.topk_gate * layers.each.lr * r.affinity;
+    const inactiveTerm = (0.5 - studentVal) * layers.each.lr * 0.1;
+    const d = isActive ? activeTerm : inactiveTerm;
     delta += d;
-    // Persist the expert's value so it keeps accumulating (NOT reset on update)
+    // Persist every expert's value so it keeps accumulating (NOT reset on update)
     // and track per-expert top-p / KL / output signals.
     const prev = _moeState.expertValues[r.name] ?? r.value;
     const updated = Math.max(0, Math.min(1, prev + d));
@@ -424,10 +430,10 @@ export function trainStep(route, teacherVal, studentVal) {
     _moeState.topP[r.name] = (Number(_moeState.topP[r.name]) || 0) + d * 100;
     _moeState.kl[r.name] = (Number(_moeState.kl[r.name]) || 0) + Math.abs(d);
     _moeState.output[r.name] = d;
-    return { expert: r.name, delta: d, value: updated, topk_weight: r.topk_weight, prev };
+    return { expert: r.name, delta: d, value: updated, active: isActive, topk_weight: r.topk_weight, prev };
   });
   // Per-layer training update (each of the `count` layers gets a slice of the
-  // active-experts' delta, scaled by its layer weight).
+  // experts' delta, scaled by its layer weight).
   const layerDeltas = (route.per_layer_size || []).map((ls, i) => ({
     layer: ls.layer,
     size: ls.size,

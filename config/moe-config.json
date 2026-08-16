@@ -747,11 +747,11 @@
     },
     "value_generation": {
       "compressed_token_sentinel": 999993,
-      "points_500x": 50,
+      "points_500x": 20,
       "note": "500x when the 5-token compression footprint token appears in the top-k of the next-5 AND a match is in the top-100 of the next 5 generated tokens"
     },
     "penalties": {
-      "overconfidence": 1000009,
+      "overconfidence": 6,
       "redundant_expert": 0,
       "note": "subtract from total when flagged; adjust live via UI"
     },
@@ -775,7 +775,7 @@
     }
   },
   "sampling": {
-    "view_top_k": 21,
+    "view_top_k": 20,
     "emit": {
       "teacher": {
         "top_k": 20,
@@ -783,7 +783,7 @@
         "temperature": 0.7
       },
       "student": {
-        "top_k": 53,
+        "top_k": 20,
         "top_p": 0.95,
         "temperature": 0.7
       }
@@ -802,7 +802,8 @@
   "training": {
     "steps_per_round": 5,
     "rounds_before_reset": 3,
-    "note": "expert values/scores persist and accumulate for steps_per_round * rounds_before_reset total steps, then reset (keeping a last_round snapshot for comparison). Set rounds_before_reset to control how many rounds before the reset happens."
+    "note": "steps_per_round * rounds_before_reset decide round reset cadence. pause_every_n_steps>0 auto-pauses the harness every N training steps (0 = never). Each auto-pause re-seeds the prompt as the default input.",
+    "pause_every_n_steps": 0
   },
   "expert_policy": {
     "top_n_survive": 10,

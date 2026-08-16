@@ -439,6 +439,21 @@ async function run() {
     }
     step++;
     bumpMoeStep(); // advance the MoE round/step counter ONCE per harness step
+    // AUTO-PAUSE at intervals: if training.pause_every_n_steps > 0, pause the
+    // harness every N steps so the user can inspect between bursts. On each
+    // pause we ALSO re-seed the prompt to the base PROMPT (default input) so a
+    // resume starts a fresh run from the prompt, not the accumulated output.
+    const pauseEvery = Number(loadConfig()?.training?.pause_every_n_steps ?? 0);
+    if (pauseEvery > 0 && step >= pauseEvery && step % pauseEvery === 0) {
+      shared = PROMPT;
+      try { sharedIds = await tokenizeText(TEACHER_URL, PROMPT); } catch (e) { sharedIds = []; }
+      teacherOutput.length = 0;
+      paused = true;
+      latest = { ...(latest || {}), paused: true, step, auto_paused: true };
+      sendCurrent({ auto_paused: true });
+      console.log(`  >> auto-pause at step ${step} (every ${pauseEvery}); prompt re-seeded to base`);
+      await new Promise((r) => setTimeout(r, 200));
+    }
     let stepRec = { step, ts: Date.now() };
     // Function-scope fallback accumulators so the step catch handler never
     // throws "identifier is not defined" when a request fails partway through.
@@ -648,6 +663,11 @@ async function run() {
           layers_total: route.layer_count,
           per_layer: training.perLayer || [],
           training_delta: training.delta,
+          training_per_expert: (training.perExpert || []).map((e) => ({
+            expert: e.expert, delta: Number(e.delta).toFixed ? Number(e.delta).toFixed(6) : e.delta,
+            value: Number(e.value).toFixed ? Number(e.value).toFixed(4) : e.value,
+            active: e.active,
+          })),
           layer_noise: layerNoiseState ? layerNoiseState.layers.map((v) => Number(v.toFixed(4))) : [],
           state: route.state ? {
             noise: Number(route.state.noise?.toFixed?.(4) ?? route.state.noise ?? 0),
@@ -748,6 +768,26 @@ async function run() {
       "500x_generations": fives,
       num_experts: stepRec.moe?.num_experts ?? loadConfig()?.moe?.num_experts ?? 5,
       layers_total: stepRec.moe?.layers_total ?? loadConfig()?.layers?.count ?? 5,
+      pause_every_n_steps: Number(loadConfig()?.training?.pause_every_n_steps ?? 0),
+      // PER-EXPERT scored/training detail (surfaced so the UI shows EVERY expert
+      // getting a value/delta, not just the active top-k). Pulls from the moe
+      // object built during the step.
+      per_expert: (stepRec.moe?.expert_topk || []).map((e) => ({
+        expert: e.expert, value: e.value, active: e.active, role: e.role,
+        mutation: e.mutation, topk_weight: e.topk_weight,
+      })),
+      per_expert_deltas: (stepRec.moe?.training_per_expert || []).map((e) => ({
+        expert: e.expert, delta: e.delta, value: e.value, active: e.active,
+      })),
+      expert_values: stepRec.moe?.state?.expertValues || {},
+      training_delta: stepRec.moe?.training_delta ?? 0,
+      cumulative_scores: stepRec.moe?.cumulative_scores || [],
+      moe_detail: stepRec.moe ? {
+        expert_scores: stepRec.moe.expert_scores || [],
+        active: stepRec.moe.active || [],
+        per_layer: stepRec.moe.per_layer || [],
+        layers_used: stepRec.moe.layers_used,
+      } : undefined,
       // NEW-TOKEN SYSTEM: how new tokens are created + the current created list.
       new_token_system: {
         how: "Each step, the student's STUDENT_STEP output tokens are COMPRESSED into ONE new token whose VALUE = the sum of their token ids (footprint). A fixed sentinel (COMPRESS_AS_TOKEN) marks the compression; when that new token appears in the model's top-k of the space AND a match is in the top-100 of the emitted tokens, it counts as a 500x value generation.",
