@@ -54,7 +54,9 @@
   "scoring": {
     "base": {
       "per_topk_token_match": 1,
-      "note": "+1 per token position where the student's chosen token is in the teacher's top-k (1 teacher token == 1 student token)"
+      "per_topp_token_match": 1,
+      "per_teacher_emit_match": 10,
+      "note": "+1 per token in student's top-n/k that's in teacher's top-n/k; +1 per token in student's top-n/p that's in teacher's top-n/p; +2 per student CHOSEN token that's in the teacher's ACTUAL emitted top-k"
     },
     "bonus": {
       "points_per_step_times_100": true,
@@ -66,10 +68,25 @@
       "note": "500x when the 5-token compression footprint token appears in the top-k of the next-5 AND a match is in the top-100 of the next 5 generated tokens"
     },
     "penalties": {
-      "overconfidence": 0,
+      "overconfidence": 1,
       "redundant_expert": 0,
       "note": "subtract from total when flagged; adjust live via UI"
     }
+  },
+  "sampling": {
+    "view_top_k": 100,
+    "emit": {
+      "teacher": {
+        "top_k": 20,
+        "top_p": 0.9
+      },
+      "student": {
+        "top_k": 20,
+        "top_p": 0.9
+      }
+    },
+    "noise_to_layer": 0.05,
+    "note": "top-k sliders are capped at 100 (NOT 100k). view_top_k = how many top tokens the model looks at (logprobs); emit.* limits top-k/top-p sampling so the teacher stays coherent. noise_to_layer = per-token noise added to layers for the next output token."
   },
   "layers": {
     "count": 5,
@@ -82,9 +99,17 @@
   "ui": {
     "adjustable": [
       "scoring.base.per_topk_token_match",
+      "scoring.base.per_topp_token_match",
+      "scoring.base.per_teacher_emit_match",
       "scoring.bonus.points_per_step_times_100",
       "scoring.value_generation.points_500x",
       "scoring.penalties.overconfidence",
+      "sampling.view_top_k",
+      "sampling.emit.teacher.top_k",
+      "sampling.emit.teacher.top_p",
+      "sampling.emit.student.top_k",
+      "sampling.emit.student.top_p",
+      "sampling.noise_to_layer",
       "moe.experts.*.training_formula",
       "moe.experts.*.noise",
       "layers.count",

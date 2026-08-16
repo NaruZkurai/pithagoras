@@ -53,12 +53,47 @@ export function noise01(seed) {
 }
 
 /**
+ * Narrow a per-position logprobs list (already sorted by prob desc) into a
+ * token-id Set that is the intersection of:
+ *   - top-k: the single most likely `k` tokens, and
+ *   - top-p (nucleus): the smallest prefix whose cumulative softmax prob >= p.
+ * If p >= 1 the set is just the top-k; if k <= 0 the set is empty.
+ */
+export function narrowTokenSet(logprobs, k, p) {
+  const arr = (logprobs || []).slice(0, k);
+  if (!arr.length || k <= 0) return new Set();
+  if (p >= 1) return new Set(arr.map((t) => t.token));
+  const probs = arr.map((t) => Math.exp(Math.min(0, Number(t.logprob) || 0)));
+  const sum = probs.reduce((a, b) => a + b, 0) || 1;
+  const set = new Set();
+  let cum = 0;
+  for (let i = 0; i < arr.length; i++) {
+    set.add(arr[i].token);
+    cum += probs[i] / sum;
+    if (cum >= p) break;
+  }
+  return set;
+}
+
+/**
+ * Per-token noise injection into the layers, meant to be accumulated across the
+ * tokens emitted this step so the NEXT output token sees a nudged layer state.
+ * Returns a NEW state object (immutable-ish) with each layer bumped by noise.
+ */
+export function addLayerNoise(state, noise, layerCount = 5, tokenIdx = 0) {
+  const base = state && Array.isArray(state.layers) ? state.layers : Array.from({ length: layerCount }, () => 0);
+  const layers = base.map((v, i) => v + (noise || 0) * noise01((+new Date()) + i * 131 + tokenIdx * 17));
+  return { layers, step: (state && state.step || 0) + 1 };
+}
+
+
+/**
  * Build the expert-layer STATES for one routing step.
  * Each expert observes the top-k input and produces a weight; only the TOP 2
  * (by affinity) are kept active. Mutations follow the owner's spec:
  *   E3 = E4 + noise, E5 = similar-neurons(E1..E4) + noise.
  */
-export function routeExperts(topKTokens) {
+export function routeExperts(topKTokens, layerNoise) {
   const cfg = loadConfig().moe;
   const experts = cfg.experts;
   const n = Object.keys(experts).length;
@@ -100,10 +135,14 @@ export function routeExperts(topKTokens) {
 
   // Layer sizes: derive a per-layer size estimate (proportional to affinity,
   // scaled by the layer count) so the UI can show how big each layer is.
+  // Any accumulated per-token `layerNoise.layers` nudges each layer up/down,
+  // so the NEXT output token routes through a noise-injected layer state.
   const layerCount = loadConfig().layers?.count || 5;
+  const noiseArr = layerNoise && Array.isArray(layerNoise.layers) ? layerNoise.layers : [];
   const perLayerSize = Array.from({ length: layerCount }, (_, li) => {
     const lv = 0.3 + 0.7 * Math.random();
-    return { layer: "L" + (li + 1), size: Math.round(100 + lv * 400) }; // arbitrary but monotonic-ish
+    const bump = noiseArr[li] != null ? noiseArr[li] * 40 : 0; // clamp effect
+    return { layer: "L" + (li + 1), size: Math.max(10, Math.round(100 + lv * 400 + bump)) }; // noise-injected
   });
 
   return {

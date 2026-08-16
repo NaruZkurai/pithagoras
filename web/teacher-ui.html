@@ -110,6 +110,26 @@
       <div id="stream" class="stream"></div>
     </div>
     <div class="card">
+      <h2>Sampling sliders (live, applies next step)</h2>
+      <div style="display:grid; gap:8px;">
+        <div class="sl"><div style="font-size:11px;color:#8b949e">View top-k (model looks at this many) <b id="lView" style="color:#58a6ff"></b></div>
+          <input id="sView" type="range" min="1" max="100" step="1" style="width:100%"></div>
+        <div class="sl"><div style="font-size:11px;color:#8b949e">Teacher · emit top-k (keeps it coherent) <b id="lTKt" style="color:#3fb950"></b></div>
+          <input id="sTKt" type="range" min="1" max="100" step="1" style="width:100%"></div>
+        <div class="sl"><div style="font-size:11px;color:#8b949e">Teacher · emit top-p <b id="lTPt" style="color:#3fb950"></b></div>
+          <input id="sTPt" type="range" min="0.5" max="1" step="0.01" style="width:100%"></div>
+        <div class="sl"><div style="font-size:11px;color:#8b949e">Student · emit top-k <b id="lTKs" style="color:#a371f7"></b></div>
+          <input id="sTKs" type="range" min="1" max="100" step="1" style="width:100%"></div>
+        <div class="sl"><div style="font-size:11px;color:#8b949e">Student · emit top-p <b id="lTPs" style="color:#a371f7"></b></div>
+          <input id="sTPs" type="range" min="0.5" max="1" step="0.01" style="width:100%"></div>
+        <div class="sl"><div style="font-size:11px;color:#8b949e">Noise → layer per output token <b id="lNz" style="color:#d29922"></b></div>
+          <input id="sNz" type="range" min="0" max="1" step="0.01" style="width:100%"></div>
+        <div class="sl"><div style="font-size:11px;color:#8b949e">Pts per student CHOSEN token in teacher's emitted top-k <b id="lEm" style="color:#f778ba"></b></div>
+          <input id="sEm" type="range" min="0" max="20" step="1" style="width:100%"></div>
+        <button id="bSamp" style="background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;margin-top:4px">Apply sampling</button>
+      </div>
+    </div>
+    <div class="card">
       <h2>Config / controls (live, applies next step)</h2>
       <div class="stats" style="grid-template-columns:1fr 1fr; align-items:end;">
         <div class="stat"><div class="label">Base pts / top-k match</div><input id="cBase" type="number" step="1" value="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
@@ -141,6 +161,7 @@ function applyData(d) {
   renderMoe(d);
   renderTeacher(d);
   renderExpertScores(d);
+  renderSampling(d);
   renderTokens(d);
   appendStream(d);
 }
@@ -286,6 +307,7 @@ function renderExpertScores(d) {
   const last = recent[recent.length - 1];
   const esScores = (last?.moe?.expert_scores) || [];
   if (!esScores.length) { el.innerHTML = '<div style="color:#8b949e">waiting for expert scores…</div>'; return; }
+  const sb = last?.score_breakdown || {};
   el.innerHTML = esScores.map(e => {
     const c = expColor(e.expert);
     const pct = Math.max(2, Math.min(100, (e.score / (d.total_score || 1)) * 100));
@@ -300,6 +322,9 @@ function renderExpertScores(d) {
      <span style="font-size:11px;color:#8b949e">Σ experts</span>
      <span style="font-size:15px;font-weight:700;color:#58a6ff">${esScores.reduce((a,e)=>a+e.score,0).toFixed(1)}</span>
      <span style="font-size:11px;color:#8b949e">= total ${d.total_score ?? 0}</span>
+   </div>
+   <div style="margin-top:6px;font-size:11px;color:#8b949e">
+     step ${last.step}: top-k <b style="color:#58a6ff">+${sb.topk ?? 0}</b> (${sb.inK ?? 0} toks) · top-p <b style="color:#a371f7">+${sb.tpp ?? 0}</b> (${sb.inP ?? 0}) · teacher-emit <b style="color:#f778ba">+${sb.teacher_emit ?? 0}</b> (${sb.inEm ?? 0} chosen toks)
    </div>`;
 }
 
@@ -363,10 +388,51 @@ async function postCfg(patch, note) {
   } catch (e) { document.getElementById("cfgStatus").textContent = "offline"; document.getElementById("cfgStatus").textContent += " (config server on :4199)"; }
 }
 
+// Sync the sampling sliders + points from the latest payload.
+function renderSampling(d) {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const lab = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const e = d.emit || {};
+  lab("lView", d.view_top_k ?? "?"); set("sView", d.view_top_k ?? 100);
+  lab("lTKt", e.teacher?.top_k ?? "?"); set("sTKt", e.teacher?.top_k ?? 20);
+  lab("lTPt", e.teacher?.top_p ?? "?"); set("sTPt", Number(e.teacher?.top_p ?? 0.9) * 100);
+  lab("lTKs", e.student?.top_k ?? "?"); set("sTKs", e.student?.top_k ?? 20);
+  lab("lTPs", e.student?.top_p ?? "?"); set("sTPs", Number(e.student?.top_p ?? 0.9) * 100);
+  lab("lNz", d.noise_to_layer ?? "?"); set("sNz", Number(d.noise_to_layer ?? 0.05) * 100);
+}
+
+function bindSampling() {
+  const sTK = (id, upd) => () => {
+    const el = document.getElementById(id);
+    const v = el && (id === "sView" ? Number(el.value) : id === "sTKt" || id === "sTKs" ? Number(el.value) : Number(el.value) / 100);
+    // live-preview label
+    document.getElementById(id === "sView" ? "lView" : id === "sTKt" ? "lTKt" : id === "sTKs" ? "lTKs" : id === "sTPt" ? "lTPt" : "lTPs").textContent = v;
+  };
+  ["sView","sTKt","sTPt","sTKs","sTPs","sNz"].forEach(id => document.getElementById(id)?.addEventListener("input", sTK(id)));
+  document.getElementById("bSamp")?.addEventListener("click", () => {
+    postCfg({
+      sampling: {
+        view_top_k: Number(document.getElementById("sView").value),
+        emit: {
+          teacher: { top_k: Number(document.getElementById("sTKt").value), top_p: Number(document.getElementById("sTPt").value) / 100 },
+          student: { top_k: Number(document.getElementById("sTKs").value), top_p: Number(document.getElementById("sTPs").value) / 100 },
+        },
+        noise_to_layer: Number(document.getElementById("sNz").value) / 100,
+      },
+      scoring: { base: { per_teacher_emit_match: Number(document.getElementById("sEm").value || 2) } },
+    }, "sampling");
+  });
+}
+bindSampling();
+
 document.getElementById("bBase")?.addEventListener("click", () => {
   postCfg({
     scoring: {
-      base: { per_topk_token_match: Number(document.getElementById("cBase").value || 1) },
+      base: {
+        per_topk_token_match: Number(document.getElementById("cBase").value || 1),
+        per_topp_token_match: Number(document.getElementById("cBase").value || 1),
+        per_teacher_emit_match: Number(document.getElementById("sEm").value || 2),
+      },
       value_generation: { points_500x: Number(document.getElementById("c500").value || 500) },
       penalties: { overconfidence: Number(document.getElementById("cPen").value || 0) },
     },

@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, routeExperts, trainStep, scoreStep, saveModel } from "./moe-engine.mjs";
+import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise } from "./moe-engine.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -49,7 +49,15 @@ const PORT = Number(process.env.LIVE_PORT || 4199);
 
 const TEACHER_URL = process.env.TEACHER_URL || "http://127.0.0.1:41001"; // 27B
 const STUDENT_URL = process.env.STUDENT_URL || "http://127.0.0.1:6465";   // 4B
-const TOP_K = Number(process.env.TOPK || 100);
+// Sampling knobs are LIVE (read from config/moe-config.json "sampling" each
+// step so the UI sliders apply immediately). Helpers return current values.
+const SAMPLING = () => loadConfig()?.sampling || {};
+const viewTopK = () => Math.min(100, Number(SAMPLING().view_top_k ?? 100));   // how many top tokens model looks at (logprobs)
+function emitFor(who) { // {top_k, top_p} for teacher|student
+  const s = SAMPLING().emit?.[who] || {};
+  return { top_k: Math.min(100, Number(s.top_k ?? 20)), top_p: Number(s.top_p ?? 0.9) };
+}
+const noiseToLayer = () => Number(SAMPLING().noise_to_layer ?? 0.05);
 const STUDENT_STEP = Number(process.env.STUDENT_STEP || 5);
 const STEPS = Number(process.env.STEPS || 0); // 0 = run forever
 const PROMPT =
@@ -65,12 +73,16 @@ const args = process.argv.slice(2);
 function flag(name, d) { const i = args.indexOf("--" + name); return i >= 0 ? Number(args[i + 1]) : d; }
 const _steps = flag("steps", STEPS);
 
-/** Get per-position top-k (up to 100) + chosen token from a model via
- *  /v1/completions?logprobs. logprobs=N can be >5; clamp to TOP_K. */
-async function profile(url, prompt, n) {
+/** Get per-position top-k + chosen token from a model via
+ *  /v1/completions?logprobs. The model VIEWS the top-viewTopK tokens
+ *  (logprobs=N) but only EMITS from the top-k / top-p of the given role
+ *  (teacher/student) — which also keeps the teacher coherent.
+ *  `who` selects the live sampling.emit.<who> values from config. */
+async function profile(url, prompt, n, who = "teacher") {
+  const { top_k, top_p } = emitFor(who);
   const body = JSON.stringify({
     model: "x", prompt, max_tokens: n, temperature: 0.2,
-    top_p: 1, top_k: TOP_K, logprobs: Math.min(100, TOP_K), echo: false, stream: false,
+    top_p, top_k, logprobs: viewTopK(), echo: false, stream: false,
   });
   const res = await fetch(`${url}/v1/completions`, {
     method: "POST", headers: { "content-type": "application/json" }, body,
@@ -92,11 +104,11 @@ async function profile(url, prompt, n) {
  * box) so a single flaky call never corrupts a whole step into {error}. Gives
  * up after ~3 tries over ~6s; the caller then skips the step cleanly.
  */
-async function profileRetry(url, prompt, n, tries = 3) {
+async function profileRetry(url, prompt, n, who = "teacher", tries = 3) {
   let last;
   for (let i = 0; i < tries; i++) {
     try {
-      return await profile(url, prompt, n);
+      return await profile(url, prompt, n, who);
     } catch (e) {
       last = e;
       await new Promise((r) => setTimeout(r, 2000));
@@ -203,13 +215,14 @@ function startServer() {
 async function run() {
   fs.mkdirSync(LIVE, { recursive: true });
   console.log("=== TEACHER-LIVE: 27B teacher -> 4B student, continuous scoring ===");
-  console.log(`  teacher ${TEACHER_URL} | student ${STUDENT_URL} | top-${TOP_K} | student step ${STUDENT_STEP}`);
+  console.log(`  teacher ${TEACHER_URL} | student ${STUDENT_URL} | view-top-${viewTopK()} emit teacher tK${emitFor("teacher").top_k}/tP${emitFor("teacher").top_p} student tK${emitFor("student").top_k}/tP${emitFor("student").top_p} | student step ${STUDENT_STEP}`);
   startServer();
 
   let shared = PROMPT;
   const teacherOutput = []; // teacher's accumulated output tokens (1 per step)
   let baseScoreTotal = 0;
   let bonusTotal = 0;
+  let layerNoiseState = null; // per-token noise accumulator for layer states
   let fives = 0;
   let step = 0;
   let ended = false;
@@ -222,23 +235,43 @@ async function run() {
     step++;
     let stepRec = { step, ts: Date.now() };
     try {
-      // Teacher (27B) adds ONE token (retry transient 500s).
-      const teacher = await profileRetry(TEACHER_URL, shared, 1);
+      // Teacher (27B) adds ONE token (retry transient 500s). Coherence limited
+      // by the teacher's live top-k/top-p (emit.teacher) from config.
+      const teacher = await profileRetry(TEACHER_URL, shared, 1, "teacher");
       const tPos = teacher[0];
       if (!tPos || tPos.chosen.token === undefined) { stepRec.note = "teacher empty"; ended = true; break; }
       const teacherToken = tPos.chosen.token;
       shared += " " + teacherToken;
       teacherOutput.push(teacherToken); // accumulate teacher's output tokens
 
-      // Student (4B) emits 5 tokens from the SAME (teacher-appended) prompt.
-      const student = await profileRetry(STUDENT_URL, shared, STUDENT_STEP);
+      // Student (4B) emits STUDENT_STEP tokens from the SAME (teacher-appended)
+      // prompt, limited by the student's live top-k/top-p (emit.student).
+      const student = await profileRetry(STUDENT_URL, shared, STUDENT_STEP, "student");
       if (!student.length) { stepRec.note = "student empty"; ended = true; break; }
 
-      // Base score: +1 per position where student chosen token is in teacher top-k.
-      const teacherTopK = new Set((tPos.top || []).map((x) => x.token));
-      let base = 0;
-      for (const s of student) if (teacherTopK.has(s.chosen.token)) base++;
-      baseScoreTotal += base;
+      // Scoring per-token: the student's narrowed top-n/k ∩ top-n/p set at each
+      // output position vs the teacher's narrowed top-n/k ∩ top-n/p set.
+      // Points = how many of the student's kept tokens are also in the
+      // teacher's kept set (per scoring.base.per_topk_token_match / _topp).
+      // PLUS extra points for each student CHOSEN token that falls in the
+      // teacher's ACTUAL emitted top-k (per_teacher_emit_match).
+      const cfgScore = loadConfig()?.scoring?.base || {};
+      const ptsK = Number(cfgScore.per_topk_token_match ?? 1);
+      const ptsP = Number(cfgScore.per_topp_token_match ?? 1);
+      const ptsEmit = Number(cfgScore.per_teacher_emit_match ?? 2);
+      const tSetK = narrowTokenSet(tPos.top, emitFor("teacher").top_k, 1);
+      const tSetP = narrowTokenSet(tPos.top, viewTopK(), emitFor("teacher").top_p);
+      let base = 0, baseP = 0, baseEm = 0, overInK = 0, overInP = 0, overInEm = 0;
+      for (const s of student) {
+        const sSetK = narrowTokenSet(s.top, emitFor("student").top_k, 1);
+        const sSetP = narrowTokenSet(s.top, viewTopK(), emitFor("student").top_p);
+        for (const tok of sSetK) if (tSetK.has(tok)) { base += ptsK; overInK++; }
+        for (const tok of sSetP) if (tSetP.has(tok)) { baseP += ptsP; overInP++; }
+        // Teacher actually emitted from tPos.top (its narrow cut); extra points
+        // when the student's CHOSEN token is in that emitted set.
+        if (tSetK.has(s.chosen.token)) { baseEm += ptsEmit; overInEm++; }
+      }
+      baseScoreTotal += base + baseP + baseEm;
 
       // 500x detector: the 5-token compression footprint of the student's step
       // (value = sum of constituent token ids). If that "compressed token" is
@@ -255,7 +288,13 @@ async function run() {
       // ---- MoE: route through the expert layers (top-2), train, score ----
       let moe = null, sc = null;
       try {
-        const route = routeExperts((tPos.top || []).map((x) => x.token));
+        // Per-token layer noise: for each student token emitted, add noise to
+        // the layers so the NEXT output token routes through a nudged layer.
+        const nLayers = loadConfig()?.layers?.count || 5;
+        for (let ti = 0; ti < (studentIds.length || 1); ti++) {
+          layerNoiseState = addLayerNoise(layerNoiseState, noiseToLayer(), nLayers, ti);
+        }
+        const route = routeExperts((tPos.top || []).map((x) => x.token), layerNoiseState);
         const training = trainStep(route, Math.exp(Math.min(0, tPos.chosen.logprob)), 0.5);
         sc = scoreStep({ baseMatches: base, step, is500x }); // config points/penalties
         bonusTotal = sc.bonus;
@@ -283,6 +322,7 @@ async function run() {
           layers_total: route.layer_count,
           per_layer: training.perLayer || [],
           training_delta: training.delta,
+          layer_noise: layerNoiseState ? layerNoiseState.layers.map((v) => Number(v.toFixed(4))) : [],
           new_tokens: {
             teacher: studentIds.map((_, i) => student[i].chosen.token), // student new tokens
             teacher_anchor: teacherToken,
@@ -314,6 +354,7 @@ async function run() {
         is_500x_value_generation: is500x,
         moe,
         base_step_score: base,
+        score_breakdown: { topk: base, tpp: baseP, teacher_emit: baseEm, inK: overInK, inP: overInP, inEm: overInEm },
         penalty: sc ? sc.penalty : 0,
         step_gain: sc ? sc.totalGain : 0,
         base_score_total: baseScoreTotal,
@@ -321,7 +362,8 @@ async function run() {
         total_score: baseScoreTotal + bonusTotal,
       };
     } catch (e) {
-      stepRec.error = String(e.message || e);
+      stepRec.error = String((e && e.message) || e) || "unknown step error";
+      console.error("  !! step error:", (e && e.message) || e, e);
       stepRec.total_score = baseScoreTotal + bonusTotal;
     }
 
@@ -332,7 +374,10 @@ async function run() {
     latest = {
       mode: "teacher-anchored live",
       teacher: TEACHER_URL, student: STUDENT_URL,
-      top_k: TOP_K, student_step_tokens: STUDENT_STEP,
+      view_top_k: viewTopK(),
+      emit: { teacher: emitFor("teacher"), student: emitFor("student") },
+      noise_to_layer: noiseToLayer(),
+      student_step_tokens: STUDENT_STEP,
       step, base_score: baseScoreTotal, bonus_score: bonusTotal,
       total_score: baseScoreTotal + bonusTotal,
       "500x_generations": fives,
