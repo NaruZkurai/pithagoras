@@ -116,6 +116,8 @@ const _steps = flag("steps", STEPS);
  *  `who` selects the live sampling.emit.<who> values from config. */
 async function profile(url, prompt, n, who = "teacher") {
   const { top_k, top_p, temperature } = emitFor(who);
+  // `prompt` may be a STRING (plain text) or a NUMBER ARRAY (raw token ids —
+  // direct token input). The direct-token fork's /v1/completions accepts both.
   const body = JSON.stringify({
     model: "x", prompt, max_tokens: n, temperature,
     top_p, top_k, logprobs: viewTopK(), echo: false, stream: false,
@@ -128,11 +130,23 @@ async function profile(url, prompt, n, who = "teacher") {
   const d = await res.json();
   const content = d?.choices?.[0]?.logprobs?.content || [];
   return content.map((row) => ({
-    chosen: { token: row.token, logprob: Number.isFinite(row.logprob) ? row.logprob : 0 },
+    chosen: { id: row.id, token: row.token, logprob: Number.isFinite(row.logprob) ? row.logprob : 0 },
     top: (row.top_logprobs || []).map((t) => ({
-      token: t.token, logprob: Number.isFinite(t.logprob) ? t.logprob : 0,
+      id: t.id, token: t.token, logprob: Number.isFinite(t.logprob) ? t.logprob : 0,
     })),
   }));
+}
+
+/** Tokenize a text string into raw token ids via the fork's /tokenize endpoint. */
+async function tokenizeText(url, text) {
+  const res = await fetch(`${url}/tokenize`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: String(text ?? "") }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) throw new Error(`/tokenize HTTP ${res.status}`);
+  const d = await res.json();
+  return Array.isArray(d.tokens) ? d.tokens : [];
 }
 
 /**
@@ -157,6 +171,31 @@ async function profileRetry(url, prompt, n, who = "teacher", tries = 3) {
  *  sum of the 5 constituent token ids (the n1+n2+n3 convention). */
 function compressFootprint(tokens) {
   return tokens.reduce((a, t) => a + t, 0);
+}
+
+/**
+ * Detect a degenerate teacher run — 1-bit (Q1_0) models fall into character
+ * repetition ("the the the", or huge runs of "*"/"-"/spaces). Returns a
+ * degeneracy fraction 0..1 (how dominated the recent output is by a single
+ * repeated token/character). >~0.6 means the teacher is stuck in a loop.
+ */
+function teacherDegeneracy(tokens, windowSize = 20) {
+  const recent = (tokens || []).slice(-windowSize);
+  if (!recent.length) return 0;
+  const counts = {};
+  let total = 0;
+  for (const t of recent) {
+    const s = String(t);
+    // Normalize: strip whitespace so a run of "*"-boxes counts as a symbol.
+    const key = s.replace(/\s+/g, "");
+    if (!key) continue; // pure whitespace tokens are common, don't count them
+    counts[key] = (counts[key] || 0) + 1;
+    total++;
+  }
+  if (!total) return 0;
+  let maxRun = 0;
+  for (const k of Object.keys(counts)) maxRun = Math.max(maxRun, counts[k]);
+  return Math.min(1, maxRun / total);
 }
 
 let latest = null; // latest current.json content to serve to the UI
@@ -305,6 +344,9 @@ async function run() {
   startServer();
 
   let shared = PROMPT;
+  let sharedIds = []; // RAW TOKEN IDS of the shared prompt (direct token input)
+  // Initialize the token-id prompt once from the base text (via /tokenize).
+  try { sharedIds = await tokenizeText(TEACHER_URL, PROMPT); } catch (e) { sharedIds = []; }
   const teacherOutput = []; // teacher's accumulated output tokens (1 per step)
   const newTokens = [];     // current list of NEW tokens created (compressed chunks + sentinel)
   let baseScoreTotal = 0;
@@ -313,6 +355,7 @@ async function run() {
   let fives = 0;
   let step = 0;
   let ended = false;
+  let teacherDegenerateStreak = 0; // consecutive degenerate teacher batches
 
   // rolling window of the last few steps for the "compression ~ generation" plot
   const recent = [];
@@ -325,6 +368,7 @@ async function run() {
     if (promptChanged) {
       promptChanged = false;
       shared = PROMPT;
+      try { sharedIds = await tokenizeText(TEACHER_URL, PROMPT); } catch (e) { sharedIds = []; }
       teacherOutput.length = 0;
       newTokens.length = 0;      // clear the created new-token list on a new prompt
       layerNoiseState = null;
@@ -347,21 +391,52 @@ async function run() {
     bumpMoeStep(); // advance the MoE round/step counter ONCE per harness step
     let stepRec = { step, ts: Date.now() };
     try {
-      // Teacher (27B) advances the shared prompt by TEACHER_BATCH coherent tokens
-      // in ONE request (1-bit models collapse into "the the the" when asked for
-      // exactly one token per step). The SCORING anchor remains the FIRST token
-      // (tPos) so the teacher-anchored top-k parity design is preserved.
-      const teacher = await profileRetry(TEACHER_URL, shared, TEACHER_BATCH, "teacher");
+      // Teacher (27B) advances the shared prompt. We send the prompt as RAW
+      // TOKEN IDS (direct token input) so the server continues from the exact
+      // emit state instead of re-tokenizing a growing text prompt — this avoids
+      // the re-tokenization drift and server strain that caused degenerate runs.
+      const teacher = await profileRetry(TEACHER_URL, sharedIds, TEACHER_BATCH, "teacher");
       const tPos = teacher[0];
       if (!tPos || tPos.chosen.token === undefined) { stepRec.note = "teacher empty"; ended = true; break; }
       const teacherToken = tPos.chosen.token;
       const teacherAdvance = teacher.map((x) => x.chosen.token).filter((t) => t !== undefined);
+      // Track BOTH the token ids (direct input) and the text tokens (display).
+      const teacherAdvanceIds = teacher.map((x) => x.chosen.id).filter((v) => Number.isFinite(v));
+      if (teacherAdvanceIds.length) sharedIds.push(...teacherAdvanceIds);
       shared += " " + teacherAdvance.join(" ");
       teacherOutput.push(...teacherAdvance); // accumulate teacher's output tokens
 
+      // ---- TEACHER DEGENERACY GUARD ----
+      // 1-bit (Q1_0) teachers fall into repetitive symbol runs ("***", "---").
+      // If the accumulated output becomes dominated by ONE repeated token, the
+      // model is stuck in a feedback loop. Detect it and FLUSH the garbage tail
+      // back to the clean base prompt, then raise sampling temperature to help
+      // the model escape. We still keep training (the points are real), but we
+      // stop feeding garbage back into the prompt.
+      let teacherDegenerate = false;
+      const accDeg = teacherDegeneracy(teacherOutput, 24);
+      const batchDeg = teacherDegeneracy(teacherAdvance, TEACHER_BATCH);
+      if (batchDeg > 0.75 || (accDeg > 0.8 && teacherOutput.length > 40)) {
+        teacherDegenerate = true;
+        teacherDegenerateStreak++;
+        console.log(`  !! teacher degenerate (batch ${batchDeg.toFixed(2)}, acc ${accDeg.toFixed(2)}) streak ${teacherDegenerateStreak}`);
+      } else {
+        teacherDegenerateStreak = 0;
+      }
+      // If the teacher has been stuck in a loop for a few steps, drop the
+      // accumulated garbage and restart from the clean base prompt so the model
+      // isn't fed its own asterisk river.
+      if (teacherDegenerateStreak >= 2 || accDeg > 0.9) {
+        console.log(`  >> flushing degenerate teacher output back to base prompt (len ${shared.length})`);
+        shared = PROMPT;
+        try { sharedIds = await tokenizeText(TEACHER_URL, PROMPT); } catch (e) { sharedIds = []; }
+        teacherOutput.length = 0;
+        teacherDegenerateStreak = 0;
+      }
+
       // Student (4B) emits STUDENT_STEP tokens from the SAME (teacher-appended)
       // prompt, limited by the student's live top-k/top-p (emit.student).
-      const student = await profileRetry(STUDENT_URL, shared, STUDENT_STEP, "student");
+      const student = await profileRetry(STUDENT_URL, sharedIds, STUDENT_STEP, "student");
       if (!student.length) { stepRec.note = "student empty"; ended = true; break; }
 
       // Scoring per-token: the student's narrowed top-n/k ∩ top-n/p set at each
@@ -582,6 +657,8 @@ async function run() {
         base_score_total: baseScoreTotal,
         bonus_total: bonusTotal,
         total_score: base + baseP + baseEm + curvePoints + compressionPoints,
+        teacher_degenerate: !!teacherDegenerate,
+        teacher_degen_streak: teacherDegenerateStreak,
       };
     } catch (e) {
       stepRec.error = String((e && e.message) || e) || "unknown step error";
