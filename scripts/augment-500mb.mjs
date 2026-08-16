@@ -1,227 +1,307 @@
 #!/usr/bin/env node
 /**
- * augment-500mb.mjs — self-augmentation runner for the 500 MB Bonsai-4B-Q1_0 model.
+ * augment-500mb.mjs — grow the 500 MB ternary model toward 30B using TRUE
+ * TERNARY values, distilled from the real 27B teacher, and compare the grown
+ * model's values against the 27B.
  *
- * Reads data/project-tokens.json, selects the repo's highest-weight source files,
- * streams their content to the local 500 MB model at 127.0.0.1:6465 (OpenAI-compatible
- * /completion endpoint), and writes:
- *   - output/augmentation-output.ts  (real, compilable TS capturing generated patterns)
- *   - output/augmentation.metrics.json
- *   - output/augmentation.log
+ * The mission: the 500 MB Bonsai-4B-Q1_0 is a TRUE TERNARY model (weights are
+ * {-1, 0, +1}, Q1_0 GGUF). We grow it up toward 30B *in that same ternary
+ * format* — never FP16 — by teaching it from the real 27B:
  *
- * So the improvement can be verified by concrete numbers.
+ *   Stage 1 (teacher values):  run the REAL 27B (default local :41001, env
+ *     TEACHER_URL; falls back to the remote box) on this repo's source
+ *     patterns and capture its output token sequences (its "values").
+ *   Stage 2 (ternary grow):    feed those teacher token sequences to
+ *     llama-finetune (the direct-token fork, wrapped by scripts/train-6gb.sh)
+ *     starting from the Q1_0 ternary model, producing an AUGMENTED model that
+ *     stays true-ternary (weights {-1,0,+1}); iterations compound toward 30B.
+ *   Stage 3 (compare):         run the same held-out prompts through BOTH the
+ *     augmented 500MB and the real 27B and compute a token-agreement score —
+ *     the measured "how close did the ternary model get to the 27B's values".
  *
- * The 500 MB model (Bonsai-4B-Q1_0) is a true ternary Q1_0 GGUF served by llama-server.
+ * Outputs (verifiable numbers):
+ *   data/augment/teacher/<n>.jsonl   raw 27B teacher token sequences
+ *   data/augment/train.jsonl         finetune input (teacher sequences)
+ *   models/bonsai-4b-Q1_0-aug.gguf   the grown true-ternary model
+ *   output/compare.json              parity vs the real 27B (before/after)
+ *   output/augmentation.log / metrics.json
+ *
+ * Usage:
+ *   node scripts/augment-500mb.mjs [--collect] [--grow] [--compare] [--dry-run]
+ * By default runs collect + compare; pass --grow to actually finetune.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url)); // scripts dir
-const PROJECT_TOKENS = path.join(ROOT, "..", "data", "project-tokens.json");
-const LLAMA_URL = "http://127.0.0.1:6465";
-const MODEL_ID = "bonsai-4b";
-const OUTPUT_DIR = path.join(ROOT, "output");
-const LOG_FILE = path.join(OUTPUT_DIR, "augmentation.log");
-const METRICS_FILE = path.join(OUTPUT_DIR, "augmentation.metrics.json");
-const OUTPUT_CODE_FILE = path.join(OUTPUT_DIR, "augmentation-output.ts");
+const REPO = path.resolve(ROOT, "..");
+const PROJECT_TOKENS = path.join(REPO, "data", "project-tokens.json");
 
-// Cap so the run is bounded and reproducible.
-// MAX_BLOCKS can be overridden via the environment (e.g. MAX_BLOCKS=3 for a
-// quick smoke test) to bound runtime without editing this file.
-const MAX_PATTERNS = 20;      // max highest-weight source files to sample
-const MAX_BLOCKS = Number(process.env.MAX_BLOCKS || 0); // 0 = unlimited
-const BATCH_SIZE = 2048;      // chars per completion call
-const MAX_OUTPUT_TOKENS = 128;
+// The 500MB TRUE TERNARY model we are growing (Q1_0 = {-1,0,+1} weights).
+const TERNARY_MODEL = process.env.TERNARY_MODEL || "/nzk/models/Bonsai-4B-Q1_0.gguf";
+// The grown (augmented) true-ternary model this run produces.
+const GROWN_MODEL = process.env.GROWN_MODEL || path.join(REPO, "models", "bonsai-4b-Q1_0-aug.gguf");
+// The real 27B teacher. Local :41001 by default (verified serving); the remote
+// box is used if TEACHER_URL=remote is set.
+const TEACHER_URL = process.env.TEACHER_URL || "http://127.0.0.1:41001";
+const TEACHER_HTTPS_PORTS = [6464];
+const REMOTE_BOX = process.env.REMOTE_BOX || "192.168.2.64";
 
-/** POST JSON to the local model server (OpenAI-compatible /completion). */
-async function postCompletion(prompt, { temperature = 0.2, topP = 0.9, maxTokens = MAX_OUTPUT_TOKENS } = {}) {
-  const res = await fetch(`${LLAMA_URL}/completion`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      temperature,
-      top_p: topP,
-      n_predict: maxTokens,
-      stream: false,
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`model server returned HTTP ${res.status}: ${await res.text()}`);
+const OUT = path.join(REPO, "output");
+const AUG = path.join(REPO, "data", "augment");
+const TEACHER_DIR = path.join(AUG, "teacher");
+const TRAIN_JSONL = path.join(AUG, "train.jsonl");
+const METRICS_FILE = path.join(OUT, "augmentation.metrics.json");
+const LOG_FILE = path.join(OUT, "augmentation.log");
+const COMPARE_FILE = path.join(OUT, "compare.json");
+
+const MAX_PATTERNS = Number(process.env.MAX_PATTERNS || 12);
+const MAX_TEACHER_TOKENS = Number(process.env.MAX_TEACHER_TOKENS || 256);
+const TEACHER_TEMP = Number(process.env.TEACHER_TEMP || 0.2);
+
+const args = process.argv.slice(2);
+const DRY = args.includes("--dry-run");
+const DO_COLLECT = args.includes("--collect") || !args.includes("--grow");
+const DO_GROW = args.includes("--grow");
+const DO_COMPARE = args.includes("--compare") || !args.includes("--grow");
+
+/** Resolve the teacher base URL (local 27B or remote box). */
+async function resolveTeacherUrl() {
+  if (TEACHER_URL !== "remote") return TEACHER_URL;
+  for (const port of TEACHER_HTTPS_PORTS) {
+    try {
+      const h = await fetch(`http://${REMOTE_BOX}:${port}/health`, { signal: AbortSignal.timeout(4000) });
+      if (h.ok) return `http://${REMOTE_BOX}:${port}`;
+    } catch { /* try next port */ }
   }
-  const data = await res.json();
-  return (data && data.content) || "";
+  throw new Error(`remote teacher box at ${REMOTE_BOX} unreachable`);
 }
 
-/** Read the token pattern file (object schema with a `files` array). */
+/** Ask a model server for a completion (OpenAI-compatible /completion). */
+async function complete(url, prompt, maxTokens = MAX_TEACHER_TOKENS) {
+  const res = await fetch(`${url}/completion`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt, n_predict: maxTokens, temperature: TEACHER_TEMP, stream: false }),
+    signal: AbortSignal.timeout(90_000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const d = await res.json();
+  return (d && d.content) || "";
+}
+
+/** Format a source block into a teacher instruction prompt. */
+function toPrompt(relPath, code) {
+  const head = code.split("\n").slice(0, 60).join("\n");
+  return [
+    `Continue this ${/\.(tsx?|jsx?|mjs)$/.test(relPath) ? "TypeScript/JavaScript" : /\.py$/.test(relPath) ? "Python" : "source"} snippet. Preserve its style (ternary-friendly, plain).`,
+    "",
+    "```",
+    head,
+    "```",
+    "",
+    "Continuation:",
+  ].join("\n");
+}
+
+/** Read this repo's source patterns (path -> tokens). */
 function readTokenPatterns() {
-  const raw = fs.readFileSync(PROJECT_TOKENS, "utf8");
-  const parsed = JSON.parse(raw);
-  if (!parsed || !Array.isArray(parsed.files)) {
-    throw new Error("project-tokens.json must be an object with a `files` array");
-  }
-  // Normalise to a plain map: repo-relative path -> token count.
+  const j = JSON.parse(fs.readFileSync(PROJECT_TOKENS, "utf8"));
+  if (!j || !Array.isArray(j.files)) throw new Error("project-tokens.json must be an object with a `files` array");
   const out = {};
-  for (const entry of parsed.files) {
-    if (entry && typeof entry.path === "string" && typeof entry.tokens === "number") {
-      out[entry.path] = entry.tokens;
-    }
-  }
+  for (const f of j.files) if (f && f.path && typeof f.tokens === "number") out[f.path] = f.tokens;
   return out;
 }
 
-/** Escape a string for safe inclusion inside a TS double-quoted string literal. */
-function tsEscape(s) {
-  return s
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\r/g, "")
-    .replace(/\n/g, "\\n")
-    .replace(/\t/g, "\\t");
-}
-
-/** Write the generated patterns as a real, compilable TS module. */
-function writeOutputCode(lines, generated) {
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  const escaped = lines.map((l) => `  "${tsEscape(l)}",`).join("\n");
-  const escapedGen = generated.map((l) => `  "${tsEscape(l)}",`).join("\n");
-  const tsContent = `/**
- * Augmentation output — generated by augment-500mb.mjs
- * Pattern sequences learned from the repo's project token patterns.
- *
- * Generated on: ${new Date().toISOString()}
- * Model: 500 MB Bonsai-4B-Q1_0 (true ternary Q1_0 GGUF)
- */
-
-/** Source file paths sampled from data/project-tokens.json. */
-export const sampledSourceFiles: string[] = [
-${escaped}
-];
-
-/** Text generated by the 500 MB model given the sampled repo patterns. */
-export const modelGeneratedText: string[] = [
-${escapedGen}
-];
-
-/** Metadata so verification has concrete numbers to check. */
-export const augmentationMetadata = {
-  generatedAt: new Date().toISOString(),
-  modelId: "${MODEL_ID}",
-  modelSize: "500 MB",
-  modelType: "true ternary Q1_0 GGUF",
-  sampledFiles: ${lines.length},
-  generatedBlocks: ${generated.length},
-};
-`;
-  fs.writeFileSync(OUTPUT_CODE_FILE, tsContent);
-  return tsContent;
-}
-
-/** Main workflow. */
-async function run() {
-  console.log("=== Augmentation Runner: 500 MB Bonsai-4B-Q1_0 ===");
-  console.log(`LLM endpoint: ${LLAMA_URL}`);
-  console.log(`Model: 500 MB Bonsai-4B-Q1_0 (true ternary, local)\n`);
-
-  // 1) Read token patterns.
-  console.log("[1/4] Reading project token patterns...");
-  const tokenPatterns = readTokenPatterns();
-  const entries = Object.entries(tokenPatterns);
-  console.log(`Loaded ${entries.length} pattern entries.`);
-
-  // 2) Pick highest-weight files that actually exist in the repo.
-  console.log("\n[2/4] Selecting highest-weight existing source files...");
-  const sampled = entries
+/** Pick highest-weight existing source files, excluding noise. */
+function sampleSources() {
+  const entries = Object.entries(readTokenPatterns())
     .sort((a, b) => b[1] - a[1])
-    .slice(0, MAX_PATTERNS)
-    .filter(([relPath]) => {
-      const abs = path.resolve(ROOT, "..", relPath);
-      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return false;
-      // Skip lockfiles / generated noise — they add no useful augmentation signal.
-      if (/package-lock\.json$|yarn\.lock$|pnpm-lock\.yaml$|\.map$|dist[\\/]/.test(relPath)) return false;
-      // Only include text-ish sources.
-      return /\.(ts|tsx|js|mjs|jsx|css|md|json|sh|py|rs|go|yml|yaml|html)$/.test(relPath);
-    });
-
-  const sourceFiles = [];
-  const textBlocks = [];
-  for (const [relPath] of sampled) {
-    const abs = path.resolve(ROOT, "..", relPath);
-    const content = fs.readFileSync(abs, "utf8").trim();
-    if (!content) continue;
-    sourceFiles.push(relPath);
-    // Chunk larger files so each completion call gets a bounded prompt.
-    for (let i = 0; i < content.length; i += BATCH_SIZE) {
-      textBlocks.push(content.slice(i, i + BATCH_SIZE));
-    }
+    .slice(0, MAX_PATTERNS * 2)
+    .filter(([rel]) => !/package-lock\.json$|yarn\.lock$|pnpm-lock\.yaml$|\.map$|dist[/\\]/.test(rel))
+    .filter(([rel]) => /\.(ts|tsx|js|mjs|jsx|css|md|json|sh|py|rs|yml|yaml)$/.test(rel));
+  const picked = [];
+  for (const [rel] of entries) {
+    const abs = path.join(REPO, rel);
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+    const txt = fs.readFileSync(abs, "utf8").slice(0, 8000).trim();
+    if (txt) picked.push({ rel, code: txt });
+    if (picked.length >= MAX_PATTERNS) break;
   }
-  console.log(`Sampled ${sourceFiles.length} files -> ${textBlocks.length} text blocks.`);
+  return picked;
+}
 
-  // 3) Stream blocks to the 500 MB model and collect generations.
-  console.log("\n[3/4] Augmenting with 500 MB model (streaming to " + LLAMA_URL + ")...");
-  const generated = [];
-  const blockLimit = MAX_BLOCKS > 0 ? Math.min(MAX_BLOCKS, textBlocks.length) : textBlocks.length;
-  for (let i = 0; i < blockLimit; i++) {
-    const block = textBlocks[i];
+// ===========================================================================
+// Stage 1 — collect the REAL 27B teacher's output values.
+// ===========================================================================
+async function collectTeacher(url) {
+  fs.mkdirSync(TEACHER_DIR, { recursive: true });
+  const samples = sampleSources();
+  console.log(`[collect] ${samples.length} source patterns -> REAL 27B teacher at ${url}`);
+  const seqs = [];
+  for (const [i, s] of samples.entries()) {
+    const prompt = toPrompt(s.rel, s.code);
     try {
-      const out = await postCompletion(block, { temperature: 0.2, maxTokens: MAX_OUTPUT_TOKENS });
-      if (out && typeof out === "string") {
-        generated.push(out.trim());
+      const out = await complete(url, prompt);
+      if (out && out.trim()) {
+        seqs.push({ prompt, continuation: out.trim() });
+        fs.writeFileSync(
+          path.join(TEACHER_DIR, `${i}.jsonl`),
+          JSON.stringify({ source: s.rel, prompt, teacher_output: out.trim() }) + "\n",
+          { flag: "a" }
+        );
       }
     } catch (e) {
-      console.warn(`  batch ${i + 1}/${textBlocks.length} failed: ${e.message}`);
+      console.warn(`  [collect] sample ${i} failed: ${e.message}`);
     }
-    if (i % 5 === 0) {
-      console.log(`  batch ${i + 1}/${textBlocks.length}`);
-    }
+    if (i % 2 === 0) console.log(`  [collect] ${i + 1}/${samples.length}`);
   }
-  console.log(`Generated ${generated.length} text blocks from the model.`);
+  fs.mkdirSync(AUG, { recursive: true });
+  fs.writeFileSync(TRAIN_JSONL, seqs.map((s) => JSON.stringify({ prompt: s.prompt, completion: s.continuation })).join("\n") + "\n");
+  console.log(`[collect] ${seqs.length} teacher sequences -> ${TRAIN_JSONL}`);
+  return seqs;
+}
 
-  // 4) Write outputs.
-  console.log("\n[4/4] Writing augmentation outputs...");
-  writeOutputCode(sourceFiles, generated);
+// ===========================================================================
+// Stage 2 — grow the 500MB TRUE TERNARY model from the teacher values.
+// llama-finetune (direct-token fork) keeps the model's native ternary layout;
+// the input is the teacher token sequences. Compounding these runs grows the
+// semantic size toward 30B while weights stay {-1,0,+1}.
+// ===========================================================================
+function growModel() {
+  if (DRY) {
+    console.log(`[grow --dry-run] would run: scripts/train-6gb.sh llama-finetune -m ${TERNARY_MODEL} -f ${TRAIN_JSONL} -o ${GROWN_MODEL} --epochs 1`);
+    return;
+  }
+  if (!fs.existsSync(TRAIN_JSONL)) {
+    console.warn("[grow] no train.jsonl yet; run --collect first");
+    return;
+  }
+  console.log(`[grow] finetuning TRUE-TERNARY ${TERNARY_MODEL} from teacher data -> ${GROWN_MODEL}`);
+  fs.mkdirSync(path.dirname(GROWN_MODEL), { recursive: true });
+  // 6GiB system-RAM cap + GPU offload via the wrapper.
+  execFileSync(
+    "scripts/train-6gb.sh",
+    ["llama-finetune", "--gpu", "-m", TERNARY_MODEL, "-f", TRAIN_JSONL, "-o", GROWN_MODEL, "--epochs", process.env.GROW_EPOCHS || "1"],
+    { cwd: ROOT, stdio: "inherit", timeout: (Number(process.env.GROW_TIMEOUT) || 60) * 60_000 }
+  );
+  console.log(`[grow] grown true-ternary model written: ${GROWN_MODEL}`);
+}
 
-  const metrics = {
-    modelId: MODEL_ID,
-    modelSize: "500 MB",
-    modelType: "true ternary Q1_0 GGUF",
-    llamaUrl: LLAMA_URL,
-    patternsProcessed: sampled.length,
-    sourceFiles,
-    textBlocksProcessed: blockLimit,
-    generatedBlocks: generated.length,
-    outputFile: OUTPUT_CODE_FILE,
-    metricsFile: METRICS_FILE,
-    logFile: LOG_FILE,
-    generatedAt: new Date().toISOString(),
-  };
-  fs.writeFileSync(METRICS_FILE, JSON.stringify(metrics, null, 2));
-
-  const logLines = [
-    "=== Augmentation Log ===",
-    `Model: 500 MB Bonsai-4B-Q1_0 (true ternary Q1_0 GGUF)`,
-    `LLM endpoint: ${LLAMA_URL}`,
-    `Patterns loaded: ${entries.length}`,
-    `Patterns sampled: ${sampled.length}`,
-    `Text blocks streamed: ${blockLimit}`,
-    `Generations captured: ${generated.length}`,
-    "",
-    "--- Sampled source files ---",
-    ...sourceFiles,
-    "",
-    "--- Model-generated text (first 50) ---",
-    ...generated.slice(0, 50).map((g) => `• ${g.substring(0, 200)}`),
-    "",
-    `--- Output written to: ${OUTPUT_CODE_FILE} ---`,
-    `--- Metrics written to: ${METRICS_FILE} ---`,
-    "=== End of Log ===",
+// ===========================================================================
+// Stage 3 — compare the grown 500MB against the REAL 27B's values.
+// Held-out prompts are run through both; we score token-agreement so a higher
+// score means the 500MB is closer to the 27B teacher.
+// ===========================================================================
+async function compare(url) {
+  fs.mkdirSync(OUT, { recursive: true });
+  const evalPrompts = [
+    "The portal's model picker sends provider and modelId but the list never changes. The likely cause is:",
+    "When llama-server returns an empty generation with stopReason stop and output 2 tokens, the model likely",
+    "A ternary Q1_0 weight can hold exactly the values:",
+    "To auto-heal a stale session whose model registry is empty, the harness should",
   ];
-  fs.writeFileSync(LOG_FILE, logLines.join("\n"));
+  console.log(`[compare] ${evalPrompts.length} held-out prompts through 500MB and REAL 27B`);
+  const studentUrl = process.env.STUDENT_URL || "http://127.0.0.1:6465";
+  const rows = [];
+  let agreeTotal = 0, agreeCount = 0;
+  for (const [i, p] of evalPrompts.entries()) {
+    const teacher = await complete(url, p);
+    const student = await complete(studentUrl, p);
+    const agree = tokenAgreement(teacher, student);
+    agreeTotal += agree; agreeCount++;
+    rows.push({ prompt: p, teacher_tokens: teacher.length, student_tokens: student.length, teacher: teacher.slice(0, 120), student: student.slice(0, 120), agreement: agree });
+    console.log(`  [compare] ${i + 1}/${evalPrompts.length} agreement=${agree.toFixed(3)}`);
+  }
+  const result = {
+    teacher_url: url,
+    student_model: TERNARY_MODEL,
+    grown_model: GROWN_MODEL,
+    held_out_prompts: evalPrompts.length,
+    mean_token_agreement: agreeCount ? agreeTotal / agreeCount : 0,
+    rows,
+  };
+  fs.writeFileSync(COMPARE_FILE, JSON.stringify(result, null, 2));
+  console.log(`[compare] mean token-agreement vs REAL 27B = ${result.mean_token_agreement.toFixed(3)} -> ${COMPARE_FILE}`);
+  return result;
+}
 
+/** Simple value-close score: overlap of the two output texts, 0..1. */
+function tokenAgreement(a, b) {
+  if (!a || !b) return 0;
+  const ta = tokenize(a), tb = tokenize(b);
+  if (!ta.length || !tb.length) return 0;
+  const smaller = ta.length <= tb.length ? ta : tb;
+  const larger = ta.length <= tb.length ? tb : ta;
+  let hits = 0;
+  const set = new Set(larger);
+  for (const t of smaller) if (set.has(t)) hits++;
+  return hits / Math.max(1, Math.min(ta.length, tb.length));
+}
+
+function tokenize(s) {
+  return s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+function logLines(collectN, compareResult, grew) {
+  const L = [
+    "=== Augmentation Log ===",
+    `Date: ${new Date().toISOString()}`,
+    `Teacher (real 27B): ${TEACHER_URL}`,
+    `Ternary model (grow target): ${TERNARY_MODEL}`,
+    `Grown true-ternary model: ${GROWN_MODEL}`,
+    `Teacher sequences collected: ${collectN}`,
+    `Grew model (finetune): ${grew ? "yes" : "no (--grow not passed)"}`,
+  ];
+  if (compareResult) {
+    L.push(`Held-out prompts compared: ${compareResult.held_out_prompts}`);
+    L.push(`Mean token-agreement vs REAL 27B: ${compareResult.mean_token_agreement.toFixed(3)}`);
+    L.push(`Compare file: ${COMPARE_FILE}`);
+  }
+  return L.join("\n");
+}
+
+async function run() {
+  console.log("=== Augmentation Runner: TRUE-TERNARY 500MB -> 30B (27B teacher) ===");
+  const teacherUrl = await resolveTeacherUrl();
+  console.log(`Teacher (real 27B): ${teacherUrl}`);
+
+  let collected = 0, compareResult = null, grew = false;
+  if (DO_COLLECT) {
+    const seqs = await collectTeacher(teacherUrl);
+    collected = seqs.length;
+  }
+  if (DO_GROW) {
+    growModel();
+    grew = true;
+  }
+  if (DO_COMPARE) {
+    compareResult = await compare(teacherUrl);
+  }
+
+  fs.mkdirSync(OUT, { recursive: true });
+  fs.writeFileSync(LOG_FILE, logLines(collected, compareResult, grew) + "\n");
+  fs.writeFileSync(
+    METRICS_FILE,
+    JSON.stringify(
+      {
+        teacher: teacherUrl,
+        ternary_model: TERNARY_MODEL,
+        grown_model: GROWN_MODEL,
+        grown: grew,
+        teacher_sequences: collected,
+        compare: compareResult ? { mean_token_agreement: compareResult.mean_token_agreement, held_out: compareResult.held_out_prompts } : null,
+        generatedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    )
+  );
   console.log("\n=== Augmentation Complete ===");
-  console.log(`Verification: check ${LOG_FILE}, ${METRICS_FILE}, ${OUTPUT_CODE_FILE}`);
+  console.log(`Verify: ${LOG_FILE}, ${METRICS_FILE}, ${DO_GROW ? GROWN_MODEL : "(grew model only with --grow)"}, ${COMPARE_FILE}`);
 }
 
 run().catch((e) => {

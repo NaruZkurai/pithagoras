@@ -23,3 +23,7 @@ data/runner-node_modules/
 
 # Self-augmentation generated output (augment-500mb.mjs runtime artifacts)
 scripts/output/
+
+# topk-compare / augmentation runtime outputs
+data/augment/
+output/
