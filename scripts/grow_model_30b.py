@@ -27,8 +27,12 @@ import numpy as np
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(PROJECT, "config", "moe-config.json")
 
-Q1_0_NBLOCK = 32
-Q1_0_BYTES_PER_BLOCK = 6
+# This fork (llama-direct-token-input) redefines Q1_0 to 128 weights/block:
+#   block_q1_0 { ggml_half d; uint8_t qs[16]; }  => 2 (fp16 scale) + 16 (bitfield)
+#   = 18 bytes per 128 weights. (QK1_0 == 128, NOT the upstream 32.) Our original
+#   scripts wrongly assumed 32/block, which mis-decodes the source GGUF. Correct:
+Q1_0_NBLOCK = 128
+Q1_0_BYTES_PER_BLOCK = 18
 
 
 def load_config():
