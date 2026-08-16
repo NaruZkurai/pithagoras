@@ -44,6 +44,7 @@ const REPO = path.resolve(ROOT, "..");
 const LIVE = path.join(REPO, "output", "live");
 const CURRENT = path.join(LIVE, "current.json");
 const HISTORY = path.join(LIVE, "history.jsonl");
+const TOKENS = path.join(LIVE, "tokens.jsonl"); // full per-step student-guess token ledger
 const PORT = Number(process.env.LIVE_PORT || 4199);
 
 const TEACHER_URL = process.env.TEACHER_URL || "http://127.0.0.1:41001"; // 27B
@@ -162,6 +163,25 @@ function startServer() {
       return;
     }
 
+    if (url === "/tokens") {
+      // Full per-step student-guess token ledger (tokens only) for review at
+      // any step. If only the current step's rows are needed, ?step=N filters.
+      try {
+        const all = fs.existsSync(TOKENS)
+          ? fs.readFileSync(TOKENS, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
+          : [];
+        const q = new URL(url, "http://x").searchParams;
+        const step = q.get("step");
+        const out = step !== null ? all.filter((r) => r.step === Number(step)) : all;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+      } catch (e) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(e.message || e) }));
+      }
+      return;
+    }
+
     if (url.startsWith("/events")) {
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
       const push = () => {
@@ -187,6 +207,7 @@ async function run() {
   startServer();
 
   let shared = PROMPT;
+  const teacherOutput = []; // teacher's accumulated output tokens (1 per step)
   let baseScoreTotal = 0;
   let bonusTotal = 0;
   let fives = 0;
@@ -207,6 +228,7 @@ async function run() {
       if (!tPos || tPos.chosen.token === undefined) { stepRec.note = "teacher empty"; ended = true; break; }
       const teacherToken = tPos.chosen.token;
       shared += " " + teacherToken;
+      teacherOutput.push(teacherToken); // accumulate teacher's output tokens
 
       // Student (4B) emits 5 tokens from the SAME (teacher-appended) prompt.
       const student = await profileRetry(STUDENT_URL, shared, STUDENT_STEP);
@@ -237,6 +259,17 @@ async function run() {
         const training = trainStep(route, Math.exp(Math.min(0, tPos.chosen.logprob)), 0.5);
         sc = scoreStep({ baseMatches: base, step, is500x }); // config points/penalties
         bonusTotal = sc.bonus;
+        // Attribute the step's total gain across experts by their top-k weight,
+        // so the "total score" shows each expert's contribution in its own color.
+        const wSum = route.rows.reduce((a, r) => a + (Number(r.topk_weight) || 0), 0) || 1;
+        const expertScores = route.rows.map((r) => ({
+          expert: r.name,
+          active: r.active,
+          role: r.role,
+          mutation: r.mutation,
+          weight: Number(r.topk_weight) || 0,
+          score: Number((sc.totalGain * ((Number(r.topk_weight) || 0) / wSum)).toFixed(4)),
+        }));
         // Surface full detail: each expert's top-k value, active flag, size,
         // layers used, num experts, per-layer training deltas, and the new
         // tokens (compressed + student new tokens this step).
@@ -244,6 +277,7 @@ async function run() {
         moe = {
           num_experts: cfg?.moe?.num_experts ?? route.count,
           expert_topk: route.rows.map((r) => ({ expert: r.name, value: Number(r.value).toFixed(4), active: r.active, role: r.role, mutation: r.mutation, topk_weight: r.topk_weight })),
+          expert_scores: expertScores,
           active: route.rows.filter((r) => r.active).map((r) => r.name),
           layers_used: training.layers,
           layers_total: route.layer_count,
@@ -304,11 +338,20 @@ async function run() {
       "500x_generations": fives,
       num_experts: stepRec.moe?.num_experts ?? loadConfig()?.moe?.num_experts ?? 5,
       layers_total: stepRec.moe?.layers_total ?? loadConfig()?.layers?.count ?? 5,
+      // Teacher: the total prompt + accumulated output tokens.
+      teacher_prompt: PROMPT,
+      teacher_output: teacherOutput,
+      teacher_prompt_output_tokens: (PROMPT + " " + teacherOutput.join(" ")).trim().split(/\s+/).length,
       recent,
       prompt: shared,
       ts: Date.now(),
     };
     sendCurrent();
+    // Token ledger: full per-step student guesses (tokens only) so any step can
+    // be reviewed later, not just the last 60.
+    try {
+      fs.appendFileSync(TOKENS, JSON.stringify({ step, teacher_token: stepRec.teacher_token, teacher_prefix: teacherOutput, student_tokens: stepRec.student_tokens || [] }) + "\n");
+    } catch { /* ledger best-effort */ }
     console.log(`  step ${step}: base=${baseScoreTotal} bonus=${bonusTotal} 500x=${fives} ${stepRec.is_500x_value_generation ? "  <<500x" : ""}`);
 
     // Small gap so the UI can render; not a sleep hack, just pacing.

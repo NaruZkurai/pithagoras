@@ -31,6 +31,15 @@
   canvas { max-height:260px; }
   .stream { font-family:ui-monospace,monospace; font-size:12px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; height:220px; overflow-y:auto; }
   .fivehundred { color:var(--good); font-weight:700; }
+  .teacher-out { font-family:ui-monospace,monospace; font-size:12px; line-height:1.7; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; max-height:200px; overflow-y:auto; word-break:break-word;}
+  .teacher-out .tok { display:inline-block; background:#1f6feb22; border:1px solid #1f6feb55; border-radius:4px; padding:0 4px; margin:1px; }
+  .guess-history { font-family:ui-monospace,monospace; font-size:12px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; max-height:260px; overflow-y:auto;}
+  .guess-history .g { padding:2px 4px; border-radius:4px; }
+  .guess-history .g:hover { background:#1f6feb22; }
+  .chip { display:inline-block; border-radius:6px; padding:2px 8px; margin:1px; font-family:ui-monospace,monospace; font-size:11px; color:#0d1117; font-weight:700; }
+  .scrub { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+  .scrub input[type=range]{ flex:1; min-width:140px; }
+  .scrub select, .scrub input[type=number]{ background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:6px; padding:4px 6px; font-family:ui-monospace,monospace; }
 </style>
 </head>
 <body>
@@ -48,6 +57,21 @@
     <div class="card">
       <h2>Compressed-token parity ≈ token generation (top-100 window)</h2>
       <div id="compBar" style="display:grid; gap:8px;"></div>
+    </div>
+    <div class="card">
+      <h2>Teacher — total prompt + output (live)</h2>
+      <div style="font-size:12px;color:#8b949e;margin-bottom:6px">prompt <span id="teachPromoteCount" style="color:#3fb950"></span> · output <span id="teachOutCount" style="color:#58a6ff"></span> tokens</div>
+      <div id="teachOut" class="teacher-out"><div style="color:#8b949e">waiting for teacher output…</div></div>
+    </div>
+    <div class="card">
+      <h2>Student guesses — any step (tokens only)</h2>
+      <div class="scrub">
+        <label style="font-size:11px;color:#8b949e">step</label>
+        <input id="gStep" type="number" min="0" style="width:80px">
+        <input id="gRange" type="range" min="0" max="0" value="0" style="flex:1">
+        <label style="font-size:11px;color:#8b949e">last <span id="gMax">0</span></label>
+      </div>
+      <div id="guessHistory" class="guess-history"><div style="color:#8b949e">loading full token ledger…</div></div>
     </div>
   </div>
 
@@ -68,6 +92,10 @@
     <div class="card">
       <h2>MoE active experts (top-2) · layers</h2>
       <div id="moe" style="font-size:13px;"></div>
+    </div>
+    <div class="card">
+      <h2>Total score by expert (each its own color)</h2>
+      <div id="expertScores" style="display:grid; gap:8px;"></div>
     </div>
     <div class="card">
       <h2>Top-100 tokens (next-5 window)</h2>
@@ -102,7 +130,54 @@
 
 <script>
 const SSE_URL = "http://127.0.0.1:4199/events";
+const CURRENT_URL = "http://127.0.0.1:4199/";
+const TOKENS_URL = "http://127.0.0.1:4199/tokens";
 let es = null;
+let pollTimer = null;
+function applyData(d) {
+  renderStats(d);
+  renderCharts(d);
+  renderTop100(d);
+  renderMoe(d);
+  renderTeacher(d);
+  renderExpertScores(d);
+  renderTokens(d);
+  appendStream(d);
+}
+
+// Polling fallback: if SSE keeps failing (chunked-encoding quirk on file://),
+// keep the UI live by reading current.json instead.
+async function pollFallback() {
+  try {
+    const r = await fetch(CURRENT_URL);
+    if (r.ok) { const d = await r.json(); if (d && d.step !== undefined) { setConn(true); applyData(d); } }
+  } catch (e) { /* offline */ }
+}
+
+function connect() {
+  es = new EventSource(SSE_URL);
+  es.onopen = () => { setConn(true); if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+  es.onerror = () => {
+    setConn(false);
+    if (!pollTimer) pollTimer = setInterval(pollFallback, 1000);
+  };
+  es.onmessage = (ev) => {
+    try {
+      const d = JSON.parse(ev.data);
+      applyData(d);
+    } catch (e) { /* ignore partial */ }
+  };
+  pollFallback(); // immediate first paint, even before SSE connects
+}
+connect();
+
+// Stable per-expert colors (hex backgrounds for bright chips).
+const EXPERT_COLORS = ["#58a6ff", "#3fb950", "#d29922", "#f778ba", "#a371f7", "#ff7b72", "#39c5cf", "#e3b341", "#7ee787", "#deab00"];
+
+function expColor(name) {
+  const n = parseInt(String(name).replace(/[^0-9]/g, ""), 10);
+  return EXPERT_COLORS[(isNaN(n) ? 0 : n - 1) % EXPERT_COLORS.length];
+}
 const scoreChart = new Chart(document.getElementById("scoreChart"), {
   type: "line",
   data: { labels: [], datasets: [
@@ -190,6 +265,81 @@ function renderMoe(d) {
     (m.last_snapshot ? `<div style="font-size:11px;color:#8b949e;margin-top:6px">saved: ${m.last_snapshot}</div>` : "");
 }
 
+function renderTeacher(d) {
+  const out = d.teacher_output || [];
+  document.getElementById("teachPromoteCount").textContent = "(" + (d.teacher_prompt_output_tokens ?? "?") + " total)";
+  document.getElementById("teachOutCount").textContent = "(" + out.length + ")";
+  const el = document.getElementById("teachOut");
+  if (!out.length) { el.innerHTML = '<div style="color:#8b949e">waiting for teacher output…</div>'; return; }
+  const html = out.map((t, i) =>
+    `<span class="tok" title="token ${i}">${String(t).replace(/</g, "&lt;")}</span>`
+  ).join(" ");
+  el.innerHTML = `<div style="color:#8b949e;margin-bottom:4px">total prompt + output (${d.teacher_prompt_output_tokens ?? "?"} tokens):</div>` +
+    `<div style="color:#8b949e;margin-bottom:2px">— output tokens (${out.length}):</div>${html}` +
+    `<div style="color:#8b949e;margin-top:8px;margin-bottom:2px">— full shared prompt (base + all output):</div><div style="word-break:break-word">${String(d.prompt || d.teacher_prompt || "").replace(/</g, "&lt;")}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderExpertScores(d) {
+  const el = document.getElementById("expertScores");
+  const recent = d.recent || [];
+  const last = recent[recent.length - 1];
+  const esScores = (last?.moe?.expert_scores) || [];
+  if (!esScores.length) { el.innerHTML = '<div style="color:#8b949e">waiting for expert scores…</div>'; return; }
+  el.innerHTML = esScores.map(e => {
+    const c = expColor(e.expert);
+    const pct = Math.max(2, Math.min(100, (e.score / (d.total_score || 1)) * 100));
+    return `<div class="token-row">
+      <span class="chip" style="background:${c}">${e.expert}${e.active ? " ★" : ""}</span>
+      <div class="token-bar" style="background:${c};width:${pct * 1.6}px"></div>
+      <div class="token-val" style="color:${c};width:auto">+${e.score}</div>
+      <div style="font-size:10px;color:#8b949e;flex:1">${e.mutation || e.role || ""}</div>
+    </div>`;
+  }).join("") +
+  `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #30363d;display:flex;gap:8px;align-items:center">
+     <span style="font-size:11px;color:#8b949e">Σ experts</span>
+     <span style="font-size:15px;font-weight:700;color:#58a6ff">${esScores.reduce((a,e)=>a+e.score,0).toFixed(1)}</span>
+     <span style="font-size:11px;color:#8b949e">= total ${d.total_score ?? 0}</span>
+   </div>`;
+}
+
+let tokenLedger = [];
+let curGuess = -1;
+async function loadTokens() {
+  try {
+    const r = await fetch(TOKENS_URL);
+    if (!r.ok) return;
+    tokenLedger = await r.json();
+    const max = tokenLedger.length ? tokenLedger[tokenLedger.length - 1].step : 0;
+    document.getElementById("gMax").textContent = max;
+    document.getElementById("gRange").max = max;
+    document.getElementById("gStep").max = max;
+    if (curGuess < 0) { curGuess = max; document.getElementById("gRange").value = max; document.getElementById("gStep").value = max; }
+    renderGuess(curGuess);
+  } catch (e) { /* stream not ready */ }
+}
+
+function renderGuess(step) {
+  const el = document.getElementById("guessHistory");
+  const rec = tokenLedger.find(x => x.step === step);
+  if (!rec) { el.innerHTML = '<div style="color:#8b949e">no ledger entry for this step yet</div>'; return; }
+  const st = rec.student_tokens || [];
+  el.innerHTML =
+    `<div style="font-size:11px;color:#8b949e;margin-bottom:6px">step ${rec.step} · teacher token «${String(rec.teacher_token).replace(/</g,"&lt;")}»</div>` +
+    st.map(t => `<span class="tok" title="token">${String(t).replace(/</g, "&lt;")}</span>`).join(" ") ||
+    '<div style="color:#8b949e">(no student tokens)</div>';
+}
+
+document.getElementById("gRange")?.addEventListener("input", () => {
+  const v = Number(document.getElementById("gRange").value);
+  curGuess = v; document.getElementById("gStep").value = v; renderGuess(v);
+});
+document.getElementById("gStep")?.addEventListener("change", () => {
+  const v = Number(document.getElementById("gStep").value);
+  curGuess = v; document.getElementById("gRange").value = v; renderGuess(v);
+});
+setInterval(loadTokens, 2000);
+
 function renderTokens(d) {
   const el = document.getElementById("tokens");
   const recent = d.recent || [];
@@ -251,24 +401,6 @@ function appendStream(d) {
     s.scrollTop = s.scrollHeight;
   }
 }
-
-function connect() {
-  es = new EventSource(SSE_URL);
-  es.onopen = () => setConn(true);
-  es.onerror = () => setConn(false);
-  es.onmessage = (ev) => {
-    try {
-      const d = JSON.parse(ev.data);
-      renderStats(d);
-      renderCharts(d);
-      renderTop100(d);
-      renderMoe(d);
-      renderTokens(d);
-      appendStream(d);
-    } catch (e) { /* ignore partial */ }
-  };
-}
-connect();
 </script>
 </body>
 </html>
