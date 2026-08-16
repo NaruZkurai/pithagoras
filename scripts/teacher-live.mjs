@@ -34,7 +34,7 @@ import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, 
 // recallable etoken(e1) function stored in data/Etokens.json, the e-tokenizer
 // (touple), the base build from the pre-tokenized token DB, and the
 // disqualification / repeat-train-top-k helpers used in the scoring loop.
-import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, putEtoken, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT } from "./etokens.mjs";
+import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, putEtoken, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT, etokenTernaryOf, etokenTernaryBarrel } from "./etokens.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -1723,8 +1723,18 @@ async function run() {
           base_etokens: getEtokens().stats?.base_etokens ?? 0,
           live_added: getEtokens().stats?.live_added ?? 0,
           built_from: getEtokens().stats?.built_from ?? null,
+          has_ternary: !!(getEtokens()?.ternary && Object.keys(getEtokens().ternary).length),
         } : null,
         last_teacher_etokens: liveEtokStats.last_teacher_etokens || [],
+        // The current etoken's TRUE-TERNARY VALUE (the compressed value stored
+        // in ternary space) + a fixed-size ternary barrel the experts can hold.
+        current_ternary: (typeof lastFpId === "number" && etokenTernaryOf(lastFpId)) ? {
+          etoken: lastFpId,
+          tuple: etoken(lastFpId) || [],
+          ternary: etokenTernaryOf(lastFpId),
+          barrel: etokenTernaryBarrel(lastFpId, 16),
+          note: "true-ternary value of the current teacher e-token: each original token maps to {-1,0,+1}; the barrel is the fixed-shape ternary signature experts hold.",
+        } : null,
       },
       // Teacher: the total prompt + accumulated output tokens.
       teacher_prompt: PROMPT,

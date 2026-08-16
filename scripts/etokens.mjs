@@ -124,6 +124,81 @@ export function etokenIdFor(ids) {
   return { id, index, label, origIndex, tuple, rawSum };
 }
 
+/* --------------------------------------------------------------------------
+ * TRUE-TERNARY E-TOKEN VALUES (store/use the e-token in TERNARY space)
+ * ------------------------------------------------------------------------ */
+
+/**
+ * A stable ternary hash of a non-negative token id -> {-1, 0, +1}. Uses a fixed
+ * integer mix so the SAME token id ALWAYS maps to the SAME ternary digit (this
+ * is what makes the e-token's value consistent/reliable in ternary space, and
+ * collapses repeated tokens to the same digit — no effective repeats).
+ */
+export function ternDigit(tokenId, salt = 0) {
+  let x = (Number(tokenId) >>> 0) + salt * 0x9e3779b9;
+  x = Math.imul(x ^ (x >>> 16), 0x45d9f3b);
+  x = Math.imul(x ^ (x >>> 16), 0x45d9f3b);
+  x = (x ^ (x >>> 16)) >>> 0;
+  const r = x % 3;
+  return r === 0 ? -1 : (r === 1 ? 0 : 1);
+}
+
+/**
+ * TRUE-TERNARY SIGNATURE of an etoken (its compressed VALUE in ternary space).
+ * Maps each ORIGINAL token id of the etoken's tuple to a ternary digit
+ * ({-1,0,+1}) — the true-ternary representation of the compressed value. The
+ * same etoken (same tuple) always yields the same ternary vector, and it lives
+ * in the same {-1,0,+1} space as the model's true-ternary weights, so an expert
+ * can STORE this value in its ternary weights and reliably USE it (recall the
+ * tuple by decompressing the etoken id). Returns { vector, length, ternary }.
+ */
+export function etokenTernary(ids) {
+  const tuple = effectiveTuple(ids);
+  const vector = tuple.map((t) => ternDigit(t));
+  return { vector, length: vector.length, ternary: vector.slice() };
+}
+
+/**
+ * A FIXED-SIZE ternary barrel for an etoken — a stable, length-`size` ternary
+ * vector in {-1,0,+1} derived from the etoken id (NOT the variable-length
+ * tuple). This is the "weight signature" an expert's ternary weights actually
+ * hold so it can store + reliably use the e-token as a fixed-shape value in
+ * ternary space. Deterministic per etoken id.
+ */
+export function etokenTernaryBarrel(eId, size = 32) {
+  const n = Math.max(1, Math.floor(Number(size) || 32));
+  const base = Number(eId);
+  const vec = new Array(n);
+  for (let i = 0; i < n; i++) vec[i] = ternDigit(base, i); // salt per position
+  return vec;
+}
+
+/**
+ * Store the ternary value onto a recorded etoken (idempotent): persists
+ * `ternary` (the true-ternary signature of the tuple) in Etokens.json so the
+ * e-token's ternary value is recallable like its tuple. Called by
+ * putEtoken() so every recorded etoken carries both its tuple AND ternary value.
+ */
+export function setEtokenTernary(id, vector) {
+  if (!_Etokens) initEtokens();
+  const key = String(id);
+  if (_Etokens.tokens[key] === undefined) return null;
+  if (!_Etokens.ternary) _Etokens.ternary = {};
+  _Etokens.ternary[key] = (vector || []).map((v) => Math.max(-1, Math.min(1, Math.round(Number(v) || 0))));
+  return _Etokens.ternary[key];
+}
+
+/** Recall the true-ternary value of an etoken (if stored); else compute it. */
+export function etokenTernaryOf(eId) {
+  if (!_Etokens) return null;
+  const t = _Etokens.tokens[String(eId)];
+  if (!Array.isArray(t)) return null;
+  if (_Etokens.ternary && Array.isArray(_Etokens.ternary[String(eId)])) {
+    return _Etokens.ternary[String(eId)].slice();
+  }
+  return etokenTernary(t).vector;
+}
+
 /**
  * THE E-TOKENIZER ("touple" a run of pre-tokenized ids into one unique etoken).
  * Splits a token-id run into fixed-size chunks, effective-tuples each chunk,
@@ -157,11 +232,12 @@ export function etokenize(ids, chunkSize = 4) {
 function defaultStore() {
   return {
     format: "pithagoras-etokens",
-    version: 1,
+    version: 2,
     base: false,          // true once built from the pre-tokenized token DB
     etoken_base: ETOKEN_BASE(),
     etoken_count: ETOKEN_COUNT(),
     tokens: {},           // { "<etokenId>": [origIds...] }  -- etoken(e) decompresses here
+    ternary: {},          // { "<etokenId>": [-1|0|+1,...] }  -- the e-token's TRUE-TERNARY value
     stats: {
       built_from: null,   // e.g. "data/project-tokens.json + data/augment/**"
       base_etokens: 0,
@@ -223,6 +299,9 @@ export function putEtoken({ id, tuple, live = true, audit = null, save = true })
   // Keep the ORIGINAL tuple exactly (not the deduped one) so decompression is
   // lossless; the effective/dedup form is used only for the deterministic hash.
   _Etokens.tokens[key] = Array.isArray(tuple) ? tuple.map(Number) : eff;
+  // Store the TRUE-TERNARY value of the etoken too, so the expert can store +
+  // reliably use the e-token as a value in ternary space.
+  setEtokenTernary(key, etokenTernary(tuple).vector);
   if (isNew) {
     if (live) _Etokens.stats.live_added = (_Etokens.stats.live_added || 0) + 1;
     else _Etokens.stats.base_etokens = (_Etokens.stats.base_etokens || 0) + 1;
