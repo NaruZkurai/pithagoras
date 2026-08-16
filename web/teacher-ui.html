@@ -101,6 +101,13 @@
       <div id="newTokList" class="guess-history" style="max-height:220px;"><div style="color:#8b949e">waiting for new tokens…</div></div>
     </div>
     <div class="card">
+      <h2>E-token system · compressed token output (new-3B scope)</h2>
+      <div id="etokSystem" style="font-size:12px;color:#8b949e;margin-bottom:8px">…</div>
+      <div id="etokDetail" class="guess-history" style="max-height:220px;">
+        <div style="color:#8b949e">waiting for e-tokens…</div>
+      </div>
+    </div>
+    <div class="card">
       <h2>Student guesses — any step (tokens only)</h2>
       <div class="scrub">
         <label style="font-size:11px;color:#8b949e">step</label>
@@ -223,6 +230,7 @@ function applyData(d) {
   renderSampling(d);
   renderPolicy(d);
   renderNewTokens(d);
+  renderEtokens(d);
   renderTokens(d);
   appendStream(d);
 }
@@ -637,6 +645,37 @@ function renderNewTokens(d) {
       `<span style="color:#8b949e">step ${t.step}</span> · input [<span style="color:#a371f7">${(t.input||[]).join(" ")}</span>] → <b style="color:${t.created ? "#3fb950" : "#e6edf3"}">new ${t.new_token}</b>` +
       (t.created ? ' <span class="fivehundred">★created</span>' : "") + `</div>`
     ).join("");
+  });
+}
+
+function renderEtokens(d) {
+  const es = d.etoken_system || {};
+  const stats = es.live_stats || {};
+  const store = es.store || {};
+  const ct = es.current_ternary;
+  const sig = sigOf(es.how, es.train_scope, es.base, es.count, es.live_stats,
+    store.total, store.base_etokens, store.live_added,
+    ct && [ct.etoken, ct.tuple, ct.kv_flag, ct.kv_savings, ct.ternary]);
+  memoRender("etokens", sig, () => {
+    const sysEl = document.getElementById("etokSystem");
+    const detEl = document.getElementById("etokDetail");
+    if (!sysEl || !detEl) return;
+    sysEl.innerHTML =
+      `<div style="margin-bottom:4px"><b style="color:#58a6ff">Etokens.json · recallable etoken(e1) → tuple</b></div>` +
+      `<div style="font-size:11px">${String(es.how || "")}</div>` +
+      `<div style="margin-top:4px">reserved range <code>[${es.base ?? "?"}, ${es.base ?? "?"}+${es.count ?? "?"})</code> · train scope <b style="color:#3fb950">${String(es.train_scope ?? "new_3b_only")}</b></div>` +
+      `<div style="margin-top:4px;font-size:11px">store: <b>${store.total ?? 0}</b> etokens (base <b>${store.base_etokens ?? 0}</b> · live-added <b>${store.live_added ?? 0}</b>)</div>` +
+      `<div style="margin-top:4px;font-size:11px;color:#8b949e">live this run: created <b style="color:#3fb950">${stats.created ?? 0}</b> · e-tokenized <b>${stats.e_tokenized ?? 0}</b> · in top-k <b style="color:#3fb950">${stats.in_topk ?? 0}</b> · disqualified <b style="color:#f85149">${stats.disqualified ?? 0}</b></div>`;
+    if (!ct) { detEl.innerHTML = '<div style="color:#8b949e">no current teacher e-token yet</div>'; return; }
+    const sav = ct.kv_savings || {};
+    detEl.innerHTML =
+      `<div style="font-size:11px;padding:3px;border-bottom:1px solid #1f6feb22">` +
+      `current teacher e-token <b style="color:#a371f7">${ct.etoken}</b> → tuple [<span style="color:#e6edf3">${(ct.tuple||[]).join(", ")}</span>]<br>` +
+      `<span style="color:#8b949e">ternary value</span> [<span style="color:#7ee787">${(ct.ternary||[]).join(" ")}</span>]<br>` +
+      `<span style="color:#8b949e">1-bit kv flag</span> <b style="color:${ct.kv_flag === 1 ? "#3fb950" : "#8b949e"}">${ct.kv_flag ?? "?"}</b> ${ct.kv_flag === 1 ? "(compressed — algo decompresses)" : ""} · ` +
+      `<span style="color:#8b949e">kv savings</span> <b style="color:#3fb950">${((sav.savingsRatio ?? 0) * 100).toFixed(0)}%</b> (${sav.tokensSaved ?? 0} tokens saved · ${sav.uncompressedBytes ?? "?"}→${sav.compressedBytes ?? "?"})<br>` +
+      `<span style="color:#8b949e">algo.decoded</span> [<span style="color:#e6edf3">${((ct.algo && ct.algo.decoded)||[]).join(", ")}</span>]</div>` +
+      `<div style="font-size:10px;color:#8b949e;padding:2px">kv barrel [<span style="color:#7ee787">${(ct.kv_barrel||[]).join(" ")}</span>]</div>`;
   });
 }
 
