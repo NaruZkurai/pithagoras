@@ -230,6 +230,21 @@ function compressorExpertSet() {
 function isCompressorExpert(name) {
   return compressorExpertSet().has(name);
 }
+// A "new network" = any attached expert beyond the base (role "mutation" or
+// "mtp_head", NOT the 5 base "base"-role experts). Per the user design, these
+// are the networks that must LEARN TO COMPRESS (phase 1) and then reproduce the
+// base shape (phase 2). Base experts represent the "un-attached" original.
+function expertRole(name) {
+  return String(loadConfig()?.moe?.experts?.[name]?.role || "").toLowerCase();
+}
+function isNewNetwork(name) {
+  const role = expertRole(name);
+  return role === "mutation" || role === "mtp_head";
+}
+// Two-phase scoring config read live (see scoring.two_phase in moe-config.json).
+function twoPhaseCfg() {
+  return loadConfig()?.scoring?.two_phase || {};
+}
 // Constrain a raw token top-k list to ONLY compressor tokens (for a compressor
 // expert). Returns a Set of token strings that are BOTH in `top` AND compressor.
 function compressorConstrained(top, compressor) {
@@ -971,13 +986,43 @@ async function run() {
           layerNoiseState = addLayerNoise(layerNoiseState, noiseToLayer(), nLayers, ti);
         }
         const route = routeExperts((tPos.top || []).map((x) => x.token), layerNoiseState);
+        // TWO-PHASE DESIGN (user): the NEW networks (mutation + MTP experts, not
+        // the 5 base ones) learn to COMPRESS, then reproduce the base shape.
+        //   Phase 1 - new networks FAVOR compressed tokens (emit a compressed/new
+        //             token -> bonus).
+        //   Phase 2 - new compressed experts reproduce the SAME SHAPE as if not
+        //             attached: their position top-k must match the BASE experts'
+        //             (un-attached) top-k at that position.
+        //   MTP aids compressed tokens: the MTP head predicts the NEXT token and
+        //             earns extra when that forward target is a compressed one.
+        const tp = twoPhaseCfg();
+        const phase2 = tp.enabled && Number(tp.phase) >= 2;
+        const phase1 = tp.enabled && Number(tp.phase) >= 1;
+        const newNetW = Number(tp.new_net_compression_weight ?? 40);
+        const reconW = Number(tp.reconstruct_weight ?? 120);
+        const reconTopK = Math.max(1, Number(tp.reconstruct_top_k ?? 20));
+        const reconMin = Number(tp.reconstruct_min_overlap ?? 0.5);
+        // BASE REFERENCE (un-attached shape): union of every base-role expert's
+        // narrowed top-k across the student output positions. The compressed new
+        // networks must reconstruct this shape in phase 2.
+        const baseRefTopK = new Set();
+        route.rows.forEach((r, i) => {
+          if (expertRole(r.name) !== "base") return;
+          const pos = i % Math.max(1, student.length);
+          const st = student[pos];
+          for (const tok of narrowTokenSet(st?.top || [], emitFor("student").top_k, 1)) baseRefTopK.add(String(tok));
+        });
+        // Per-expert phase deltas (phase1 compression bonus, phase2 recon bonus,
+        // mtp-aids bonus) surfaced in the UI + added to expertMatch.
+        const phaseInfo = route.rows.map(() => ({ p1: 0, p2: 0, mtpAid: 0, newTok: false, reconOverlap: 0, isNew: false, isMtp: false }));
         // PER-EXPERT TEACHER-MATCH differential: each expert Ei owns student
         // output position i % STUDENT_STEP. Its own "match" = how many tokens
         // in that position's NARROWED top-k also appear in the teacher's top-k
         // set (same narrow logic the base score uses), PLUS a big boost if the
         // student's CHOSEN token at that position is in the teacher's ACTUAL
-        // emitted set. This is what makes experts evolve apart: an expert whose
-        // routed token matched the teacher climbs; one that missed drifts back.
+        // emitted set. PLUS the two-phase new-network rewards. This is what
+        // makes experts evolve apart: an expert whose routed token matched the
+        // teacher climbs; one that missed drifts back.
         const expertMatch = route.rows.map((r, i) => {
           const pos = i % Math.max(1, student.length);
           const st = student[pos];
@@ -987,11 +1032,17 @@ async function run() {
           const isCompr = isCompressorExpert(r.name) && (loadConfig()?.moe?.compressor_tokens_only ?? true);
           const comprSet = isCompr ? newTokenSet : null;
           const sSetK = narrowTokenSet(st?.top || [], emitFor("student").top_k, 1);
+          const isNew = isNewNetwork(r.name);
+          const isMtp = r.name === "EMTP";
+          phaseInfo[i].isNew = isNew; phaseInfo[i].isMtp = isMtp;
           let m = 0;
           // MTP HEAD (+1 forward): the MTP expert predicts the NEXT token, so it
           // is scored on how well the student's output tracks the teacher's top-k
-          // one position ahead (its own forward-looking signal).
-          if (r.name === "EMTP") {
+          // one position ahead (its own forward-looking signal). MTP also AIDS
+          // COMPRESSED TOKENS: when the next token it predicts is a compressed/
+          // new token, it earns the mtpAid bonus — steering the model's forward
+          // prediction toward the compressed representation.
+          if (isMtp) {
             const ahead = student[(pos + 1) % Math.max(1, student.length)];
             const aheadSet = narrowTokenSet(ahead?.top || [], emitFor("student").top_k, 1);
             // MTP is a compressor: constrain to compressor tokens only.
@@ -999,7 +1050,19 @@ async function run() {
             for (const tok of aheadSetUse) if (tSetK.has(tok)) m++;
             if (isCompr ? comprSet.has(String(ahead?.chosen?.token)) && tSetK.has(ahead?.chosen?.token)
                         : ahead && tSetK.has(ahead.chosen.token)) m += 10; // next-token emit-match boost
+            // MTP AIDED-COMPRESSION: if the MTP's forward target (ahead token) is
+            // a compressed/new token, bonus it — the MTP is aiding compression by
+            // predicting the compressed next token.
+            if (phase1 && ahead && newTokenSet.has(String(ahead.chosen.token))) {
+              m += newNetW; phaseInfo[i].mtpAid = newNetW;
+            }
             return m;
+          }
+          // Phase 1 — new networks FAVOR compressed tokens: if a new network's
+          // position emitted a compressed/new token, bonus it (this is what makes
+          // the added layers become token-COMPRESSORS).
+          if (phase1 && isNew && st && newTokenSet.has(String(st.chosen.token))) {
+            m += newNetW; phaseInfo[i].p1 = newNetW; phaseInfo[i].newTok = true;
           }
           // Constrain to compressor tokens ONLY for compressor experts.
           const sSetUse = isCompr ? compressorConstrained(sSetK, comprSet) : sSetK;
@@ -1007,6 +1070,16 @@ async function run() {
           const chosenOk = isCompr ? (st && comprSet.has(String(st.chosen.token)) && tSetK.has(st.chosen.token))
                                    : (st && tSetK.has(st.chosen.token));
           if (chosenOk) m += 10; // strong emit-match boost (compressor: only when it's a compressor token)
+          // Phase 2 — reproduce the base shape: a new network's position top-k
+          // must match the BASE (un-attached) experts' top-k. overlap with
+          // baseRefTopK * reconstruct_weight when it clears reconstruct_min_overlap.
+          if (phase2 && isNew && baseRefTopK.size) {
+            let hit = 0;
+            for (const tok of sSetK) if (baseRefTopK.has(String(tok))) hit++;
+            const overlap = hit / Math.max(1, reconTopK);
+            phaseInfo[i].reconOverlap = Number(overlap.toFixed(3));
+            if (overlap >= reconMin) { m += reconW * overlap; phaseInfo[i].p2 = reconW * overlap; }
+          }
           return m;
         });
         const training = trainStep(route, Math.exp(Math.min(0, tPos.chosen.logprob)), 0.5, expertMatch);
@@ -1044,10 +1117,11 @@ async function run() {
         // and can act as the reference in the accumulated-points chart too.
         const teacherStepPts = Number((base + baseP + baseEm + curvePoints + compressionPoints).toFixed(4));
         perExpertPoints.push({ expert: "TEACHER", score: teacherStepPts });
-        const expertScores = route.rows.map((r) => {
+        const expertScores = route.rows.map((r, i) => {
           const ms = Number(route.state?.matchScore?.[r.name]) || 0;
           const ownPts = (base + baseP + baseEm) * 0.6 * (ms / msTot) +
                          (curvePoints + compressionPoints) * (0.4 * (ms / msTot) + 0.6 * ((Number(r.value) || 0) / vAll));
+          const pi = phaseInfo[i] || {};
           return {
             expert: r.name,
             active: r.active,
@@ -1056,6 +1130,12 @@ async function run() {
             weight: Number(r.topk_weight) || 0,
             match: ms,                 // this expert's own cumulative match count
             score: Number(ownPts.toFixed(4)),
+            is_new_network: !!pi.isNew,
+            phase1_compression: Number((pi.p1 || 0).toFixed ? (pi.p1 || 0).toFixed(2) : pi.p1 || 0),
+            phase2_reconstruction: Number((pi.p2 || 0).toFixed ? (pi.p2 || 0).toFixed(2) : pi.p2 || 0),
+            mtp_aid: Number((pi.mtpAid || 0).toFixed ? (pi.mtpAid || 0).toFixed(2) : pi.mtpAid || 0),
+            recon_overlap: pi.reconOverlap || 0,
+            emitted_new_token: !!pi.newTok,
           };
         });
         expertScores.push({
@@ -1247,13 +1327,23 @@ async function run() {
       pause_every_n_steps: Number(loadConfig()?.training?.pause_every_n_steps ?? 0),
       windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000, max_loops_per_tier: win.maxLoopsPerTier, overlap: stepRec.window?.overlap ?? 0, best_overlap: bestWinOverlap, tol: win.identityTolerance, graduated: !!(stepRec.window?.graduated), last_converged_step: lastConvergedStep, allow_new_token_output: !!loadConfig()?.moe?.allow_new_token_output } : undefined,
       expert_steering: { enabled: Number(loadConfig()?.moe?.expert_steering ?? 0) > 0, factor: Number(loadConfig()?.moe?.expert_steering ?? 0), max_bias: Number(loadConfig()?.moe?.steering_max_bias ?? 2.0), top_n: Number(loadConfig()?.moe?.steering_top_n ?? 20), last_bias_tokens: steerBias ? Object.keys(steerBias).length : 0 },
+      two_phase: { enabled: !!loadConfig()?.scoring?.two_phase?.enabled, phase: Number(loadConfig()?.scoring?.two_phase?.phase ?? 1), new_net_compression_weight: Number(loadConfig()?.scoring?.two_phase?.new_net_compression_weight ?? 40), reconstruct_weight: Number(loadConfig()?.scoring?.two_phase?.reconstruct_weight ?? 120), reconstruct_min_overlap: Number(loadConfig()?.scoring?.two_phase?.reconstruct_min_overlap ?? 0.5), note: "Phase1=new nets FAVOR compressed tokens; Phase2=new compressed experts reproduce base shape; MTP aids compressed tokens" },
       // PER-EXPERT scored/training detail (surfaced so the UI shows EVERY expert
       // getting a value/delta, not just the active top-k). Pulls from the moe
       // object built during the step.
-      per_expert: (stepRec.moe?.expert_topk || []).map((e) => ({
-        expert: e.expert, value: e.value, active: e.active, role: e.role,
-        mutation: e.mutation, topk_weight: e.topk_weight,
-      })),
+      per_expert: (stepRec.moe?.expert_topk || []).map((e) => {
+        const es = (stepRec.moe?.expert_scores || []).find((x) => x.expert === e.expert) || {};
+        return {
+          expert: e.expert, value: e.value, active: e.active, role: e.role,
+          mutation: e.mutation, topk_weight: e.topk_weight,
+          is_new_network: !!es.is_new_network,
+          phase1_compression: es.phase1_compression ?? 0,
+          phase2_reconstruction: es.phase2_reconstruction ?? 0,
+          mtp_aid: es.mtp_aid ?? 0,
+          recon_overlap: es.recon_overlap ?? 0,
+          emitted_new_token: !!es.emitted_new_token,
+        };
+      }),
       per_expert_deltas: (stepRec.moe?.training_per_expert || []).map((e) => ({
         expert: e.expert, delta: e.delta, value: e.value, active: e.active,
       })),

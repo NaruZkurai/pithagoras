@@ -804,6 +804,15 @@
       "degenerate_penalty": -50,
       "degenerate_partial": false,
       "note": "compression_reward = compressionRatio * baseEffectiveTokens * ( 1 + textLengthGenerated / tokensSaved ) ; \ncompressionRatio = referenceTokens / emittedTokens ; tokensSaved = referenceTokens - emittedTokens. If >=min_pct of generated tokens match new-token-system created tokens, multiply by new_token_match_mult * tokensSaved. DEGENERATE GUARD: if the student emits ALL the same token (a repeated-token attractor like '/'), the compression reward is frozen to 0 (degenerate_partial=false) and degenerate_penalty is applied, so a collapsed student can't farm points for trivially repeating one token."
+    },
+    "two_phase": {
+      "enabled": true,
+      "phase": 1,
+      "new_net_compression_weight": 40,
+      "reconstruct_weight": 120,
+      "reconstruct_top_k": 20,
+      "reconstruct_min_overlap": 0.5,
+      "note": "USER DESIGN: (PHASE 1) the NEW networks (all mutation + MTP experts beyond the 5 base ones) are trained to FAVOR compressed tokens — each new network that emits a compressed/new token (in newTokenSet) earns new_net_compression_weight per position, so the added networks become token-COMPRESSORS. (PHASE 2) the new compressed experts must then reproduce the SAME SHAPE as if they weren't attached: when a new network is active, its position's top-k must match the BASE (un-attached, E1-E5) experts' top-k at that position (reconstruct_min_overlap) — scoring reconstruct_weight times the base-overlap. Setting phase=2 gates reconstruction scoring on; phase=1 gates the compression-favor on. Both reward only NEW networks (role mutation/mtp_head), never the base experts."
     }
   },
   "sampling": {
