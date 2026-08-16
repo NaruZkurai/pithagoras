@@ -44,6 +44,9 @@ const LARGE_NAME = process.env.LARGE_NAME || "bonsai-27b (much larger)";
 const N_TOKENS = Number(process.env.TOKENS || argvToken() || 24);
 const CHUNK = Number(process.env.CHUNK || argvChunk() || 4);
 const TOP_K = Number(process.env.TOPK || 5);
+// How many output tokens we give the STUDENT (4B) at each anchored step.
+const STUDENT_STEP = Number(process.env.STUDENT_STEP || 5);
+const DO_ANCHOR = process.env.ANCHOR === "1" || process.argv.includes("--anchor");
 const PROMPT =
   process.env.PROMPT ||
   "Consider the Pithagoras portal: the pi model picker sends provider and modelId. The issue is that";
@@ -76,6 +79,146 @@ async function profile(url, prompt) {
   return { steps, rawCount: steps.length };
 }
 
+/**
+ * Get the per-position TOP-K for `n` generated tokens from a model, returning
+ * the next-token distribution and the chosen token per position. This is the
+ * building block for teacher-anchored scoring: at each step we read the top-k
+ * at the current position and the actual token the model committed to.
+ * {
+ *   steps: [{ chosen:{token,logprob}, top:[{token,logprob},...] }],
+ * }
+ */
+async function nextTokenProfile(url, prompt, n) {
+  const body = JSON.stringify({
+    model: "x", prompt, max_tokens: n, temperature: 0.2,
+    top_p: 1, top_k: TOP_K, logprobs: TOP_K, echo: false, stream: false,
+  });
+  const res = await fetch(`${url}/v1/completions`, {
+    method: "POST", headers: { "content-type": "application/json" }, body,
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (!res.ok) throw new Error(`${url} HTTP ${res.status}`);
+  const d = await res.json();
+  const content = d?.choices?.[0]?.logprobs?.content || [];
+  return content.map((row) => ({
+    chosen: {
+      token: row.token,
+      // Some backend logprobs omit the per-token logprob when only top lists
+      // are filled; default to 0 => exp(0)=1 so we never propagate NaN.
+      logprob: Number.isFinite(row.logprob) ? row.logprob : 0,
+    },
+    top: (row.top_logprobs || []).map((t) => ({
+      token: t.token,
+      logprob: Number.isFinite(t.logprob) ? t.logprob : 0,
+    })),
+  }));
+}
+
+/** top-k token-set overlap 0..1 between two per-position top lists. */
+function topkOverlap(a, b) {
+  if (!a?.length || !b?.length) return 0;
+  const bset = new Set(b.map((t) => t.token));
+  const hit = a.filter((t) => bset.has(t.token)).length;
+  return hit / Math.max(1, a.length);
+}
+
+/**
+ * TEACHER-ANCHORED parity (the intended mechanism):
+ *   - 27B (teacher) and 4B (student) are given the SAME task (prompt).
+ *   - At each step the teacher adds ONE token; that token is appended to the
+ *     shared prompt, and the SAME (now longer) prompt becomes the student's
+ *     NEW prompt. The student then emits STUDENT_STEP (5) output tokens.
+ *   - We want the two models to hold the same top-k token value at every total
+ *     token set.
+ *   - SCORE per step:
+ *       (a) FAVORED — NEW TOKEN COMPRESSION: compress the student's 5 output
+ *           tokens into chunks; each compressed token's value = sum of its
+ *           constituents (n1+n2+n3...); compare its effective top-k value /
+ *           spread to the teacher's top-1 value at that position.
+ *       (b) BASE-TOKEN TOP-K: overlap of the student's top-k set vs the
+ *           teacher's top-k set at that position.
+ */
+async function anchorRun() {
+  console.log("=== TEACHER-ANCHORED parity: 27B teacher -> 4B student, top-k at every token set ===");
+  let shared = PROMPT;
+  const steps = [];
+  let compTotal = 0, compCount = 0, baseTotal = 0;
+  let student1 = null;
+
+  for (let s = 0; s < N_TOKENS; s++) {
+    // 1) Teacher (27B) adds ONE token from the shared prompt.
+    const teacher = await nextTokenProfile(LARGE_URL, shared, 1);
+    const tPos = teacher[0];
+    const teacherChosen = tPos.chosen; // the token & its value
+    if (!teacherChosen || teacherChosen.token === undefined) { steps.push({ note: "teacher empty" }); break; }
+    shared += " " + teacherChosen.token;
+
+    // 2) Student (4B) gets the SAME (teacher-appended) prompt, emits 5 tokens.
+    const student = await nextTokenProfile(SMALL_URL, shared, STUDENT_STEP);
+    if (!student.length) { steps.push({ note: "student empty" }); break; }
+    if (!student1) student1 = student[0].top; // first-position top-k for base scoring
+
+    // 3a) NEW-TOKEN COMPRESSION (favored): compress student's 5 tokens into
+    //     chunks (CHUNK default 3), value = sum of its top-k probabilities.
+    const sChunks = chunkCompress(student, CHUNK);
+    const sTopk = effectiveTopK(sChunks);
+    const sSpread = spread(sChunks);
+    // Teacher's top-1 value at this position = exp(teacherTop1.logprob), the
+    // concentration it holds at this total-token set.
+    const teacherVal = Number.isFinite(teacherChosen.logprob)
+      ? Math.exp(Math.min(0, teacherChosen.logprob))
+      : 1;
+    // Compression parity: how close the student's compressed-token value mass
+    // is to the teacher's top-1 value at this position.
+    const compParity = Number.isFinite(sTopk.topkMass)
+      ? parity(sTopk.topkMass, Math.min(1, teacherVal + 0.5))
+      : 0;
+
+    // 3b) BASE-TOKEN TOP-K: overlap of student's top-k vs teacher's top-k.
+    const baseParity = topkOverlap(student1, tPos.top);
+
+    compTotal += compParity; compCount++;
+    baseTotal += baseParity;
+    steps.push({
+      step: s + 1,
+      teacher_chosen: teacherChosen.token,
+      teacher_topk_value: teacherVal,
+      student_tokens: student.map((x) => x.chosen.token),
+      new_token_compression_parity: compParity,
+      base_topk_parity: baseParity,
+    });
+  }
+
+  const meanComp = compCount ? compTotal / compCount : 0;
+  const meanBase = compCount ? baseTotal / compCount : 0;
+  const result = {
+    mode: "teacher-anchored",
+    teacher: LARGE_NAME, student: SMALL_NAME,
+    prompt: PROMPT,
+    steps_generated: N_TOKENS,
+    student_step_tokens: STUDENT_STEP,
+    top_k: TOP_K,
+    mean_new_token_compression_parity: meanComp, // favored
+    mean_base_token_topk_parity: meanBase,
+    steps,
+  };
+  fs.mkdirSync(OUT, { recursive: true });
+  fs.writeFileSync(OUT_FILE, JSON.stringify(result, null, 2));
+  try {
+    const ledger = path.join(OUT, "grow-ledger.jsonl");
+    fs.appendFileSync(ledger, JSON.stringify({
+      at: new Date().toISOString(), mode: "anchor",
+      mean_compression_parity: meanComp, mean_base_topk_parity: meanBase,
+    }) + "\n");
+  } catch { /* ledger best-effort */ }
+  console.log(`\n=== RESULT ===`);
+  console.log(`  steps: ${steps.length}`);
+  console.log(`  mean NEW-TOKEN-COMPRESSION parity (favored): ${meanComp.toFixed(3)}`);
+  console.log(`  mean base-token top-k parity: ${meanBase.toFixed(3)}`);
+  console.log(`  -> ${OUT_FILE}`);
+  return result;
+}
+
 /** Chunk the raw token steps into groups of `size`; each chunk's VALUE is the
  *  sum of its constituent token log-densities (exp of logprob = probability;
  *  summing model-vs-model per-token "value" = the token n1+n2+n3 convention).
@@ -84,8 +227,8 @@ function chunkCompress(steps, size) {
   const chunks = [];
   for (let i = 0; i < steps.length; i += size) {
     const slice = steps.slice(i, i + size);
-    const sumValue = slice.reduce((acc, s) => acc + Math.exp(s.logprob), 0);
-    const sumLogprob = slice.reduce((acc, s) => acc + s.logprob, 0);
+    const sumValue = slice.reduce((acc, s) => acc + Math.exp(Number.isFinite(s.logprob) ? s.logprob : 0), 0);
+    const sumLogprob = slice.reduce((acc, s) => acc + (Number.isFinite(s.logprob) ? s.logprob : 0), 0);
     chunks.push({
       tokens: slice.map((s) => s.token),
       count: slice.length,
@@ -120,6 +263,9 @@ function parity(a, b) {
 }
 
 async function run() {
+  if (DO_ANCHOR) {
+    return anchorRun();
+  }
   console.log("=== KV / top-k comparison: small true-ternary vs much larger, with token-chunk compression ===");
   console.log(`  small  = ${SMALL_NAME}  ${SMALL_URL}`);
   console.log(`  large  = ${LARGE_NAME}  ${LARGE_URL}`);
