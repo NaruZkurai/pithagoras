@@ -126,7 +126,17 @@ const identicalEmit = () => {
   const c = compareCfg();
   return { top_k: Math.min(100, Number(c.top_k ?? 20)), top_p: Number(c.top_p ?? 0.95), temperature: Number(c.temperature ?? 0.7) };
 };
-const compareN = () => compareFirstOnly() ? 1 : Number(SAMPLING().emit?.student?.top_k ?? 20); // tokens to generate
+const compareN = () => {
+  // IMPORTANT (root-cause fix): generate a REAL multi-token chunk, not a single
+  // token. In topk_first mode the old behaviour forced max_tokens=1, which makes
+  // a good student sample only its sharpest single top-1 prediction (e.g. the
+  // TQ1_0 30B collapses to one repeated token "apart"), so its top-k never
+  // overlaps the teacher's and the score graph never moves. Generating a real
+  // STUDENT_STEP chunk (like the teacher chunk) gives the student a diverse
+  // sequence whose top-k CAN overlap the teacher's coherent top-k. Same for the
+  // teacher (fixes the " the" degenerate window anchor).
+  return Number(process.env.COMPARE_N || STUDENT_STEP || SAMPLING().emit?.student?.top_k || 5);
+}; // tokens to generate per head
 const noiseToLayer = () => Number(SAMPLING().noise_to_layer ?? 0.05);
 const STUDENT_STEP = Number(process.env.STUDENT_STEP || 5);
 // The STUDENT model runs with a small context (-c 16384). It also has a SMALLER
@@ -928,20 +938,41 @@ async function run() {
         if (need > 0 && !skipTeacher) {
           try {
             // Advance teacher from the CURRENT base prompt to fill `need` tokens.
-            // In COMPARE topk_first mode we only need the FIRST token's top-k for
-            // the reference (the whole comparison is first-token-top-k), so request
-            // ONE token (fast) instead of TEACHER_BATCH — generating N tokens each
-            // returning viewTopK logprobs on the 27B teacher times out.
-            const refN = compareFirstOnly() ? 1 : Math.min(need, TEACHER_BATCH);
+            // IMPORTANT (root-cause fix): request a REAL multi-token chunk, not a
+            // single token. With max_tokens=1 + top-k anchoring, a coherent
+            // teacher's sharpest top-1 prediction is often a stopword (" the" for
+            // TQ2_0), which degenerates the whole window into a repeated-token
+            // flush loop (the "garbage" that looked like a model problem — the
+            // MODEL is fine; the harness was only sampling 1 top-1 token). We
+            // anchor the window on a genuine generated sequence (the SAME token +
+            // top-k data the e-tokenizer consumes) so the teacher chunk is
+            // coherent and the E-token system gets a real chunk.
+            const refN = Math.min(need, Math.max(2, TEACHER_BATCH));
             const tch = await profileRetry(TEACHER_URL, sharedIds, refN, "teacher");
             const tpos0 = tch[0];
-            if (tpos0 && tpos0.chosen.token !== undefined) {
+            if (tpos0 && tpos0.chosen.token !== undefined && tch.length > 1) {
               winRefTopK = tpos0.top || [];                    // shared across all experts + MTP
               const tids = tch.map((x) => x.chosen.id).filter((v) => Number.isFinite(v));
+              const toks = tch.map((x) => x.chosen.token).filter((t) => t !== undefined);
               // LOOP: extend the reference by feeding the teacher its own output
               // only within the window budget (fixed first-N, no unbounded growth).
               winRefIds.push(...tids.slice(0, need));
               saveTopKCurve({ step, promptCtx: PROMPT.slice(-400), teacherToken: tpos0.chosen.token, teacherId: tpos0.chosen.id, top: tpos0.top });
+              // Surface the real teacher chunk in the Teacher-output panel AND
+              // feed it through the e-tokenizer (Etokens.json update) — the chunk
+              // and its top-k are the SAME data used to build the window.
+              teacherOutput.length = 0;
+              teacherOutput.push(...toks.slice(0, need));
+              if (tids.length && loadConfig()?.etokens?.live_update !== false) {
+                const etChunks = etokenize(tids.slice(0, need), Number(loadConfig()?.etokens?.chunk_size ?? loadConfig()?.model?.chunk_size ?? 4));
+                for (const ec of etChunks) {
+                  const r = putEtoken({ id: ec.id, tuple: ec.chunk, live: true, audit: `teacher-window@step${step}` });
+                  if (r.isNew) liveEtokStats.created++;
+                  liveEtokStats.e_tokenized++;
+                }
+                liveEtokStats.last_teacher_etokens = etChunks.map((ec) => ec.id);
+              }
+              // window built: need is now satisfied, so future passes won't rebuild
             }
           } catch (e) { /* keep partial window */ }
         } else if (skipTeacher) {
@@ -971,10 +1002,39 @@ async function run() {
       let teacherAdvance = [], teacherAdvanceIds = [];
       if (win && win.enabled) {
         // Loop on the fixed reference window: use the window's stored top-k as
-        // the teacher anchor (identical for every expert + the MTP head).
-        teacher = [];
+        // the teacher anchor (identical for every expert + the MTP head). The
+        // E-Token source is the SAME window chunk (`winRefIds` — the tokens the
+        // teacher generated to build the reference) with the SAME top-k data
+        // (`winRefTopK`) used for scoring. This chunk populates the Teacher-
+        // output panel and is e-tokenized live, so the E-token system updates
+        // from the identical token + top-k data instead of staying empty.
         const firstRef = winRefTopK && winRefTopK[0];
         tPos = { chosen: { token: firstRef?.token, id: firstRef?.id, logprob: 0 }, top: winRefTopK || [] };
+        teacher = [];
+        // The teacher's token chunk = the fixed reference window (same first N).
+        // Populate the Teacher-output panel from it (join the reference token ids
+        // renders their text via the window's top-k tokens).
+        if (winRefIds && winRefIds.length) {
+          const refToks = [];
+          for (const id of winRefIds) {
+            const hit = (winRefTopK || []).find((x) => String(x?.id) === String(id));
+            refToks.push(hit?.token != null ? hit.token : String(id));
+          }
+          teacherOutput.length = 0;
+          teacherOutput.push(...refToks);
+          // Feed the SAME window chunk through the e-tokenizer (Etokens.json
+          // update) — the "token generated chunk of the teacher" the e-tokenizer
+          // consumes, driven by the same tokens + top-k above.
+          if (winRefIds.length && loadConfig()?.etokens?.live_update !== false) {
+            const etChunks = etokenize(winRefIds, Number(loadConfig()?.etokens?.chunk_size ?? loadConfig()?.model?.chunk_size ?? 4));
+            for (const ec of etChunks) {
+              const r = putEtoken({ id: ec.id, tuple: ec.chunk, live: true, audit: `teacher-window@step${step}` });
+              if (r.isNew) liveEtokStats.created++;
+              liveEtokStats.e_tokenized++;
+            }
+            liveEtokStats.last_teacher_etokens = etChunks.map((ec) => ec.id);
+          }
+        }
       } else {
         // COMPARE MODE: identical settings + first-token-top-k-only analysis.
         // When compare.mode=='topk_first', request max_tokens=1 so we analyse
