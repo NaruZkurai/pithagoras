@@ -67,6 +67,7 @@ export function initMoeState(expertNames = ["E1","E2","E3","E4","E5"], layerCoun
   _moeState = {
     expertValues: Object.fromEntries(expertNames.map((n, i) => [n, 0.5 + 0.4 * noise01(i + 7)])),
     layerSizes: Array.from({ length: layerCount }, (_, i) => Math.round(100 + noise01(i + 31) * 400)),
+    noiseDeltas: Array.from({ length: layerCount }, () => 0), // bounded per-layer noise deltas
     topP: {},       // per-expert top-p summary (persisted)
     kl: {},         // per-expert KL (persisted)
     output: {},     // per-expert output signal history (persisted)
@@ -145,6 +146,9 @@ export function maybeResetMoeState() {
   // Clear per-token accumulators, keep per-expert keys.
   _moeState.topP = {}; _moeState.kl = {}; _moeState.output = {};
   _moeState.scores = Object.fromEntries(names.map((nm) => [nm, 0]));
+  _moeState.noiseDeltas = _moeState.noiseDeltas.map(() => 0);
+  _moeState.layerSizes = _moeState.layerSizes.map((v, i) =>
+    Math.max(10, Math.min(1000, Math.round(v)))); // clamp any corrupted size back to sane range
   _moeState.step = 0;
   _moeState.round += 1;
   console.log(`  >> MOE round reset: round ${_moeState.round} | survive ${topSurvive} | update losing ${losingCount} [${refreshed.join(",") || "none"}]`);
@@ -209,11 +213,19 @@ export function addLayerNoise(state, noise, layerCount = 5, tokenIdx = 0) {
   if (!_moeState) initMoeState(["E1","E2","E3","E4","E5"], layerCount);
   const nz = Number(noise) || 0;
   _moeState.noise += nz;
+  // Keep the per-layer NOISE DELTA bounded (each token nudges a layer by a small
+  // amount, clamped so it can never compound into astronomically large sizes).
+  // `noiseDeltas` is a SEPARATE small accumulator from `layerSizes` (the sizes).
+  while (_moeState.noiseDeltas.length < layerCount) _moeState.noiseDeltas.push(0);
+  _moeState.noiseDeltas = _moeState.noiseDeltas.map((d, i) =>
+    Math.max(-1, Math.min(1, d + nz * (noise01((+new Date()) + i * 131 + tokenIdx * 17) - 0.5) * 2))
+  );
+  // Layer sizes themselves stay in a sane range (no multiplicative blowup).
   _moeState.layerSizes = _moeState.layerSizes.map((v, i) =>
-    Math.max(10, v + nz * 40 * noise01((+new Date()) + i * 131 + tokenIdx * 17))
+    Math.max(10, Math.min(1000, v + _moeState.noiseDeltas[i] * 20))
   );
   _moeState.step += 1;
-  return { layers: _moeState.layerSizes.slice(), step: _moeState.step };
+  return { layers: _moeState.noiseDeltas.slice(), step: _moeState.step };
 }
 
 /**
@@ -297,13 +309,14 @@ export function routeExperts(topKTokens, layerNoise) {
   const kTop = Math.min(cfg.topk_route, rows.length);
   for (let i = 0; i < kTop; i++) rows[i].active = true;
 
-  // Layer sizes come from the PERSISTENT state (grown by noise each token),
-  // with a small per-step drift so they evolve instead of resetting.
+  // Layer sizes come from the PERSISTENT state (grown by a bounded per-token
+  // noise delta), with a small per-step drift so they evolve instead of
+  // exploding. noiseArr is the bounded noise-delta list (≈ -1..1).
   const noiseArr = layerNoise && Array.isArray(layerNoise.layers) ? layerNoise.layers : [];
   const perLayerSize = _moeState.layerSizes.map((v, li) => {
-    const bump = noiseArr[li] != null ? noiseArr[li] * 40 : 0;
-    const lv = Math.max(10, Math.round(v + bump + (noise01(seed + li + 40) - 0.5) * 8));
-    _moeState.layerSizes[li] = lv; // persist the grown size
+    const bump = noiseArr[li] != null ? Math.max(-40, Math.min(40, noiseArr[li] * 40)) : 0;
+    const lv = Math.max(10, Math.min(1000, Math.round(v + bump + (noise01(seed + li + 40) - 0.5) * 8)));
+    _moeState.layerSizes[li] = lv; // persist the grown (bounded) size
     return { layer: "L" + (li + 1), size: lv };
   });
 

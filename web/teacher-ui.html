@@ -95,8 +95,8 @@
         <div class="stat"><div class="label">500× gens</div><div id="s500" class="value good">0</div></div>
       </div>
     </div>
-    <div class="card">
-      <h2>MoE active experts (top-2) · layers</h2>
+    <div class="card" id="moeCard">
+      <h2>MoE active experts · layers</h2>
       <div id="moe" style="font-size:13px;"></div>
     </div>
     <div class="card">
@@ -328,8 +328,11 @@ function renderMoe(d) {
     `<div class="token-val">${l.size}</div><div style="font-size:10px;color:#8b949e;flex:1">Δ ${l.delta?.toFixed?.(5) ?? l.delta}</div></div>`
   ).join("");
   const nt = m.new_tokens || {};
+  const numActive = (m.active || []).length;
+  const hdr = document.querySelector("#moeCard h2") || document.querySelector("h2");
+  if (hdr) hdr.textContent = `MoE active experts (top-${numActive || m.num_experts || "?"}) · layers`;
   el.innerHTML =
-    `<div style="font-size:12px;color:#8b949e;margin-bottom:4px">experts on model: <b>${m.num_experts}</b> · top-2 active: <b>${(m.active||[]).join(", ")}</b> · layers used: <b>${m.layers_used}/${m.layers_total}</b> · Δ ${m.training_delta?.toFixed?.(5) ?? m.training_delta}</div>` +
+    `<div style="font-size:12px;color:#8b949e;margin-bottom:4px">experts on model: <b>${m.num_experts}</b> · active: <b>${(m.active||[]).join(", ")}</b> · layers used: <b>${m.layers_used}/${m.layers_total}</b> · Δ ${m.training_delta?.toFixed?.(5) ?? m.training_delta}</div>` +
     `<div style="font-size:12px;margin-bottom:4px">new tokens: teacher «${nt.teacher_anchor}» → [${(nt.teacher||[]).join(" ")}] · compressed⨯${nt.compressed}</div>` +
     `<div style="font-size:12px;margin-bottom:4px">expert top-k values:</div>` + rows +
     (layers ? `<div style="font-size:12px;margin-top:6px">layer sizes (training Δ):</div>` + layers : "") +
