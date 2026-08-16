@@ -822,7 +822,17 @@
     "steps_per_round": 5,
     "rounds_before_reset": 3,
     "note": "steps_per_round * rounds_before_reset decide round reset cadence. pause_every_n_steps>0 auto-pauses the harness every N training steps (0 = never). Each auto-pause re-seeds the prompt as the default input.",
-    "pause_every_n_steps": 8
+    "pause_every_n_steps": 0
+  },
+  "windowing": {
+    "enabled": true,
+    "loop_same_window": true,
+    "start_tokens": 8,
+    "tokens_per_round_growth": 1,
+    "rounds_per_tier": 5,
+    "max_tokens": 2000,
+    "identity_tolerance": 0.95,
+    "note": "LOOP-AND-INCREMENT training: all experts + MTP share the SAME teacher top-k over a fixed window of the first N tokens (not continuous forward streaming). Loop on those N tokens until the student output equals the teacher output within identity_tolerance (± offset), so additional layers fight to become token-COMPRESSION layers (compressed chunk == a more compact token set reproducing the same top-k). Then increment N: 5 rounds of 8 tokens, 5 of 9, ... until 2000 tokens."
   },
   "expert_policy": {
     "top_n_survive": 10,

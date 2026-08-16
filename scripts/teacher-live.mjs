@@ -171,6 +171,38 @@ let PROMPT =
 let promptChanged = false; // set true by a /prompt POST to reseed shared next step
 let paused = false;        // true = skip training steps (UI keeps serving)
 
+// ---- LOOP-AND-INCREMENT windowing (user spec) ----
+// "each of the experts and mtp's must have identical top k's while training,
+//  sooo loop on the same first n tokens not just continuous tokens, gradually
+//  increment the tokens emitted until the text output and source layers are
+//  identical ± offset and additional layers fight to become the new token
+//  compressor layers. ensure the increase includes effectively identical top k
+//  (bc compressed chunks == formulaic tokens). do 5 rounds of 8n then 5 of 9n
+//  until 2000 out."
+// We build the tier schedule once from config: 5 rounds at 8 tokens, 5 at 9, ...
+// until max_tokens (2000). Within a tier we loop on the SAME first-N-window of
+// teacher reference tokens (all experts + MTP share that window's teacher top-k).
+function windowSchedule() {
+  const w = loadConfig()?.windowing || {};
+  if (!w.enabled) return null;
+  const start = Math.max(1, Number(w.start_tokens ?? 8));
+  const step = Math.max(1, Number(w.tokens_per_round_growth ?? 1));
+  const roundsPerTier = Math.max(1, Number(w.rounds_per_tier ?? 5));
+  const maxT = Math.max(start, Number(w.max_tokens ?? 2000));
+  const tiers = [];
+  let n = start;
+  while (n <= maxT) {
+    tiers.push({ tokens: n, rounds: roundsPerTier });
+    n += step;
+  }
+  return {
+    enabled: true,
+    tiers,
+    identityTolerance: Number(w.identity_tolerance ?? 0.95),
+    loopSameWindow: w.loop_same_window !== false,
+  };
+}
+
 // Token used to denote the 5-token compression footprint (e.g. token 999993
 // == the token ids 9,4,3,200,2). We treat "compressed token == sum of its
 // constituent token ids" as the signature the 500x detector looks for.
@@ -499,6 +531,19 @@ async function run() {
   const recent = [];
   const alwaysRun = _steps === 0;
 
+  // ---- LOOP-AND-INCREMENT windowing state ----
+  // When enabled, training loops on a FIXED reference window of the first N
+  // teacher tokens (not continuous forward streaming). All experts + MTP share
+  // that window's teacher top-k. After `rounds_per_tier` steps at tier N, N is
+  // incremented (5 rounds at 8, 5 at 9, ...) until max_tokens (2000).
+  const win = windowSchedule();
+  let winTierIdx = 0;        // index into win.tiers
+  let winStepInTier = 0;     // steps completed within the current tier
+  let winRefIds = [];        // fixed reference window (teacher token ids)
+  let winRefTopK = null;     // teacher top-k over the reference window (shared by all)
+  let winSeq = 0;            // sequence number (for the payload)
+  const curWindowTier = () => win && win.tiers ? win.tiers[Math.min(winTierIdx, win.tiers.length - 1)] : null;
+
   while (!ended && (alwaysRun || step < _steps)) {
     // Live prompt change (from /prompt POST): reseed the shared prompt, clear
     // the teacher's accumulated output, and reset the step counter so the new
@@ -542,34 +587,81 @@ async function run() {
       console.log(`  >> auto-pause at step ${step} (every ${pauseEvery}); prompt re-seeded to base`);
       await new Promise((r) => setTimeout(r, 200));
     }
+    // ---- LOOP-AND-INCREMENT: advance the window tier when the current tier's
+    //      rounds are done, then (re)build the fixed teacher reference window. ---
     let stepRec = { step, ts: Date.now() };
-    // Function-scope fallback accumulators so the step catch handler never
-    // throws "identifier is not defined" when a request fails partway through.
+    if (win && win.enabled) {
+      const tier = curWindowTier();
+      if (tier && winStepInTier >= tier.rounds) {
+        winTierIdx = Math.min(winTierIdx + 1, win.tiers.length - 1);
+        winStepInTier = 0;
+        winRefIds = [];
+        winRefTopK = null;
+        console.log(`  >> window tier -> ${curWindowTier().tokens} tokens (tier ${winTierIdx}+1/${win.tiers.length})`);
+      }
+      // Establish the fixed reference window this tier: ensure the base prompt
+      // is seeded (loop on the same first N source tokens), and (only once per
+      // tier) capture the teacher's first `tier.tokens` reference tokens + their
+      // top-k as the shared target for ALL experts and the MTP head.
+      if (sharedIds.length === 0) {
+        try { sharedIds = await tokenizeShared(PROMPT); } catch (e) { sharedIds = []; }
+        teacherOutput.length = 0;
+      }
+      if (!winRefTopK || winRefIds.length < (tier.tokens || 1)) {
+        // Not built or stale -> (re)generate the reference window from the base.
+        const baseLen = Math.max(1, (tier.tokens || 8));
+        const need = baseLen - winRefIds.length;
+        if (need > 0) {
+          try {
+            // Advance teacher from the CURRENT base prompt to fill `need` tokens.
+            const tch = await profileRetry(TEACHER_URL, sharedIds, Math.min(need, TEACHER_BATCH), "teacher");
+            const tpos0 = tch[0];
+            if (tpos0 && tpos0.chosen.token !== undefined) {
+              winRefTopK = tpos0.top || [];                    // shared across all experts + MTP
+              const tids = tch.map((x) => x.chosen.id).filter((v) => Number.isFinite(v));
+              // LOOP: extend the reference by feeding the teacher its own output
+              // only within the window budget (fixed first-N, no unbounded growth).
+              winRefIds.push(...tids.slice(0, need));
+              saveTopKCurve({ step, promptCtx: PROMPT.slice(-400), teacherToken: tpos0.chosen.token, teacherId: tpos0.chosen.id, top: tpos0.top });
+            }
+          } catch (e) { /* keep partial window */ }
+        }
+        if (winRefIds.length === 0) winRefIds = [2413]; // guard
+      }
+      winSeq++;
+      stepRec.window = { tier: curWindowTier().tokens, idx: winTierIdx + 1, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, topk_size: (winRefTopK || []).length };
+    }
     let _b = 0, _bP = 0, _bE = 0, _cP = 0, _cmp = 0;
     try {
-      // Teacher (27B) advances the shared prompt. We send the prompt as RAW
-      // TOKEN IDS (direct token input) so the server continues from the exact
-      // emit state instead of re-tokenizing a growing text prompt — this avoids
-      // the re-tokenization drift and server strain that caused degenerate runs.
-      const teacher = await profileRetry(TEACHER_URL, sharedIds, TEACHER_BATCH, "teacher");
-      const tPos = teacher[0];
-      if (!tPos || tPos.chosen.token === undefined) { stepRec.note = "teacher empty"; ended = true; break; }
+      // Teacher (27B) advances the shared prompt. In windowing mode we LOOP on
+      // the same fixed window (sharedIds already holds it); otherwise continuous.
+      let teacher, tPos;
+      let teacherAdvance = [], teacherAdvanceIds = [];
+      if (win && win.enabled) {
+        // Loop on the fixed reference window: use the window's stored top-k as
+        // the teacher anchor (identical for every expert + the MTP head).
+        teacher = [];
+        const firstRef = winRefTopK && winRefTopK[0];
+        tPos = { chosen: { token: firstRef?.token, id: firstRef?.id, logprob: 0 }, top: winRefTopK || [] };
+      } else {
+        teacher = await profileRetry(TEACHER_URL, sharedIds, TEACHER_BATCH, "teacher");
+        tPos = teacher[0];
+      }
       const teacherToken = tPos.chosen.token;
-      // Record this teacher token's full top-k curve to the reference dataset
-      // (the "top-k curve" the student is trained to reproduce).
-      saveTopKCurve({
-        step,
-        promptCtx: shared.slice(-400),
-        teacherToken,
-        teacherId: tPos.chosen.id,
-        top: tPos.top,
-      });
-      const teacherAdvance = teacher.map((x) => x.chosen.token).filter((t) => t !== undefined);
-      // Track BOTH the token ids (direct input) and the text tokens (display).
-      const teacherAdvanceIds = teacher.map((x) => x.chosen.id).filter((v) => Number.isFinite(v));
-      if (teacherAdvanceIds.length) sharedIds.push(...teacherAdvanceIds);
-      shared += " " + teacherAdvance.join(" ");
-      teacherOutput.push(...teacherAdvance); // accumulate teacher's output tokens
+      if (tPos.chosen.token === undefined) { stepRec.note = "teacher empty"; ended = true; break; }
+      // In windowing mode, do NOT keep appending the teacher's advancing output
+      // to the shared prompt — that would break the "loop on the same first N".
+      if (!(win && win.enabled)) {
+        saveTopKCurve({ step, promptCtx: shared.slice(-400), teacherToken, teacherId: tPos.chosen.id, top: tPos.top });
+        teacherAdvance = teacher.map((x) => x.chosen.token).filter((t) => t !== undefined);
+        teacherAdvanceIds = teacher.map((x) => x.chosen.id).filter((v) => Number.isFinite(v));
+        if (teacherAdvanceIds.length) sharedIds.push(...teacherAdvanceIds);
+        shared += " " + teacherAdvance.join(" ");
+        teacherOutput.push(...teacherAdvance);
+      } else {
+        // Keep scoring the SAME window top-k (already captured above).
+        stepRec.window = { ...(stepRec.window || {}), teacher_token: teacherToken };
+      }
 
       // ---- TEACHER DEGENERACY GUARD ----
       // 1-bit (Q1_0) teachers fall into repetitive symbol runs ("***", "---").
@@ -931,6 +1023,22 @@ async function run() {
     recent.push(stepRec);
     if (recent.length > 60) recent.shift();
 
+    // LOOP-AND-INCREMENT: mark this step done within the current window tier.
+    // Advance the tier after `rounds_per_tier` steps OR when the student output
+    // already matches the teacher window within identity_tolerance (so tiers can
+    // graduate early once the student "compresses" the window to identical top-k).
+    if (win && win.enabled) {
+      winStepInTier++;
+      const tier = curWindowTier();
+      const tol = win.identityTolerance;
+      const overlap = stepRec.score_breakdown?.curve_overlap ?? 0;
+      const graduated = overlap >= tol;
+      if (tier && (winStepInTier >= tier.rounds || graduated)) {
+        if (graduated) console.log(`  >> window tier ${tier.tokens}: student matched teacher top-k (${overlap.toFixed(3)} >= ${tol}) — graduating early`);
+        winStepInTier = tier.rounds; // force the advance next step
+      }
+    }
+
     // Publish for the UI.
     latest = {
       mode: "teacher-anchored live",
@@ -949,6 +1057,7 @@ async function run() {
       num_experts: stepRec.moe?.num_experts ?? loadConfig()?.moe?.num_experts ?? 5,
       layers_total: stepRec.moe?.layers_total ?? loadConfig()?.layers?.count ?? 5,
       pause_every_n_steps: Number(loadConfig()?.training?.pause_every_n_steps ?? 0),
+      windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000 } : undefined,
       // PER-EXPERT scored/training detail (surfaced so the UI shows EVERY expert
       // getting a value/delta, not just the active top-k). Pulls from the moe
       // object built during the step.
