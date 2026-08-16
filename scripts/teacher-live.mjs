@@ -307,7 +307,10 @@ async function run() {
           role: r.role,
           mutation: r.mutation,
           weight: Number(r.topk_weight) || 0,
-          score: Number((sc.totalGain * ((Number(r.topk_weight) || 0) / wSum)).toFixed(4)),
+          // Score is the per-token points BEFORE the expert was updated this
+          // step (base+baseP+baseEm), attributed by top-k weight, so the Σ
+          // experts == total (which resets every token).
+          score: Number(((base + baseP + baseEm) * ((Number(r.topk_weight) || 0) / wSum)).toFixed(4)),
         }));
         // Surface full detail: each expert's top-k value, active flag, size,
         // layers used, num experts, per-layer training deltas, and the new
@@ -357,14 +360,19 @@ async function run() {
         score_breakdown: { topk: base, tpp: baseP, teacher_emit: baseEm, inK: overInK, inP: overInP, inEm: overInEm },
         penalty: sc ? sc.penalty : 0,
         step_gain: sc ? sc.totalGain : 0,
+        // Per-step points BEFORE the expert/layer gets updated this token.
+        // This RESETS every single token (step) — it does NOT accumulate.
+        step_points: base + baseP + baseEm,
         base_score_total: baseScoreTotal,
         bonus_total: bonusTotal,
-        total_score: baseScoreTotal + bonusTotal,
+        total_score: base + baseP + baseEm,
       };
     } catch (e) {
       stepRec.error = String((e && e.message) || e) || "unknown step error";
       console.error("  !! step error:", (e && e.message) || e, e);
-      stepRec.total_score = baseScoreTotal + bonusTotal;
+      const sp = (Number(base) || 0) + (Number(baseP) || 0) + (Number(baseEm) || 0);
+      stepRec.total_score = sp;
+      stepRec.step_points = sp;
     }
 
     recent.push(stepRec);
@@ -378,8 +386,9 @@ async function run() {
       emit: { teacher: emitFor("teacher"), student: emitFor("student") },
       noise_to_layer: noiseToLayer(),
       student_step_tokens: STUDENT_STEP,
-      step, base_score: baseScoreTotal, bonus_score: bonusTotal,
-      total_score: baseScoreTotal + bonusTotal,
+      step, base_score: stepRec.step_points ?? 0, bonus_score: bonusTotal,
+      // total = this token's points BEFORE the expert was updated; resets each token.
+      total_score: stepRec.step_points ?? 0,
       "500x_generations": fives,
       num_experts: stepRec.moe?.num_experts ?? loadConfig()?.moe?.num_experts ?? 5,
       layers_total: stepRec.moe?.layers_total ?? loadConfig()?.layers?.count ?? 5,
