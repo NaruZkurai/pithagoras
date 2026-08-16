@@ -44,6 +44,24 @@ The browser never drives the agent. Submitting a prompt returns as soon as pi *a
 the run continues server-side. The client reconnects with the last event id it saw
 (`?since=`), so nothing is lost and nothing is duplicated.
 
+## Model training — base teacher
+
+> **The base teacher is always `Ternary-Bonsai-27B-MTP-TQ2_0.gguf` — for now,
+> unless specified elsewhere.**
+
+```
+/run/media/naruzkurai/Win-ntfs/Ternary-Bonsai-27B-MTP-TQ2_0.gguf
+```
+
+- This true-ternary (TQ2_0) 27B model with an MTP head is the reference the
+  student (the TQ1_0 30B MoE on `:6466`) is trained against. Serve it on the
+  teacher port (`:41001`) with the repo's own fork build:
+  `./gitrepos/llama-direct-token-input/build/bin/llama-server`.
+- It is the default authority unless a different model is explicitly named
+  elsewhere (config, docs, or a run-specific note).
+- The E-token compression system (`data/Etokens.json`) and the new-3B experts
+  are all anchored to this teacher's token chunks + top-k.
+
 ## Execution modes
 
 | `EXECUTOR` | What it does |
