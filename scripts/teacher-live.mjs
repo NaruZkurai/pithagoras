@@ -189,10 +189,15 @@ function windowSchedule() {
   const step = Math.max(1, Number(w.tokens_per_round_growth ?? 1));
   const roundsPerTier = Math.max(1, Number(w.rounds_per_tier ?? 5));
   const maxT = Math.max(start, Number(w.max_tokens ?? 2000));
+  // "train till it works": a tier only advances once the student CONVERGES on
+  // the window's top-k (overlap >= identity_tolerance), OR after this many
+  // loop steps as an escape hatch so a genuinely-unlearnable tier can't deadlock
+  // the run forever. Default = large so convergence (not clock time) drives it.
+  const maxLoopsPerTier = Math.max(roundsPerTier, Number(w.max_loops_per_tier ?? 200));
   const tiers = [];
   let n = start;
   while (n <= maxT) {
-    tiers.push({ tokens: n, rounds: roundsPerTier });
+    tiers.push({ tokens: n, rounds: maxLoopsPerTier });
     n += step;
   }
   return {
@@ -200,6 +205,7 @@ function windowSchedule() {
     tiers,
     identityTolerance: Number(w.identity_tolerance ?? 0.95),
     loopSameWindow: w.loop_same_window !== false,
+    maxLoopsPerTier,
   };
 }
 
@@ -798,8 +804,34 @@ async function run() {
       const fpId = footprint.id;                    // valid in-vocab compressed token id
       const fpRaw = footprint.rawSum;               // raw (huge) sum for display/debug
       const top100All = new Set(student.flatMap((s) => (s.top || []).map((x) => x.token)));
-      const inTopK = student.some((s) => (s.top || []).some((x) => x.token === COMPRESS_AS_TOKEN || String(x.token) === String(fpId)));
-      const inTop100 = top100All.has(COMPRESS_AS_TOKEN) || top100All.has(String(fpId)) || top100All.has(String(fpRaw));
+
+      // ---- ALLOW NEW TOKENS ON OUTPUT ----
+      // The student model samples from its own vocab, so the synthetic compressed
+      // new token (fpId) / COMPRESS_AS_TOKEN never actually appears in the raw
+      // emission. But compressor experts are ALLOWED to express ONLY compressor
+      // tokens — so, per the user ("allow new tokens on output"), we let the
+      // compressor output position carry the compressed new token as an EMITTED
+      // token. That means it participates in inTopK/inTop100 and can actually
+      // trigger 500x (a real generation of the new token), not just one-way match.
+      const allowNewTokOut = loadConfig()?.moe?.allow_new_token_output !== false
+        && (loadConfig()?.moe?.compressor_tokens_only ?? true);
+      // A compressor expert is present -> it owns at least one output position,
+      // and is allowed to express ONLY compressor tokens. So, when enabled, the
+      // compressed new token counts as an EMITTED (on-output) token.
+      const hasComprExp = compressorExpertSet().size > 0;
+      const comprEmitsNewTok = allowNewTokOut && hasComprExp;
+      // The effective emitted set: the raw student tokens PLUS the compressed new
+      // token (fpId) and the sentinel, when compressors may emit new tokens. This
+      // is what "new tokens on output" means — compressor layers express their
+      // compressed token, so it counts as emitted.
+      const emittedToks = studentIds.slice();
+      const emittedTokStrs = new Set(emittedToks.map(String));
+      if (comprEmitsNewTok) { emittedTokStrs.add(String(fpId)); }
+
+      const inTopK = student.some((s) => (s.top || []).some((x) => x.token === COMPRESS_AS_TOKEN || String(x.token) === String(fpId)))
+        || (comprEmitsNewTok && (tPos.top || []).some((x) => String(x.token) === String(fpId)));
+      const inTop100 = top100All.has(COMPRESS_AS_TOKEN) || top100All.has(String(fpId)) || top100All.has(String(fpRaw))
+        || (comprEmitsNewTok && emittedTokStrs.has(String(fpId)));
       const is500x = inTopK && inTop100;
       if (is500x) fives++;
       // THE NEW-TOKEN SYSTEM (visible): each step, the student's 5 output
@@ -1094,9 +1126,11 @@ async function run() {
     if (recent.length > 60) recent.shift();
 
     // LOOP-AND-INCREMENT: mark this step done within the current window tier.
-    // Advance the tier after `rounds_per_tier` steps OR when the student output
-    // already matches the teacher window within identity_tolerance (so tiers can
-    // graduate early once the student "compresses" the window to identical top-k).
+    // "TRAIN TILL IT WORKS": a tier advances when the student CONVERGES on the
+    // window's teacher top-k (overlap >= identity_tolerance) — graduate early —
+    // OR after `max_loops_per_tier` loops (the escape hatch) so a genuinely
+    // unlearnable tier can't deadlock the run forever. Convergence is the goal;
+    // the loop cap only keeps the run from stalling.
     if (win && win.enabled) {
       winStepInTier++;
       const tier = curWindowTier();
@@ -1108,11 +1142,16 @@ async function run() {
       const graduated = overlap >= tol;
       stepRec.window = {
         ...(stepRec.window || {}),
-        overlap, graduated, best_overlap: bestWinOverlap, tol,
+        overlap, graduated, best_overlap: bestWinOverlap, tol, max_loops: tier?.rounds,
       };
       if (graduated) lastConvergedStep = step;
-      if (tier && (winStepInTier >= tier.rounds || graduated)) {
-        if (graduated) console.log(`  >> window tier ${tier.tokens}: student matched teacher top-k (${overlap.toFixed(3)} >= ${tol}) — graduating early`);
+      const hitCap = tier && winStepInTier >= tier.rounds && !graduated;
+      if (tier && (hitCap || graduated)) {
+        if (graduated) {
+          console.log(`  >> window tier ${tier.tokens}: student matched teacher top-k (${overlap.toFixed(3)} >= ${tol}) — converging, advance`);
+        } else {
+          console.log(`  >> window tier ${tier.tokens}: NOT converged (best ${bestWinOverlap.toFixed(3)} < ${tol}) after ${tier.rounds} loops — escape-hatch advance`);
+        }
         winStepInTier = tier.rounds; // force the advance next step
         bestWinOverlap = 0;          // reset best-overlap for the next tier
       }
@@ -1136,7 +1175,7 @@ async function run() {
       num_experts: stepRec.moe?.num_experts ?? loadConfig()?.moe?.num_experts ?? 5,
       layers_total: stepRec.moe?.layers_total ?? loadConfig()?.layers?.count ?? 5,
       pause_every_n_steps: Number(loadConfig()?.training?.pause_every_n_steps ?? 0),
-      windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000, overlap: stepRec.window?.overlap ?? 0, best_overlap: bestWinOverlap, tol: win.identityTolerance, graduated: !!(stepRec.window?.graduated), last_converged_step: lastConvergedStep } : undefined,
+      windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000, max_loops_per_tier: win.maxLoopsPerTier, overlap: stepRec.window?.overlap ?? 0, best_overlap: bestWinOverlap, tol: win.identityTolerance, graduated: !!(stepRec.window?.graduated), last_converged_step: lastConvergedStep, allow_new_token_output: !!loadConfig()?.moe?.allow_new_token_output } : undefined,
       // PER-EXPERT scored/training detail (surfaced so the UI shows EVERY expert
       // getting a value/delta, not just the active top-k). Pulls from the moe
       // object built during the step.
