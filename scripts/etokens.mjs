@@ -173,6 +173,119 @@ export function etokenTernaryBarrel(eId, size = 32) {
   return vec;
 }
 
+/* --------------------------------------------------------------------------
+ * 1-BIT KV COMPRESSION FLAG (the user's kv-compression identifier)
+ *
+ * "cant we just assign a 1bit identifier to the token's kv on compressed or
+ *  not? like not compressed = -1/0 compressed = 1. leading value => compression
+ *  algo => kv space savings?"
+ *
+ * Each token's KV value is a fixed-width TERNARY barrel {-1,0,+1} (true-ternary
+ * space). The LEADING value (barrel[0]) is the 1-BIT compression identifier:
+ *
+ *     leading = +1   -> COMPRESSED: this kv is an e-token handle; the
+ *                       compression algorithm reads the rest of the barrel and
+ *                       decompresses it back to the ORIGINAL token tuple via
+ *                       the recallable etoken(e1) table.
+ *     leading = -1/0 -> NOT compressed: the kv is the raw token; there is no
+ *                       etoken to expand (no tuple savings).
+ *
+ * So the compression ALGO branches on the leading bit: if 1 it decompresses
+ * (kv holds a compact etoken handle instead of the full tuple => KV-SPACE
+ * SAVINGS); if <=0 it treats the kv as the raw token. The savings number =
+ * how much kv space the compression reclaims relative to the uncompressed form.
+ * ------------------------------------------------------------------------ */
+
+/** The 1-bit compression identifier: +1 = compressed, 0 = not compressed. */
+export function kvCompressionFlag(compressed) {
+  return compressed ? 1 : 0; // "not compressed = -1/0, compressed = 1"
+}
+
+/**
+ * Build a token's KV BARREL with the LEADING-VALUE compression flag.
+ * A fixed-width ternary vector (true-ternary space) whose FIRST element is the
+ * 1-bit compression identifier and the remainder carries the value:
+ *   - compressed=true : barrel[0]=+1, the rest derive from the etoken id
+ *     (a compact handle that decompresses to the full tuple -> kv-space savings).
+ *   - compressed=false: barrel[0]=0 (or -1), the rest IS the token's own
+ *     ternary value (uncompressed — no savings).
+ * `rawTokenId` is the token whose kv we are tagging. Returns the barrel.
+ */
+export function kvBarrel(rawTokenId, { compressed = false, width = 32, etokenId = null } = {}) {
+  const n = Math.max(2, Math.floor(Number(width) || 32));
+  const base = Number(etokenId != null ? etokenId : rawTokenId);
+  const index = (base - ETOKEN_BASE()) % ETOKEN_COUNT();
+  const barrel = new Array(n);
+  barrel[0] = kvCompressionFlag(compressed); // THE 1-BIT LEADING COMPRESSION FLAG
+  if (compressed) {
+    // Encode the etoken's low INDEX positionally in base-3 (digits -1|0|+1 ->
+    // 0|1|2) across the barrel, so the compression algo can DECODE the exact
+    // etoken handle and decompress it. This makes the flag -> handle = exact.
+    let rem = index;
+    for (let i = 1; i < n; i++) {
+      const d = rem % 3;           // 0|1|2
+      barrel[i] = d === 0 ? -1 : (d === 1 ? 0 : 1); // map to {-1,0,+1}
+      rem = Math.floor(rem / 3);
+    }
+  } else {
+    // Not compressed: the rest of the barrel carries the token's OWN value
+    // digits (stable hash), no etoken handle, no savings.
+    for (let i = 1; i < n; i++) barrel[i] = ternDigit(base, i);
+  }
+  return barrel;
+}
+
+/**
+ * THE COMPRESSION ALGORITHM. Reads the LEADING value of a kv barrel to decide
+ * whether the token's kv is compressed, then (if compressed) decompresses the
+ * etoken handle back to its ORIGINAL token tuple using the recallable
+ * etoken(e1) table. Returns { compressed, decoded, tuple, label }.
+ */
+export function kvCompressionAlgo(barrel) {
+  if (!Array.isArray(barrel) || !barrel.length) return { compressed: false, decoded: [] };
+  const lead = Number(barrel[0]);
+  const compressed = lead === 1; // only +1 means compressed
+  // Decode the etoken handle from the remaining digits (ternary mash) so we can
+  // look it up: rebuild the deterministic etoken id (base + index).
+  let eId = null;
+  if (compressed) {
+    // The rest of the barrel (digits 1..) positionally holds the etoken's low
+    // index in base-3 (LSD first, matching kvBarrel): -1|0|+1 -> 0|1|2. Walk
+    // from the LEAST-significant place (barrel[1]) up, exactly as the encoder
+    // wrote it, so the exact etoken handle is recovered for decompression.
+    let pow = 1;
+    let idx = 0;
+    for (let i = 1; i < barrel.length && pow < ETOKEN_COUNT(); i++) {
+      const d = Number(barrel[i]);       // -1|0|+1
+      idx += (d + 1) * pow;              // -> 0|1|2 at place pow
+      pow *= 3;
+    }
+    eId = ETOKEN_BASE() + (idx % ETOKEN_COUNT());
+    const t = etoken(eId);
+    return { compressed: true, decoded: t ? t.slice() : [], tuple: t ? t.slice() : [], eId };
+  }
+  return { compressed: false, decoded: [], eId };
+}
+
+/**
+ * KV-SPACE SAVINGS of compressing a token's kv into an etoken handle.
+ *   - uncompressedBytes = kv size of the RAW token span (its tuple per element).
+ *   - compressedBytes   = kv size of holding ONE etoken handle (compact).
+ *   - savingsRatio      = 1 - compressed/uncompressed (>=0 means we saved space).
+ * Returns { savingsRatio, uncompressedBytes, compressedBytes, tokensSaved }.
+ */
+export function kvSpaceSaving(rawTokenIds, etokenId = null, bytesPerElement = 2) {
+  const tuple = effectiveTuple(rawTokenIds);
+  const nRaw = tuple.length || 1;
+  const uncompressedBytes = nRaw;                 // 1 element per original token
+  const compressedBytes = etokenId != null ? 1 : nRaw; // 1 handle if etokenized
+  const savingsRatio = uncompressedBytes > 0
+    ? Math.max(0, 1 - compressedBytes / uncompressedBytes)
+    : 0;
+  return { savingsRatio, uncompressedBytes, compressedBytes, tokensSaved: nRaw - compressedBytes };
+}
+
+
 /**
  * Store the ternary value onto a recorded etoken (idempotent): persists
  * `ternary` (the true-ternary signature of the tuple) in Etokens.json so the

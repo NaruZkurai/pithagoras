@@ -34,7 +34,7 @@ import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, 
 // recallable etoken(e1) function stored in data/Etokens.json, the e-tokenizer
 // (touple), the base build from the pre-tokenized token DB, and the
 // disqualification / repeat-train-top-k helpers used in the scoring loop.
-import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, putEtoken, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT, etokenTernaryOf, etokenTernaryBarrel } from "./etokens.mjs";
+import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, putEtoken, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT, etokenTernaryOf, etokenTernaryBarrel, kvBarrel, kvCompressionAlgo, kvCompressionFlag, kvSpaceSaving } from "./etokens.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -1726,14 +1726,18 @@ async function run() {
           has_ternary: !!(getEtokens()?.ternary && Object.keys(getEtokens().ternary).length),
         } : null,
         last_teacher_etokens: liveEtokStats.last_teacher_etokens || [],
-        // The current etoken's TRUE-TERNARY VALUE (the compressed value stored
-        // in ternary space) + a fixed-size ternary barrel the experts can hold.
-        current_ternary: (typeof lastFpId === "number" && etokenTernaryOf(lastFpId)) ? {
+        // The current etoken's TRUE-TERNARY / 1-BIT KV value: the leading value
+        // (1 = compressed, -1/0 = not) branches the compression algorithm for
+        // kv-space savings, and decompresses the exact etoken tuple.
+        current_ternary: (typeof lastFpId === "number") ? {
           etoken: lastFpId,
           tuple: etoken(lastFpId) || [],
           ternary: etokenTernaryOf(lastFpId),
-          barrel: etokenTernaryBarrel(lastFpId, 16),
-          note: "true-ternary value of the current teacher e-token: each original token maps to {-1,0,+1}; the barrel is the fixed-shape ternary signature experts hold.",
+          kv_flag: kvCompressionFlag(true),          // 1 = this kv is compressed
+          kv_barrel: kvBarrel(lastFpId, { compressed: true, etokenId: lastFpId, width: 16 }),
+          kv_savings: kvSpaceSaving(etoken(lastFpId) || [], lastFpId),
+          algo: kvCompressionAlgo(kvBarrel(lastFpId, { compressed: true, etokenId: lastFpId, width: 16 })),
+          note: "1-bit kv identifier: leading value 1 = compressed (algorithm decompresses the etoken handle); -1/0 = not compressed. Compressed handles reclaim kv space (tokensSaved = savings).",
         } : null,
       },
       // Teacher: the total prompt + accumulated output tokens.
