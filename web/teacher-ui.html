@@ -14,9 +14,11 @@
   .status { font-size:12px; color:var(--dim); padding:4px 10px; border:1px solid var(--line); border-radius:20px; }
   .status.live { color:var(--good); border-color:var(--good); }
   .status.offline { color:var(--warn); border-color:var(--warn); }
-  .wrap { padding:18px 20px; display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:16px; }
-  @media (max-width: 900px){ .wrap{ grid-template-columns:1fr; } }
-  .moe-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .wrap { padding:18px 20px; display:flex; gap:16px; align-items:flex-start; }
+  .wrap > div { flex:1 1 0; min-width:0; display:grid; gap:16px; align-content:start; }
+  .wrap > div:first-child { flex:1.35 1 0; max-width:66vw; }
+  @media (max-width: 900px){ .wrap{ flex-direction:column; } .wrap > div:first-child{ flex:1 1 auto; max-width:none; } }
+  .moe-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:start; }
   @media (max-width: 1100px){ .moe-row{ grid-template-columns:1fr; } }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
   .card h2 { margin:0 0 12px; font-size:14px; color:var(--dim); font-weight:600; text-transform:uppercase; letter-spacing:.04em;}
@@ -112,11 +114,11 @@
     <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px;" class="moe-row">
       <div class="card" id="moeCard">
         <h2>MoE active experts · layers</h2>
-        <div id="moe" style="font-size:13px;"></div>
+        <div id="moe" style="font-size:13px; max-height:430px; overflow-y:auto;"></div>
       </div>
       <div class="card">
         <h2>Score by expert (each its own color)</h2>
-        <div id="expertScores" style="display:grid; gap:8px;"></div>
+        <div id="expertScores" style="display:grid; gap:8px; max-height:430px; overflow-y:auto;"></div>
       </div>
     </div>
     <div class="card">
