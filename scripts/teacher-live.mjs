@@ -110,6 +110,18 @@ function emitFor(who) { // {top_k, top_p, temperature} for teacher|student
     temperature: Number(s.temperature ?? 0.7),
   };
 }
+// COMPARE MODE (user directive): for the teacher/student top-k comparison, do
+// NOT generate new tokens — analyse the top-k of the FIRST token only, at
+// IDENTICAL settings for both. mode='topk_first' -> request max_tokens=1 (the
+// logprobs still return the full next-token top-k). identical_settings=true ->
+// both teacher and student use the SAME scoring.compare top_k/top_p/temperature.
+const compareCfg = () => loadConfig()?.scoring?.compare || {};
+const compareFirstOnly = () => (compareCfg().mode || "topk_first") === "topk_first";
+const identicalEmit = () => {
+  const c = compareCfg();
+  return { top_k: Math.min(100, Number(c.top_k ?? 20)), top_p: Number(c.top_p ?? 0.95), temperature: Number(c.temperature ?? 0.7) };
+};
+const compareN = () => compareFirstOnly() ? 1 : Number(SAMPLING().emit?.student?.top_k ?? 20); // tokens to generate
 const noiseToLayer = () => Number(SAMPLING().noise_to_layer ?? 0.05);
 const STUDENT_STEP = Number(process.env.STUDENT_STEP || 5);
 // The STUDENT model runs with a small context (-c 16384). It also has a SMALLER
@@ -319,8 +331,11 @@ const _steps = flag("steps", STEPS);
  *  (logprobs=N) but only EMITS from the top-k / top-p of the given role
  *  (teacher/student) — which also keeps the teacher coherent.
  *  `who` selects the live sampling.emit.<who> values from config. */
-async function profile(url, prompt, n, who = "teacher", logitBias = null) {
-  const { top_k, top_p, temperature } = emitFor(who);
+async function profile(url, prompt, n, who = "teacher", logitBias = null, settings = null) {
+  // If explicit `settings` ({top_k, top_p, temperature}) are given, use them for
+  // BOTH teacher and student — the "identical settings" comparison mode. Else
+  // fall back to each role's own emit settings.
+  const { top_k, top_p, temperature } = settings || emitFor(who);
   // `prompt` may be a STRING (plain text) or a NUMBER ARRAY (raw token ids —
   // direct token input). The direct-token fork's /v1/completions accepts both.
   // `logitBias` (optional, student-only): { tokenIdString: additiveBias } used
@@ -381,11 +396,11 @@ function tokenizeShared(text) {
  * box) so a single flaky call never corrupts a whole step into {error}. Gives
  * up after ~3 tries over ~6s; the caller then skips the step cleanly.
  */
-async function profileRetry(url, prompt, n, who = "teacher", tries = 3, logitBias = null) {
+async function profileRetry(url, prompt, n, who = "teacher", tries = 3, logitBias = null, settings = null) {
   let last;
   for (let i = 0; i < tries; i++) {
     try {
-      return await profile(url, prompt, n, who, logitBias);
+      return await profile(url, prompt, n, who, logitBias, settings);
     } catch (e) {
       last = e;
       await new Promise((r) => setTimeout(r, 2000));
@@ -438,10 +453,31 @@ function teacherDegeneracy(tokens, windowSize = 20) {
 
 let latest = null; // latest current.json content to serve to the UI
 
+// HISTORY rotation cap: appendFileSync to a multi-GB history.jsonl every step
+// blocks the Node event loop (the HTTP UI on :4199 stops responding), and the
+// file grows unboundedly (observed 32GB). Rotate + cap so it never outgrows
+// HISTORY_MAX_MB and the appends stay cheap. Writes are fire-and-forget async.
+const HISTORY_MAX_MB = Number(process.env.HISTORY_MAX_MB || 256);
+function rotateHistoryIfNeeded() {
+  try {
+    const st = fs.existsSync(HISTORY) ? fs.statSync(HISTORY) : null;
+    if (st && st.size > HISTORY_MAX_MB * 1024 * 1024) {
+      const rotated = `${HISTORY}.1`;
+      try { fs.rmSync(rotated, { force: true }); } catch {}
+      fs.renameSync(HISTORY, rotated); // move the current file aside, start fresh
+    }
+  } catch { /* best-effort */ }
+}
 function sendCurrent(extra = {}) {
   const payload = { ...latest, ...extra, ts: Date.now() };
-  fs.writeFileSync(CURRENT, JSON.stringify(payload, null, 2));
-  fs.appendFileSync(HISTORY, JSON.stringify({ ...latest, ts: Date.now() }) + "\n");
+  // Async, fire-and-forget writes so the training loop never blocks the event
+  // loop (a 1.3MB current.json written synchronously every step froze the HTTP
+  // UI on :4199). The UI polls/SSE reads current.json; a momentary write lag is
+  // fine.
+  const json = JSON.stringify(payload, null, 2);
+  fs.writeFile(CURRENT, json, () => {});
+  rotateHistoryIfNeeded(); // before appending, cap the oversized history file
+  fs.appendFile(HISTORY, json + "\n", () => {});
   latest = payload;
   return payload;
 }
@@ -617,6 +653,21 @@ function startServer() {
       req.on("close", () => clearInterval(iv));
       return;
     }
+    // Root route: serve the HTML DASHBOARD (web/teacher-ui.html) when the
+    // client is a browser (Accept: text/html), else the plain current.json
+    // state (the dashboard itself fetches "/" as JSON to load state). This is
+    // what makes http://127.0.0.1:4199/ show the real UI instead of raw JSON.
+    if (url === "/" && (req.headers.accept || "").includes("text/html")) {
+      const uiPath = path.join(REPO, "web", "teacher-ui.html");
+      if (fs.existsSync(uiPath)) {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(fs.readFileSync(uiPath));
+      } else {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("teacher-ui.html not found\n");
+      }
+      return;
+    }
     // Serve the plain current.json
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(fs.existsSync(CURRENT) ? fs.readFileSync(CURRENT, "utf8") : "{}");
@@ -667,6 +718,11 @@ async function run() {
   const curWindowTier = () => win && win.tiers ? win.tiers[Math.min(winTierIdx, win.tiers.length - 1)] : null;
 
   while (!ended && (alwaysRun || step < _steps)) {
+    // YIELD to the event loop so the HTTP UI on :4199 can serve requests. The
+    // loop does heavy synchronous work (JSON.stringify of the 1.2MB live payload
+    // in sendCurrent) that starves the server; breathing every iteration fixes
+    // the "server hangs / 130% CPU busy loop" symptom.
+    await new Promise((r) => setImmediate(r));
     // Live prompt change (from /prompt POST): reseed the shared prompt, clear
     // the teacher's accumulated output, and reset the step counter so the new
     // prompt starts a fresh generation run.
@@ -731,9 +787,18 @@ async function run() {
       }
       if (!winRefTopK || winRefIds.length < (tier.tokens || 1)) {
         // Not built or stale -> (re)generate the reference window from the base.
+        // USER EFFICIENCY DIRECTIVE: when the student top-k is BAD (best overlap
+        // below poor_topk_threshold) and skip_teacher_when_poor is on, DON'T
+        // spend resources having the teacher generate a fresh top-k — reuse the
+        // existing reference and just update the COMPRESSION experts from the
+        // student's own generation. This saves the teacher forward pass when it
+        // wouldn't help (the student can't reach a fresh target anyway).
+        const moeP = loadConfig()?.moe || {};
+        const skipTeacher = (moeP.skip_teacher_when_poor !== false)
+          && winRefTopK && winRefTopK.length && bestWinOverlap < Number(moeP.poor_topk_threshold ?? 0.1);
         const baseLen = Math.max(1, (tier.tokens || 8));
         const need = baseLen - winRefIds.length;
-        if (need > 0) {
+        if (need > 0 && !skipTeacher) {
           try {
             // Advance teacher from the CURRENT base prompt to fill `need` tokens.
             const tch = await profileRetry(TEACHER_URL, sharedIds, Math.min(need, TEACHER_BATCH), "teacher");
@@ -747,6 +812,18 @@ async function run() {
               saveTopKCurve({ step, promptCtx: PROMPT.slice(-400), teacherToken: tpos0.chosen.token, teacherId: tpos0.chosen.id, top: tpos0.top });
             }
           } catch (e) { /* keep partial window */ }
+        } else if (skipTeacher) {
+          // Student is poor: reuse the cached teacher reference — no new teacher
+          // generation this step. Compression experts still update from the
+          // student's own output below (self-supervised, cost-free).
+          stepRec._skipped_teacher_poor = true;
+          if (step % 20 === 0) console.log(`  [skip-teacher] student top-k poor (overlap ${bestWinOverlap.toFixed(3)} < ${Number(moeP.poor_topk_threshold ?? 0.1)}) — reusing teacher ref, self-updating compression experts`);
+          if (winRefIds.length < need) {
+            // Fill the reference window ids from what we have (don't block on the
+            // teacher for a poor student); the top-k stays the cached one.
+            const have = winRefIds.length;
+            for (let k = have; k < baseLen; k++) winRefIds.push(winRefIds[k % Math.max(1, winRefIds.length)] || 2413);
+          }
         }
         if (winRefIds.length === 0) winRefIds = [2413]; // guard
       }
@@ -767,7 +844,11 @@ async function run() {
         const firstRef = winRefTopK && winRefTopK[0];
         tPos = { chosen: { token: firstRef?.token, id: firstRef?.id, logprob: 0 }, top: winRefTopK || [] };
       } else {
-        teacher = await profileRetry(TEACHER_URL, sharedIds, TEACHER_BATCH, "teacher");
+        // COMPARE MODE: identical settings + first-token-top-k-only analysis.
+        // When compare.mode=='topk_first', request max_tokens=1 so we analyse
+        // only the FIRST token's top-k (no sequence generated). identical
+        // settings are used for BOTH teacher and student (fair head-to-head).
+        teacher = await profileRetry(TEACHER_URL, sharedIds, compareN(), "teacher", 3, null, (compareCfg().identical_settings !== false) ? identicalEmit() : null);
         tPos = teacher[0];
       }
       const teacherToken = tPos.chosen.token;
@@ -832,7 +913,13 @@ async function run() {
       // "new tokens on output" goal is a real nudge, not just a logical match).
       steerBias = buildExpertSteeringBias((tPos.top || []), steerCur, steerTol, lastFpId != null ? [lastFpId, COMPRESS_AS_TOKEN] : []);
       if (steerBias && step % 10 === 0) console.log(`    [steer] biasing ${Object.keys(steerBias).length} token ids (${Object.keys(steerBias).length - (lastFpId != null ? 2 : 0)} teacher + newtok, overlap ${steerCur.toFixed(3)})`);
-      const student = await profileRetry(STUDENT_URL, _stuPrompt, STUDENT_STEP, "student", 3, steerBias);
+      // COMPARE MODE (user): DON'T generate a token sequence — analyse ONLY the
+      // FIRST token's top-k, at IDENTICAL settings for teacher and student. In
+      // topk_first mode the student requests max_tokens=1 too (logprobs still
+      // carry the full next-token top-k), so the comparison is a pure top-k
+      // head-to-head, not an auto-regressive generation.
+      const stuSettings = (compareCfg().identical_settings !== false) ? identicalEmit() : emitFor("student");
+      const student = await profileRetry(STUDENT_URL, _stuPrompt, compareN(), "student", 3, steerBias, stuSettings);
       if (!student.length) { stepRec.note = "student empty"; ended = true; break; }
 
       // STUDENT DEGENERACY GUARD: a 1-bit/ternary model can collapse to ONE
@@ -1361,7 +1448,7 @@ async function run() {
       num_experts: stepRec.moe?.num_experts ?? loadConfig()?.moe?.num_experts ?? 5,
       layers_total: stepRec.moe?.layers_total ?? loadConfig()?.layers?.count ?? 5,
       pause_every_n_steps: Number(loadConfig()?.training?.pause_every_n_steps ?? 0),
-      windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000, max_loops_per_tier: win.maxLoopsPerTier, overlap: stepRec.window?.overlap ?? 0, best_overlap: bestWinOverlap, tol: win.identityTolerance, graduated: !!(stepRec.window?.graduated), last_converged_step: lastConvergedStep, allow_new_token_output: !!loadConfig()?.moe?.allow_new_token_output } : undefined,
+      windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000, max_loops_per_tier: win.maxLoopsPerTier, overlap: stepRec.window?.overlap ?? 0, best_overlap: bestWinOverlap, tol: win.identityTolerance, graduated: !!(stepRec.window?.graduated), last_converged_step: lastConvergedStep, allow_new_token_output: !!loadConfig()?.moe?.allow_new_token_output, skip_teacher_when_poor: !!loadConfig()?.moe?.skip_teacher_when_poor, self_update_when_poor: !!loadConfig()?.moe?.self_update_when_poor, skipped_teacher_poor: !!stepRec._skipped_teacher_poor } : undefined,
       expert_steering: { enabled: Number(loadConfig()?.moe?.expert_steering ?? 0) > 0, factor: Number(loadConfig()?.moe?.expert_steering ?? 0), max_bias: Number(loadConfig()?.moe?.steering_max_bias ?? 2.0), top_n: Number(loadConfig()?.moe?.steering_top_n ?? 20), last_bias_tokens: steerBias ? Object.keys(steerBias).length : 0 },
       two_phase: { enabled: !!loadConfig()?.scoring?.two_phase?.enabled, phase: Number(loadConfig()?.scoring?.two_phase?.phase ?? 1), new_net_compression_weight: Number(loadConfig()?.scoring?.two_phase?.new_net_compression_weight ?? 40), reconstruct_weight: Number(loadConfig()?.scoring?.two_phase?.reconstruct_weight ?? 120), reconstruct_min_overlap: Number(loadConfig()?.scoring?.two_phase?.reconstruct_min_overlap ?? 0.5), note: "Phase1=new nets FAVOR compressed tokens; Phase2=new compressed experts reproduce base shape; MTP aids compressed tokens" },
       // PER-EXPERT scored/training detail (surfaced so the UI shows EVERY expert
