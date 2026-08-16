@@ -779,21 +779,25 @@ async function run() {
       // (value = sum of constituent token ids). If that "compressed token" is
       // in the top-k of this window and a match is in the top-100 of the 5
       // generated tokens, it's a 500x value generation.
-      const studentIds = student.map((s) => s.chosen.token);
-      const footprint = compressFootprint(studentIds);
+      const studentIds = student.map((s) => s.chosen.token);          // TEXT (display)
+      const studentIdNums = student.map((s) => Number(s?.chosen?.id)).filter((v) => Number.isFinite(v)); // NUMERIC ids (compression math)
+      const footprint = compressFootprint(studentIdNums.length ? studentIdNums : student.map((_, i) => i + 1));
       const top100All = new Set(student.flatMap((s) => (s.top || []).map((x) => x.token)));
       const inTopK = student.some((s) => (s.top || []).some((x) => x.token === COMPRESS_AS_TOKEN));
-      const inTop100 = top100All.has(COMPRESS_AS_TOKEN) || top100All.has(footprint);
+      const inTop100 = top100All.has(COMPRESS_AS_TOKEN) || top100All.has(String(footprint));
       const is500x = inTopK && inTop100;
       if (is500x) fives++;
       // THE NEW-TOKEN SYSTEM (visible): each step, the student's 5 output
-      // tokens are COMPRESSED into ONE new token whose value = their sum
-      // (footprint). We record it as a created new token + a table describing
-      // how the compression works, so the UI can show the system + current list.
+      // tokens are COMPRESSED into ONE new token whose value = their SUM OF
+      // TOKEN IDS (footprint — a real number, not a text concatenation). We
+      // record it as a created new token + a table describing how the
+      // compression works, so the UI can show the system + current list.
       newTokens.push({
         step,
-        input: studentIds,           // the 5 tokens being compressed
-        new_token: footprint,        // the created new token (sum of input ids)
+        input_ids: studentIdNums.length ? studentIdNums : student.map((s) => Number(s?.chosen?.id) || 0), // the 5 token ids being compressed
+        input: studentIds,           // the 5 token TEXT being compressed (display)
+        new_token: footprint,        // the created new token (SUM of input token ids — numeric)
+        new_token_text: `${footprint} (∑ids ${studentIdNums.join("+")})`,
         sentinel: COMPRESS_AS_TOKEN, // the fixed sentinel this scheme matches
         created: is500x,             // true when this new token appears in top-k AND top-100
         ts: Date.now(),
@@ -830,7 +834,7 @@ async function run() {
         const textLen = student.reduce((a, s) => a + String(s.chosen.token ?? "").length, 0);
         compressRw = compressionReward({
           emittedTokens: STUDENT_STEP,
-          perTokenEmitted: studentIds.map(String),
+          perTokenEmitted: (studentIdNums.length ? studentIdNums : studentIds).map(String),
           textLengthGenerated: textLen,
           newTokenSet,
           degenerate: stepRec.student_collapsed === true,
