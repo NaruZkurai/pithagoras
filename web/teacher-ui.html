@@ -484,7 +484,10 @@ function renderExpertScores(d) {
      <span style="font-size:11px;color:#8b949e">= total ${d.total_score ?? 0}</span>
    </div>
    <div style="margin-top:6px;font-size:11px;color:#8b949e">
-     step ${last.step}: top-k <b style="color:#58a6ff">+${sb.topk ?? 0}</b> (${sb.inK ?? 0} toks) · top-p <b style="color:#a371f7">+${sb.tpp ?? 0}</b> (${sb.inP ?? 0}) · teacher-emit <b style="color:#f778ba">+${sb.teacher_emit ?? 0}</b> (${sb.inEm ?? 0} chosen toks)
+     step ${last.step}: top-k <b style="color:#58a6ff">+${sb.topk ?? 0}</b> (${sb.inK ?? 0}) · top-p <b style="color:#a371f7">+${sb.tpp ?? 0}</b> (${sb.inP ?? 0}) · teacher-emit <b style="color:#f778ba">+${sb.teacher_emit ?? 0}</b> (${sb.inEm ?? 0})
+   </div>
+   <div style="margin-top:4px;font-size:11px;color:#8b949e">
+     curve <b style="color:#3fb950">+${(+Number(sb.curve || 0)).toFixed(0)}</b> (overlap ${(sb.curve_overlap??0).toFixed(2)} · ${sb.curve_matched ?? 0} slots${sb.curve_compressed_match ? " · ⚡compressed-match" : ""}) · compression <b style="color:#d29922">+${(+Number(sb.compression || 0)).toFixed(1)}</b> (ratio ${(sb.comp_ratio??0).toFixed(1)} · saved ${sb.comp_tokens_saved ?? 0} · newTok ${(sb.comp_newtok_pct??0).toFixed(2)} · ×${(+Number(sb.comp_mult??1)).toFixed(1)})
    </div>`;
   });
 }
@@ -542,13 +545,17 @@ function renderNewTokens(d) {
   const sys = d.new_token_system || {};
   const list = d.new_tokens_list || [];
   const newest = list.slice(-40).reverse();
-  const sig = sigOf(sys.how, sys.sentinel, sys.per_step, sys.create_rule,
+  const cb = sys.code_baseline || {};
+  const sig = sigOf(sys.how, sys.sentinel, sys.per_step, sys.create_rule, sys.code_baseline,
     newest.map(t=>[t.step,(t.input||[]).join(" "),t.new_token,t.created]));
   memoRender("newTokens", sig, () => {
     document.getElementById("newTokSystem").innerHTML =
       `<div style="margin-bottom:4px"><b style="color:#58a6ff">how new tokens are created:</b></div>` +
       `<div>${String(sys.how || "compression of output tokens into a single new token whose value = sum of their ids")}</div>` +
-      `<div style="margin-top:4px">sentinel <code>${sys.sentinel ?? "?"}</code> · input per new token <code>${sys.per_step ?? "?"}</code> · <code>${sys.create_rule || "new_token = sum(input)"}</code></div>`;
+      `<div style="margin-top:4px">sentinel <code>${sys.sentinel ?? "?"}</code> · input per new token <code>${sys.per_step ?? "?"}</code> · <code>${sys.create_rule || "new_token = sum(input)"}</code></div>` +
+      `<div style="margin-top:6px;font-size:11px;color:"#8b949e">code-DB baseline: ${cb.loaded
+        ? `<b style="color:#3fb950">loaded ✓</b> · ${cb.file_count} files · ${cb.symbols} symbols · ${cb.bigrams} bigrams · ${cb.chunk_hashes} chunk-hashes`
+        : `<b style="color:#d29922">not loaded</b> — run <code>scripts/seed-code-baseline.mjs</code>`}</div>`;
     const el = document.getElementById("newTokList");
     if (!list.length) { el.innerHTML = '<div style="color:#8b949e">no new tokens created yet</div>'; return; }
     el.innerHTML = newest.map(t =>

@@ -405,6 +405,148 @@ export function scoreStep({ baseMatches, step, is500x, bonusOverride }) {
 }
 
 /**
+ * EXPONENTIAL TEACHER-CURVE REWARD.
+ * The teacher is assumed PERFECT at top-k and PERFECT at using its top-k, but
+ * does NOT prefer compressed tokens. So when the student's top-k curve closely
+ * matches the teacher's, we reward exponentially (not linearly):
+ *
+ *   reward = per_topk_token_match * exp_base ^ (overlap_fraction * exp_scaler)
+ *
+ * `overlapFraction` = (|studentTopK ∩ teacherTopK|) / |teacherTopK| averaged
+ * over the student's emitted token positions. As the student's curve converges
+ * to the teacher's (fraction -> 1), the reward grows exponentially.
+ *
+ * Returns { reward, overlapFraction, matched, total }.
+ */
+export function curveReward({ student, teacherTopK, perTokenMatch, compressedToken, newTokenSet }) {
+  const cfg = loadConfig()?.scoring?.curve || {};
+  const expBase = Number(cfg.exp_base ?? 2.0);
+  const expScaler = Number(cfg.exp_scaler ?? 4.0);
+  const compressedMult = Number(cfg.compressed_token_mult ?? 4.0);
+  const matchPts = Number(perTokenMatch ?? cfg?.base_match ?? (loadConfig()?.scoring?.base?.per_topk_token_match ?? 1));
+  const teacherList = teacherTopK || [];
+  if (!teacherList.length) return { reward: 0, overlapFraction: 0, matched: 0, total: 0 };
+  const teacherSet = new Set(teacherList);
+
+  // Rank each teacher top-k slot: slot i (0-based) pays expBase^(i+1) — so the
+  // MORE teacher top-k slots the student matches, the more it wins (each
+  // additional matched slot pays a higher exponent than the one before).
+  // NOTE we fold expScaler into a per-slot weight so progressiveness is real.
+  let positions = 0;
+  let matched = 0;
+  let numSlots = 0;
+  let reward = 0;
+  for (const s of student) {
+    if (!s) continue;
+    const sSet = new Set((s.top || []).map((t) => t.token));
+    positions++;
+    // Count + weight every student top-k token that lands on a teacher slot.
+    for (let i = 0; i < teacherList.length; i++) {
+      if (sSet.has(teacherList[i])) {
+        matched++;
+        reward += Math.pow(expBase, (i + 1) / Math.max(1, expScaler)) * matchPts;
+        numSlots++;
+      }
+    }
+  }
+
+  // COMPRESSED-TOKEN MATCH: a compressed token that would fill a teacher top-k
+  // slot counts as a match. `compressedToken` is the footprint value (sum of
+  // constituent ids). If that value is in the teacher's top-k set (i.e. the
+  // compression lands exactly where the teacher expects), reward HEAVILY.
+  // Also reward if any new-token-system created token/value is in teacher top-k.
+  let compressedMatched = false;
+  let compressedSlotRank = -1;
+  const candidate = String(compressedToken ?? "");
+  if (candidate && teacherSet.has(candidate)) {
+    const idx = teacherList.indexOf(candidate);
+    compressedMatched = true;
+    compressedSlotRank = idx;
+    reward += Math.pow(expBase, (idx + 1) / Math.max(1, expScaler)) * matchPts * compressedMult;
+    numSlots++;
+  } else if (newTokenSet && newTokenSet.size) {
+    // "start to nth place of the previous compressed token" — any created new
+    // token whose value lands in the teacher top-k is a strong signal.
+    for (const t of newTokenSet) {
+      if (teacherSet.has(String(t))) {
+        compressedMatched = true;
+        reward += matchPts * compressedMult; // heavily rewarded
+        break;
+      }
+    }
+  }
+
+  const total = positions * teacherList.length;
+  const overlapFraction = total ? matched / total : 0;
+  return { reward, overlapFraction, matched, numSlots, compressedMatched, compressedSlotRank, total };
+}
+
+/**
+ * COMPRESSION-RATIO REWARD (the primary new reward).
+ * A compressed token packs a lot of info (long text, many effective tokens)
+ * into few tokens; reward that. Per the user's spec:
+ *
+ *   compression_reward =
+ *       compressionRatio  *  baseEffectiveTokens  *  ( 1 + textLengthGenerated / tokensSaved )
+ *
+ * where:
+ *   compressionRatio     = referenceTokens / emittedTokens
+ *   baseEffectiveTokens  = total effective tokens the expert emitted (STUDENT_STEP)
+ *   textLengthGenerated  = total chars of the generated tokens (its effective length)
+ *   tokensSaved          = referenceTokens - emittedTokens   (clamped >= 1)
+ *
+ * NEW-TOKEN-MATCH MULTIPLIER: if `>= new_token_match_min_pct` of the generated
+ * tokens are in the new-token-system's created-token set, multiply by
+ * `new_token_match_mult * tokensSaved` (strong reward for matching created tokens).
+ *
+ * `tally_before_reset` is handled by the caller (the harness accumulates this
+ * into the round cumulative score before `maybeResetMoeState`).
+ *
+ * Returns { reward, compressionRatio, baseEffectiveTokens, textLengthGenerated,
+ *           tokensSaved, newTokenMatchPct, multiplier, appliedMultiplier }.
+ */
+export function compressionReward({ emittedTokens, perTokenEmitted, textLengthGenerated, newTokenSet }) {
+  const cfg = loadConfig()?.scoring?.compression || {};
+  const emitted = Math.max(1, Number(emittedTokens ?? cfg.base_effective_tokens ?? 5));
+  const reference = Math.max(1, Number(cfg.reference_tokens ?? 23));
+  const textLen = Number(textLengthGenerated ?? 0);
+  const textFactor = Number(cfg.text_length_factor ?? 1.0);
+  const mult = Number(cfg.multiplier ?? 1.0);
+
+  const compressionRatio = reference / emitted;
+  const tokensSaved = Math.max(1, reference - emitted);
+  const baseEffective = emitted;
+  const textTerm = 1 + (textFactor * textLen) / tokensSaved;
+  let reward = compressionRatio * baseEffective * textTerm;
+
+  // NEW-TOKEN MATCH MULTIPLIER: if >= min_pct of the emitted tokens match the
+  // new-token-system's created tokens, multiply by new_token_match_mult * saved.
+  let newTokenMatchPct = 0;
+  let appliedMultiplier = 1;
+  const toks = Array.isArray(perTokenEmitted) && perTokenEmitted.length ? perTokenEmitted : [];
+  if (newTokenSet && newTokenSet.size && toks.length) {
+    const hits = toks.reduce((a, t) => a + (newTokenSet.has(String(t)) ? 1 : 0), 0);
+    newTokenMatchPct = hits / toks.length;
+    const minPct = Number(cfg.new_token_match_min_pct ?? 0.2);
+    if (newTokenMatchPct >= minPct) {
+      appliedMultiplier = Number(cfg.new_token_match_mult ?? 1.001) * tokensSaved;
+      reward *= appliedMultiplier;
+    }
+  }
+  reward *= mult;
+  return {
+    reward,
+    compressionRatio,
+    baseEffectiveTokens: baseEffective,
+    textLengthGenerated: textLen,
+    tokensSaved,
+    newTokenMatchPct,
+    multiplier: mult,
+    appliedMultiplier,
+  };
+}
+
+/**
  * SAVE THE MODEL as a REAL Mixture-of-Experts (NOT dense). Each layer carries
  * `num_experts` distinct ternary expert weight banks (W_up/W_gate/W_down) plus
  * a learned routing gate; only the top-k experts are active per token — a true

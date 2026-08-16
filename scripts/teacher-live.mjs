@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts } from "./moe-engine.mjs";
+import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward } from "./moe-engine.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -49,6 +49,30 @@ const PORT = Number(process.env.LIVE_PORT || 4199);
 
 const TEACHER_URL = process.env.TEACHER_URL || "http://127.0.0.1:41001"; // 27B
 const STUDENT_URL = process.env.STUDENT_URL || "http://127.0.0.1:6465";   // 4B
+
+// CODE-DB BASELINE: load the new-token patterns derived from the entire code DB
+// (see scripts/seed-code-baseline.mjs). When present, these baseline chunk-hash
+// values are folded into the "new token system" target set, so generated tokens
+// that match genuine code constructs are recognized for heavier reward.
+let CODE_BASELINE = null;
+try {
+  const base = JSON.parse(fs.readFileSync(path.join(REPO, "config", "moe", "code-baseline.json"), "utf8"));
+  if (base && Array.isArray(base.chunk_hashes)) {
+    CODE_BASELINE = {
+      chunkHashSet: new Set(base.chunk_hashes.map((c) => String(c.hash))),
+      symbols: base.top_code_symbols || [],
+      bigrams: base.top_bigrams || [],
+      fileCount: base.file_count,
+    };
+  }
+} catch {
+  CODE_BASELINE = null; // baseline optional
+}
+// The baseline "expected" token values, folded into new-token matching.
+function codeBaselineSet() {
+  return CODE_BASELINE ? CODE_BASELINE.chunkHashSet : new Set();
+}
+
 // Sampling knobs are LIVE (read from config/moe-config.json "sampling" each
 // step so the UI sliders apply immediately). Helpers return current values.
 const SAMPLING = () => loadConfig()?.sampling || {};
@@ -385,6 +409,43 @@ async function run() {
       });
       if (newTokens.length > 200) newTokens.shift(); // keep the list bounded
 
+      // ---- NEW REWARDS: exponential teacher-curve + compression-ratio ----
+      // (1) EXPONENTIAL teacher-curve: teacher is perfect top-k; the closer the
+      //     student's top-k curve is to the teacher's, the exponentially bigger
+      //     the reward (reward = per_topk_token_match * exp_base^(overlap*scaler)).
+      // (2) COMPRESSION: a compressed token that packs a lot of text/effective
+      //     tokens is rewarded by compressionRatio * baseEffectiveTokens
+      //     * (1 + textLen / tokensSaved), with a multiplier if the emitted
+      //     tokens match the new-token-system's created tokens.
+      const cfgRew = loadConfig()?.scoring || {};
+      // Fold the code-DB baseline "genuine" token values into the new-token
+      // target set, so generated tokens matching real code patterns earn the
+      // compression/curve reward (recognized as genuine, not random).
+      const newTokenSet = new Set(newTokens.flatMap((t) => [String(t.new_token), ...(t.input || []).map(String)]));
+      for (const b of codeBaselineSet()) newTokenSet.add(b);
+      let curveRw = { reward: 0, overlapFraction: 0, matched: 0, numSlots: 0, compressedMatched: false, compressedSlotRank: -1 };
+      let compressRw = { reward: 0, compressionRatio: 0, tokensSaved: 0, newTokenMatchPct: 0, appliedMultiplier: 1 };
+      if (cfgRew.curve?.enabled !== false) {
+        curveRw = curveReward({
+          student,
+          teacherTopK: (tPos.top || []).map((x) => x.token),
+          perTokenMatch: ptsK,
+          compressedToken: footprint,
+          newTokenSet,
+        });
+      }
+      if (cfgRew.compression?.enabled !== false) {
+        const textLen = student.reduce((a, s) => a + String(s.chosen.token ?? "").length, 0);
+        compressRw = compressionReward({
+          emittedTokens: STUDENT_STEP,
+          perTokenEmitted: studentIds.map(String),
+          textLengthGenerated: textLen,
+          newTokenSet,
+        });
+      }
+      const curvePoints = (cfgRew.curve?.enabled === false) ? 0 : (curveRw.reward || 0);
+      const compressionPoints = (cfgRew.compression?.enabled === false) ? 0 : (compressRw.reward || 0);
+
       // ---- MoE: route through the expert layers (top-2), train, score ----
       let moe = null, sc = null;
       try {
@@ -406,7 +467,9 @@ async function run() {
         // (affinity), so every expert shows its own points (not just the top-2
         // routed ones). Active experts get their value-weighted share of the
         // step's points; inactive experts keep a value-based standing share.
-        const pts = base + baseP + baseEm;
+        // Include the new reward terms (exponential teacher-curve + compression)
+        // so they are tallied into the round cumulative score (before reset).
+        const pts = base + baseP + baseEm + curvePoints + compressionPoints;
         const vAll = route.rows.reduce((a, r) => a + (Number(r.value) || 0), 0) || 1;
         const perExpertPoints = route.rows.map((r) => ({
           expert: r.name,
@@ -495,20 +558,32 @@ async function run() {
         is_500x_value_generation: is500x,
         moe,
         base_step_score: base,
-        score_breakdown: { topk: base, tpp: baseP, teacher_emit: baseEm, inK: overInK, inP: overInP, inEm: overInEm },
+        score_breakdown: {
+          topk: base, tpp: baseP, teacher_emit: baseEm,
+          curve: curvePoints ?? 0, compression: compressionPoints ?? 0,
+          inK: overInK, inP: overInP, inEm: overInEm,
+          curve_overlap: curveRw?.overlapFraction ?? 0,
+          curve_matched: curveRw?.numSlots ?? 0,
+          curve_compressed_match: curveRw?.compressedMatched ?? false,
+          comp_ratio: compressRw?.compressionRatio ?? 0,
+          comp_tokens_saved: compressRw?.tokensSaved ?? 0,
+          comp_newtok_pct: compressRw?.newTokenMatchPct ?? 0,
+          comp_mult: compressRw?.appliedMultiplier ?? 1,
+        },
         penalty: sc ? sc.penalty : 0,
         step_gain: sc ? sc.totalGain : 0,
         // Per-step points BEFORE the expert/layer gets updated this token.
         // This RESETS every single token (step) — it does NOT accumulate.
-        step_points: base + baseP + baseEm,
+        step_points: base + baseP + baseEm + curvePoints + compressionPoints,
         base_score_total: baseScoreTotal,
         bonus_total: bonusTotal,
-        total_score: base + baseP + baseEm,
+        total_score: base + baseP + baseEm + curvePoints + compressionPoints,
       };
     } catch (e) {
       stepRec.error = String((e && e.message) || e) || "unknown step error";
       console.error("  !! step error:", (e && e.message) || e, e);
-      const sp = (Number(base) || 0) + (Number(baseP) || 0) + (Number(baseEm) || 0);
+      const sp = (Number(base) || 0) + (Number(baseP) || 0) + (Number(baseEm) || 0)
+        + (Number(curvePoints) || 0) + (Number(compressionPoints) || 0);
       stepRec.total_score = sp;
       stepRec.step_points = sp;
     }
@@ -539,6 +614,14 @@ async function run() {
         sentinel: COMPRESS_AS_TOKEN,
         per_step: STUDENT_STEP,
         create_rule: "new_token = sum(input tokens)",
+        code_baseline: CODE_BASELINE ? {
+          loaded: true,
+          file_count: CODE_BASELINE.fileCount,
+          symbols: CODE_BASELINE.symbols.length,
+          bigrams: CODE_BASELINE.bigrams.length,
+          chunk_hashes: CODE_BASELINE.chunkHashSet.size,
+          note: "code-DB baseline new-token patterns folded into the reward target set",
+        } : { loaded: false, note: "run scripts/seed-code-baseline.mjs to feed the code DB as baseline" },
       },
       new_tokens_list: newTokens,
       // Teacher: the total prompt + accumulated output tokens.

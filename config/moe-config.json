@@ -389,6 +389,24 @@
    "overconfidence": 100000,
    "redundant_expert": 0,
    "note": "subtract from total when flagged; adjust live via UI"
+  },
+  "curve": {
+   "enabled": true,
+   "exp_base": 2.0,
+   "exp_scaler": 4.0,
+   "note": "exponential reward for matching the (perfect) teacher's top-k curve: each matched teacher slot i pays per_topk_token_match * exp_base^((i+1)/exp_scaler), so MORE matches = MORE reward (progressively). A compressed token that lands on a teacher slot counts and is multiplied by compressed_token_mult. New-token-system tokens in the teacher top-k are also heavily rewarded.",
+   "compressed_token_mult": 4.0
+  },
+  "compression": {
+   "enabled": true,
+   "base_effective_tokens": 5,
+   "reference_tokens": 23,
+   "text_length_factor": 1.0,
+   "multiplier": 1.0,
+   "new_token_match_mult": 1.001,
+   "new_token_match_min_pct": 0.2,
+   "tally_before_reset": true,
+   "note": "compression_reward = compressionRatio * baseEffectiveTokens * ( 1 + textLengthGenerated / tokensSaved ) ; \ncompressionRatio = referenceTokens / emittedTokens ; tokensSaved = referenceTokens - emittedTokens. If >=min_pct of generated tokens match new-token-system created tokens, multiply by new_token_match_mult * tokensSaved."
   }
  },
  "sampling": {

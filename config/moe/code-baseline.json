@@ -1,0 +1,4523 @@
+{
+  "generated_at": "2026-08-16T05:19:19.188Z",
+  "source_dirs": [
+    "server",
+    "web",
+    "scripts",
+    "channels"
+  ],
+  "file_count": 115,
+  "total_chars": 1186319,
+  "summary": {
+    "note": "Baseline new-token patterns derived from the entire code DB. Used by the harness new-token system to recognize 'genuine' code tokens (via footprint/matching) for heavier compression rewards.",
+    "top_symbol_count": 300,
+    "top_bigram_count": 200,
+    "chunk_hash_count": 500
+  },
+  "top_code_symbols": [
+    {
+      "symbol": "the",
+      "count": 3235
+    },
+    {
+      "symbol": "const",
+      "count": 2768
+    },
+    {
+      "symbol": "text",
+      "count": 2241
+    },
+    {
+      "symbol": "string",
+      "count": 2084
+    },
+    {
+      "symbol": "a",
+      "count": 1968
+    },
+    {
+      "symbol": "if",
+      "count": 1359
+    },
+    {
+      "symbol": "return",
+      "count": 1291
+    },
+    {
+      "symbol": "$",
+      "count": 1261
+    },
+    {
+      "symbol": "s",
+      "count": 1209
+    },
+    {
+      "symbol": "id",
+      "count": 1082
+    },
+    {
+      "symbol": "name",
+      "count": 1020
+    },
+    {
+      "symbol": "is",
+      "count": 1003
+    },
+    {
+      "symbol": "to",
+      "count": 870
+    },
+    {
+      "symbol": "it",
+      "count": 863
+    },
+    {
+      "symbol": "from",
+      "count": 839
+    },
+    {
+      "symbol": "e",
+      "count": 830
+    },
+    {
+      "symbol": "null",
+      "count": 828
+    },
+    {
+      "symbol": "and",
+      "count": 774
+    },
+    {
+      "symbol": "json",
+      "count": 760
+    },
+    {
+      "symbol": "p",
+      "count": 710
+    },
+    {
+      "symbol": "message",
+      "count": 685
+    },
+    {
+      "symbol": "not",
+      "count": 660
+    },
+    {
+      "symbol": "session",
+      "count": 632
+    },
+    {
+      "symbol": "error",
+      "count": 631
+    },
+    {
+      "symbol": "path",
+      "count": 591
+    },
+    {
+      "symbol": "as",
+      "count": 570
+    },
+    {
+      "symbol": "this",
+      "count": 565
+    },
+    {
+      "symbol": "for",
+      "count": 538
+    },
+    {
+      "symbol": "res",
+      "count": 536
+    },
+    {
+      "symbol": "function",
+      "count": 534
+    },
+    {
+      "symbol": "w",
+      "count": 501
+    },
+    {
+      "symbol": "so",
+      "count": 498
+    },
+    {
+      "symbol": "type",
+      "count": 493
+    },
+    {
+      "symbol": "r",
+      "count": 492
+    },
+    {
+      "symbol": "await",
+      "count": 481
+    },
+    {
+      "symbol": "number",
+      "count": 467
+    },
+    {
+      "symbol": "of",
+      "count": 459
+    },
+    {
+      "symbol": "import",
+      "count": 454
+    },
+    {
+      "symbol": "on",
+      "count": 451
+    },
+    {
+      "symbol": "model",
+      "count": 444
+    },
+    {
+      "symbol": "value",
+      "count": 442
+    },
+    {
+      "symbol": "length",
+      "count": 425
+    },
+    {
+      "symbol": "agent",
+      "count": 415
+    },
+    {
+      "symbol": "key",
+      "count": 407
+    },
+    {
+      "symbol": "api",
+      "count": 403
+    },
+    {
+      "symbol": "true",
+      "count": 400
+    },
+    {
+      "symbol": "export",
+      "count": 398
+    },
+    {
+      "symbol": "label",
+      "count": 390
+    },
+    {
+      "symbol": "n",
+      "count": 388
+    },
+    {
+      "symbol": "new",
+      "count": 383
+    },
+    {
+      "symbol": "in",
+      "count": 376
+    },
+    {
+      "symbol": "b",
+      "count": 365
+    },
+    {
+      "symbol": "content",
+      "count": 360
+    },
+    {
+      "symbol": "sessionid",
+      "count": 360
+    },
+    {
+      "symbol": "catch",
+      "count": 358
+    },
+    {
+      "symbol": "token",
+      "count": 348
+    },
+    {
+      "symbol": "false",
+      "count": 348
+    },
+    {
+      "symbol": "status",
+      "count": 348
+    },
+    {
+      "symbol": "t",
+      "count": 346
+    },
+    {
+      "symbol": "one",
+      "count": 346
+    },
+    {
+      "symbol": "async",
+      "count": 332
+    },
+    {
+      "symbol": "h",
+      "count": 329
+    },
+    {
+      "symbol": "that",
+      "count": 321
+    },
+    {
+      "symbol": "map",
+      "count": 317
+    },
+    {
+      "symbol": "try",
+      "count": 313
+    },
+    {
+      "symbol": "pi",
+      "count": 311
+    },
+    {
+      "symbol": "row",
+      "count": 308
+    },
+    {
+      "symbol": "py",
+      "count": 303
+    },
+    {
+      "symbol": "trim",
+      "count": 300
+    },
+    {
+      "symbol": "run",
+      "count": 299
+    },
+    {
+      "symbol": "void",
+      "count": 294
+    },
+    {
+      "symbol": "file",
+      "count": 286
+    },
+    {
+      "symbol": "or",
+      "count": 280
+    },
+    {
+      "symbol": "gap",
+      "count": 280
+    },
+    {
+      "symbol": "workspace",
+      "count": 275
+    },
+    {
+      "symbol": "c",
+      "count": 271
+    },
+    {
+      "symbol": "sessions",
+      "count": 266
+    },
+    {
+      "symbol": "ok",
+      "count": 259
+    },
+    {
+      "symbol": "line",
+      "count": 257
+    },
+    {
+      "symbol": "only",
+      "count": 256
+    },
+    {
+      "symbol": "an",
+      "count": 254
+    },
+    {
+      "symbol": "req",
+      "count": 254
+    },
+    {
+      "symbol": "no",
+      "count": 249
+    },
+    {
+      "symbol": "d",
+      "count": 249
+    },
+    {
+      "symbol": "boolean",
+      "count": 249
+    },
+    {
+      "symbol": "channel",
+      "count": 247
+    },
+    {
+      "symbol": "input",
+      "count": 242
+    },
+    {
+      "symbol": "thread",
+      "count": 242
+    },
+    {
+      "symbol": "undefined",
+      "count": 187
+    },
+    {
+      "symbol": "settings",
+      "count": 158
+    },
+    {
+      "symbol": "description",
+      "count": 157
+    },
+    {
+      "symbol": "router",
+      "count": 156
+    },
+    {
+      "symbol": "getdb",
+      "count": 151
+    },
+    {
+      "symbol": "unknown",
+      "count": 131
+    },
+    {
+      "symbol": "messages",
+      "count": 117
+    },
+    {
+      "symbol": "color",
+      "count": 117
+    },
+    {
+      "symbol": "class",
+      "count": 116
+    },
+    {
+      "symbol": "spec",
+      "count": 115
+    },
+    {
+      "symbol": "base",
+      "count": 106
+    },
+    {
+      "symbol": "channels",
+      "count": 101
+    },
+    {
+      "symbol": "left",
+      "count": 90
+    },
+    {
+      "symbol": "field",
+      "count": 78
+    },
+    {
+      "symbol": "patch",
+      "count": 77
+    },
+    {
+      "symbol": "created_at",
+      "count": 65
+    },
+    {
+      "symbol": "params",
+      "count": 62
+    },
+    {
+      "symbol": "ccv",
+      "count": 55
+    },
+    {
+      "symbol": "group",
+      "count": 51
+    },
+    {
+      "symbol": "extensions",
+      "count": 50
+    },
+    {
+      "symbol": "owner",
+      "count": 47
+    },
+    {
+      "symbol": "ccvs",
+      "count": 45
+    },
+    {
+      "symbol": "datetime",
+      "count": 44
+    },
+    {
+      "symbol": "shell",
+      "count": 43
+    },
+    {
+      "symbol": "memories",
+      "count": 43
+    },
+    {
+      "symbol": "atom",
+      "count": 42
+    },
+    {
+      "symbol": "installed",
+      "count": 42
+    },
+    {
+      "symbol": "channel_slug",
+      "count": 41
+    },
+    {
+      "symbol": "defaults",
+      "count": 39
+    },
+    {
+      "symbol": "idx",
+      "count": 39
+    },
+    {
+      "symbol": "timeline",
+      "count": 38
+    },
+    {
+      "symbol": "fields",
+      "count": 38
+    },
+    {
+      "symbol": "extension",
+      "count": 38
+    },
+    {
+      "symbol": "two",
+      "count": 37
+    },
+    {
+      "symbol": "required",
+      "count": 37
+    },
+    {
+      "symbol": "parsed",
+      "count": 37
+    },
+    {
+      "symbol": "secret",
+      "count": 37
+    },
+    {
+      "symbol": "remembered",
+      "count": 35
+    },
+    {
+      "symbol": "builtin",
+      "count": 33
+    },
+    {
+      "symbol": "channel_key",
+      "count": 31
+    },
+    {
+      "symbol": "checkpoint",
+      "count": 31
+    },
+    {
+      "symbol": "browser",
+      "count": 31
+    },
+    {
+      "symbol": "across",
+      "count": 30
+    },
+    {
+      "symbol": "packages",
+      "count": 30
+    },
+    {
+      "symbol": "insert",
+      "count": 29
+    },
+    {
+      "symbol": "callable",
+      "count": 27
+    },
+    {
+      "symbol": "edited",
+      "count": 27
+    },
+    {
+      "symbol": "createdat",
+      "count": 26
+    },
+    {
+      "symbol": "_req",
+      "count": 26
+    },
+    {
+      "symbol": "toapi",
+      "count": 26
+    },
+    {
+      "symbol": "page",
+      "count": 25
+    },
+    {
+      "symbol": "packagename",
+      "count": 25
+    },
+    {
+      "symbol": "seen",
+      "count": 24
+    },
+    {
+      "symbol": "points",
+      "count": 24
+    },
+    {
+      "symbol": "saving",
+      "count": 24
+    },
+    {
+      "symbol": "human",
+      "count": 21
+    },
+    {
+      "symbol": "anchored",
+      "count": 21
+    },
+    {
+      "symbol": "channelsupervisor",
+      "count": 21
+    },
+    {
+      "symbol": "hash",
+      "count": 19
+    },
+    {
+      "symbol": "configured",
+      "count": 19
+    },
+    {
+      "symbol": "topic",
+      "count": 18
+    },
+    {
+      "symbol": "wanted",
+      "count": 18
+    },
+    {
+      "symbol": "hand",
+      "count": 17
+    },
+    {
+      "symbol": "session_title",
+      "count": 17
+    },
+    {
+      "symbol": "supervisor",
+      "count": 17
+    },
+    {
+      "symbol": "slugify",
+      "count": 16
+    },
+    {
+      "symbol": "builtins",
+      "count": 16
+    },
+    {
+      "symbol": "render",
+      "count": 16
+    },
+    {
+      "symbol": "github",
+      "count": 15
+    },
+    {
+      "symbol": "keyed",
+      "count": 15
+    },
+    {
+      "symbol": "execfile",
+      "count": 15
+    },
+    {
+      "symbol": "pisettingspath",
+      "count": 15
+    },
+    {
+      "symbol": "sync",
+      "count": 14
+    },
+    {
+      "symbol": "promisify",
+      "count": 14
+    },
+    {
+      "symbol": "general",
+      "count": 13
+    },
+    {
+      "symbol": "remember",
+      "count": 13
+    },
+    {
+      "symbol": "link",
+      "count": 13
+    },
+    {
+      "symbol": "anyone",
+      "count": 13
+    },
+    {
+      "symbol": "visible",
+      "count": 13
+    },
+    {
+      "symbol": "relayprogress",
+      "count": 13
+    },
+    {
+      "symbol": "relaytools",
+      "count": 13
+    },
+    {
+      "symbol": "updateccv",
+      "count": 12
+    },
+    {
+      "symbol": "anchor",
+      "count": 12
+    },
+    {
+      "symbol": "channelrow",
+      "count": 12
+    },
+    {
+      "symbol": "rowbyid",
+      "count": 12
+    },
+    {
+      "symbol": "mark",
+      "count": 11
+    },
+    {
+      "symbol": "memory_search",
+      "count": 11
+    },
+    {
+      "symbol": "loadedchannel",
+      "count": 11
+    },
+    {
+      "symbol": "blurb",
+      "count": 11
+    },
+    {
+      "symbol": "extensioninfo",
+      "count": 11
+    },
+    {
+      "symbol": "dm",
+      "count": 10
+    },
+    {
+      "symbol": "deep",
+      "count": 10
+    },
+    {
+      "symbol": "isvalidslug",
+      "count": 10
+    },
+    {
+      "symbol": "secrets",
+      "count": 10
+    },
+    {
+      "symbol": "sessioncount",
+      "count": 10
+    },
+    {
+      "symbol": "unique",
+      "count": 10
+    },
+    {
+      "symbol": "uses",
+      "count": 10
+    },
+    {
+      "symbol": "scan",
+      "count": 10
+    },
+    {
+      "symbol": "share",
+      "count": 9
+    },
+    {
+      "symbol": "loadchannels",
+      "count": 9
+    },
+    {
+      "symbol": "desired",
+      "count": 9
+    },
+    {
+      "symbol": "credentials",
+      "count": 9
+    },
+    {
+      "symbol": "blank",
+      "count": 9
+    },
+    {
+      "symbol": "isolated",
+      "count": 8
+    },
+    {
+      "symbol": "ccvhash",
+      "count": 8
+    },
+    {
+      "symbol": "getccv",
+      "count": 8
+    },
+    {
+      "symbol": "upsertccv",
+      "count": 8
+    },
+    {
+      "symbol": "variables",
+      "count": 8
+    },
+    {
+      "symbol": "captured",
+      "count": 8
+    },
+    {
+      "symbol": "sessiontitle",
+      "count": 8
+    },
+    {
+      "symbol": "channelsdir",
+      "count": 8
+    },
+    {
+      "symbol": "relay_progress",
+      "count": 8
+    },
+    {
+      "symbol": "relay_tools",
+      "count": 8
+    },
+    {
+      "symbol": "strip",
+      "count": 8
+    },
+    {
+      "symbol": "clash",
+      "count": 8
+    },
+    {
+      "symbol": "trimmed",
+      "count": 8
+    },
+    {
+      "symbol": "restarts",
+      "count": 8
+    },
+    {
+      "symbol": "deleting",
+      "count": 8
+    },
+    {
+      "symbol": "configuration",
+      "count": 8
+    },
+    {
+      "symbol": "depth",
+      "count": 8
+    },
+    {
+      "symbol": "checkpoints",
+      "count": 7
+    },
+    {
+      "symbol": "merged",
+      "count": 7
+    },
+    {
+      "symbol": "incoming",
+      "count": 7
+    },
+    {
+      "symbol": "util",
+      "count": 7
+    },
+    {
+      "symbol": "homepage",
+      "count": 7
+    },
+    {
+      "symbol": "listmemoryccvs",
+      "count": 6
+    },
+    {
+      "symbol": "hashed",
+      "count": 6
+    },
+    {
+      "symbol": "adds",
+      "count": 6
+    },
+    {
+      "symbol": "secretsset",
+      "count": 6
+    },
+    {
+      "symbol": "merge",
+      "count": 6
+    },
+    {
+      "symbol": "freeslug",
+      "count": 6
+    },
+    {
+      "symbol": "exceptid",
+      "count": 6
+    },
+    {
+      "symbol": "schema",
+      "count": 6
+    },
+    {
+      "symbol": "resolvechannelsession",
+      "count": 5
+    },
+    {
+      "symbol": "installchannelpackage",
+      "count": 5
+    },
+    {
+      "symbol": "removechannelpackage",
+      "count": 5
+    },
+    {
+      "symbol": "channelfield",
+      "count": 5
+    },
+    {
+      "symbol": "parseconfig",
+      "count": 5
+    },
+    {
+      "symbol": "byid",
+      "count": 5
+    },
+    {
+      "symbol": "settingsfile",
+      "count": 5
+    },
+    {
+      "symbol": "knowing",
+      "count": 4
+    },
+    {
+      "symbol": "chose",
+      "count": 4
+    },
+    {
+      "symbol": "everywhere",
+      "count": 4
+    },
+    {
+      "symbol": "countchannelsessions",
+      "count": 4
+    },
+    {
+      "symbol": "arrive",
+      "count": 4
+    },
+    {
+      "symbol": "offer",
+      "count": 4
+    },
+    {
+      "symbol": "hardcoded",
+      "count": 4
+    },
+    {
+      "symbol": "kindtoapi",
+      "count": 4
+    },
+    {
+      "symbol": "unchanged",
+      "count": 4
+    },
+    {
+      "symbol": "removing",
+      "count": 4
+    },
+    {
+      "symbol": "unrelated",
+      "count": 4
+    },
+    {
+      "symbol": "detectedsetting",
+      "count": 4
+    },
+    {
+      "symbol": "prefixed",
+      "count": 3
+    },
+    {
+      "symbol": "getcheckpoint",
+      "count": 3
+    },
+    {
+      "symbol": "listccvs",
+      "count": 3
+    },
+    {
+      "symbol": "tied",
+      "count": 3
+    },
+    {
+      "symbol": "memories_session",
+      "count": 3
+    },
+    {
+      "symbol": "ccvsrouter",
+      "count": 3
+    },
+    {
+      "symbol": "kindbyid",
+      "count": 3
+    },
+    {
+      "symbol": "handing",
+      "count": 3
+    },
+    {
+      "symbol": "missingrequired",
+      "count": 3
+    },
+    {
+      "symbol": "channelsrouter",
+      "count": 3
+    },
+    {
+      "symbol": "kindid",
+      "count": 3
+    },
+    {
+      "symbol": "sanitise",
+      "count": 3
+    },
+    {
+      "symbol": "derived",
+      "count": 3
+    },
+    {
+      "symbol": "provides",
+      "count": 3
+    },
+    {
+      "symbol": "disabling",
+      "count": 3
+    },
+    {
+      "symbol": "stranded",
+      "count": 3
+    },
+    {
+      "symbol": "ship",
+      "count": 3
+    },
+    {
+      "symbol": "receives",
+      "count": 3
+    },
+    {
+      "symbol": "readsettings",
+      "count": 3
+    },
+    {
+      "symbol": "indent",
+      "count": 3
+    },
+    {
+      "symbol": "recovered",
+      "count": 3
+    },
+    {
+      "symbol": "heuristic",
+      "count": 3
+    },
+    {
+      "symbol": "produce",
+      "count": 2
+    },
+    {
+      "symbol": "supply",
+      "count": 2
+    },
+    {
+      "symbol": "__memories__",
+      "count": 2
+    },
+    {
+      "symbol": "reserved",
+      "count": 2
+    },
+    {
+      "symbol": "memory_$",
+      "count": 2
+    },
+    {
+      "symbol": "strand",
+      "count": 2
+    },
+    {
+      "symbol": "sharing",
+      "count": 2
+    },
+    {
+      "symbol": "reconnects",
+      "count": 2
+    },
+    {
+      "symbol": "uninstalled",
+      "count": 2
+    },
+    {
+      "symbol": "enabling",
+      "count": 2
+    },
+    {
+      "symbol": "discard",
+      "count": 2
+    },
+    {
+      "symbol": "declares",
+      "count": 2
+    },
+    {
+      "symbol": "wipe",
+      "count": 2
+    },
+    {
+      "symbol": "writesettings",
+      "count": 2
+    },
+    {
+      "symbol": "parselist",
+      "count": 2
+    },
+    {
+      "symbol": "trimstart",
+      "count": 2
+    },
+    {
+      "symbol": "miss",
+      "count": 2
+    },
+    {
+      "symbol": "dynamically",
+      "count": 2
+    },
+    {
+      "symbol": "detectsettingkeys",
+      "count": 2
+    },
+    {
+      "symbol": "pkgpath",
+      "count": 2
+    },
+    {
+      "symbol": "prototype",
+      "count": 2
+    },
+    {
+      "symbol": "construct",
+      "count": 1
+    },
+    {
+      "symbol": "doors",
+      "count": 1
+    },
+    {
+      "symbol": "citizen",
+      "count": 1
+    },
+    {
+      "symbol": "clearing",
+      "count": 1
+    },
+    {
+      "symbol": "expressible",
+      "count": 1
+    },
+    {
+      "symbol": "reconnected",
+      "count": 1
+    },
+    {
+      "symbol": "decodeuricomponent",
+      "count": 1
+    },
+    {
+      "symbol": "reinstalled",
+      "count": 1
+    },
+    {
+      "symbol": "nests",
+      "count": 1
+    },
+    {
+      "symbol": "indentation",
+      "count": 1
+    },
+    {
+      "symbol": "heading",
+      "count": 1
+    },
+    {
+      "symbol": "llamaserverurl",
+      "count": 1
+    },
+    {
+      "symbol": "implying",
+      "count": 1
+    },
+    {
+      "symbol": "constructor",
+      "count": "function Object() { [native code] }function Object() { [native code] }1function Object() { [native code] }11function Object() { [native code] }1function Object() { [native code] }11function Object() { [native code] }1"
+    },
+    {
+      "symbol": "classname",
+      "count": 1484
+    },
+    {
+      "symbol": "div",
+      "count": 1134
+    },
+    {
+      "symbol": "fg",
+      "count": 864
+    }
+  ],
+  "top_bigrams": [
+    {
+      "bigram": "text\u0000fg",
+      "count": 694
+    },
+    {
+      "bigram": "div\u0000classname",
+      "count": 369
+    },
+    {
+      "bigram": "px\u0000py",
+      "count": 276
+    },
+    {
+      "bigram": "div\u0000div",
+      "count": 276
+    },
+    {
+      "bigram": "h\u0000w",
+      "count": 264
+    },
+    {
+      "bigram": "fg\u0000faint",
+      "count": 244
+    },
+    {
+      "bigram": "text\u0000px",
+      "count": 238
+    },
+    {
+      "bigram": "py\u0000text",
+      "count": 228
+    },
+    {
+      "bigram": "the\u0000agent",
+      "count": 226
+    },
+    {
+      "bigram": "text\u0000xs",
+      "count": 222
+    },
+    {
+      "bigram": "items\u0000center",
+      "count": 220
+    },
+    {
+      "bigram": "export\u0000function",
+      "count": 211
+    },
+    {
+      "bigram": "classname\u0000h",
+      "count": 211
+    },
+    {
+      "bigram": "classname\u0000flex",
+      "count": 208
+    },
+    {
+      "bigram": "span\u0000classname",
+      "count": 205
+    },
+    {
+      "bigram": "flex\u0000items",
+      "count": 191
+    },
+    {
+      "bigram": "p\u0000classname",
+      "count": 189
+    },
+    {
+      "bigram": "res\u0000status",
+      "count": 182
+    },
+    {
+      "bigram": "center\u0000gap",
+      "count": 181
+    },
+    {
+      "bigram": "catch\u0000e",
+      "count": 180
+    },
+    {
+      "bigram": "classname\u0000mt",
+      "count": 179
+    },
+    {
+      "bigram": "px\u0000text",
+      "count": 170
+    },
+    {
+      "bigram": "fg\u0000subtle",
+      "count": 169
+    },
+    {
+      "bigram": "status\u0000json",
+      "count": 167
+    },
+    {
+      "bigram": "json\u0000error",
+      "count": 167
+    },
+    {
+      "bigram": "border\u0000line",
+      "count": 164
+    },
+    {
+      "bigram": "not\u0000null",
+      "count": 159
+    },
+    {
+      "bigram": "rounded\u0000lg",
+      "count": 156
+    },
+    {
+      "bigram": "fg\u0000muted",
+      "count": 150
+    },
+    {
+      "bigram": "button\u0000onclick",
+      "count": 150
+    },
+    {
+      "bigram": "error\u0000message",
+      "count": 149
+    },
+    {
+      "bigram": "bg\u0000fg",
+      "count": 148
+    },
+    {
+      "bigram": "classname\u0000text",
+      "count": 147
+    },
+    {
+      "bigram": "border\u0000border",
+      "count": 147
+    },
+    {
+      "bigram": "return\u0000res",
+      "count": 145
+    },
+    {
+      "bigram": "text\u0000sm",
+      "count": 145
+    },
+    {
+      "bigram": "as\u0000error",
+      "count": 144
+    },
+    {
+      "bigram": "e\u0000as",
+      "count": 142
+    },
+    {
+      "bigram": "xs\u0000text",
+      "count": 142
+    },
+    {
+      "bigram": "name\u0000string",
+      "count": 141
+    },
+    {
+      "bigram": "id\u0000string",
+      "count": 141
+    },
+    {
+      "bigram": "json\u0000stringify",
+      "count": 140
+    },
+    {
+      "bigram": "so\u0000the",
+      "count": 138
+    },
+    {
+      "bigram": "getdb\u0000prepare",
+      "count": 136
+    },
+    {
+      "bigram": "string\u0000null",
+      "count": 136
+    },
+    {
+      "bigram": "res\u0000json",
+      "count": 134
+    },
+    {
+      "bigram": "for\u0000const",
+      "count": 133
+    },
+    {
+      "bigram": "hover\u0000bg",
+      "count": 131
+    },
+    {
+      "bigram": "text\u0000not",
+      "count": 126
+    },
+    {
+      "bigram": "path\u0000join",
+      "count": 123
+    },
+    {
+      "bigram": "to\u0000the",
+      "count": 121
+    },
+    {
+      "bigram": "rather\u0000than",
+      "count": 120
+    },
+    {
+      "bigram": "from\u0000node",
+      "count": 115
+    },
+    {
+      "bigram": "try\u0000const",
+      "count": 115
+    },
+    {
+      "bigram": "console\u0000log",
+      "count": 115
+    },
+    {
+      "bigram": "the\u0000portal",
+      "count": 114
+    },
+    {
+      "bigram": "process\u0000env",
+      "count": 111
+    },
+    {
+      "bigram": "line\u0000bg",
+      "count": 109
+    },
+    {
+      "bigram": "bg\u0000accent",
+      "count": 108
+    },
+    {
+      "bigram": "text\u0000accent",
+      "count": 107
+    },
+    {
+      "bigram": "null\u0000const",
+      "count": 106
+    },
+    {
+      "bigram": "null\u0000default",
+      "count": 105
+    },
+    {
+      "bigram": "hover\u0000text",
+      "count": 105
+    },
+    {
+      "bigram": "of\u0000the",
+      "count": 103
+    },
+    {
+      "bigram": "and\u0000the",
+      "count": 103
+    },
+    {
+      "bigram": "in\u0000the",
+      "count": 103
+    },
+    {
+      "bigram": "p\u0000div",
+      "count": 103
+    },
+    {
+      "bigram": "sm\u0000text",
+      "count": 102
+    },
+    {
+      "bigram": "is\u0000the",
+      "count": 101
+    },
+    {
+      "bigram": "js\u0000import",
+      "count": 100
+    },
+    {
+      "bigram": "it\u0000is",
+      "count": 99
+    },
+    {
+      "bigram": "font\u0000mono",
+      "count": 99
+    },
+    {
+      "bigram": "w\u0000shrink",
+      "count": 97
+    },
+    {
+      "bigram": "button\u0000div",
+      "count": 97
+    },
+    {
+      "bigram": "classname\u0000rounded",
+      "count": 96
+    },
+    {
+      "bigram": "export\u0000interface",
+      "count": 95
+    },
+    {
+      "bigram": "string\u0000const",
+      "count": 95
+    },
+    {
+      "bigram": "the\u0000model",
+      "count": 92
+    },
+    {
+      "bigram": "gap\u0000rounded",
+      "count": 92
+    },
+    {
+      "bigram": "bg\u0000raised",
+      "count": 92
+    },
+    {
+      "bigram": "from\u0000the",
+      "count": 91
+    },
+    {
+      "bigram": "mono\u0000text",
+      "count": 91
+    },
+    {
+      "bigram": "if\u0000typeof",
+      "count": 90
+    },
+    {
+      "bigram": "promise\u0000void",
+      "count": 90
+    },
+    {
+      "bigram": "rounded\u0000xl",
+      "count": 88
+    },
+    {
+      "bigram": "false\u0000const",
+      "count": 87
+    },
+    {
+      "bigram": "transition\u0000hover",
+      "count": 87
+    },
+    {
+      "bigram": "ok\u0000true",
+      "count": 85
+    },
+    {
+      "bigram": "top\u0000k",
+      "count": 85
+    },
+    {
+      "bigram": "req\u0000res",
+      "count": 85
+    },
+    {
+      "bigram": "text\u0000string",
+      "count": 85
+    },
+    {
+      "bigram": "div\u0000class",
+      "count": 85
+    },
+    {
+      "bigram": "null\u0000null",
+      "count": 84
+    },
+    {
+      "bigram": "await\u0000api",
+      "count": 83
+    },
+    {
+      "bigram": "w\u0000full",
+      "count": 81
+    },
+    {
+      "bigram": "target\u0000value",
+      "count": 81
+    },
+    {
+      "bigram": "async\u0000function",
+      "count": 80
+    },
+    {
+      "bigram": "so\u0000a",
+      "count": 80
+    },
+    {
+      "bigram": "the\u0000same",
+      "count": 80
+    },
+    {
+      "bigram": "prepare\u0000select",
+      "count": 78
+    },
+    {
+      "bigram": "json\u0000ok",
+      "count": 78
+    },
+    {
+      "bigram": "classname\u0000mb",
+      "count": 78
+    },
+    {
+      "bigram": "sessionid\u0000string",
+      "count": 77
+    },
+    {
+      "bigram": "xl\u0000border",
+      "count": 77
+    },
+    {
+      "bigram": "document\u0000getelementbyid",
+      "count": 77
+    },
+    {
+      "bigram": "for\u0000the",
+      "count": 76
+    },
+    {
+      "bigram": "is\u0000a",
+      "count": 76
+    },
+    {
+      "bigram": "s\u0000name",
+      "count": 76
+    },
+    {
+      "bigram": "res\u0000const",
+      "count": 76
+    },
+    {
+      "bigram": "is\u0000not",
+      "count": 74
+    },
+    {
+      "bigram": "as\u0000a",
+      "count": 74
+    },
+    {
+      "bigram": "for\u0000a",
+      "count": 73
+    },
+    {
+      "bigram": "on\u0000the",
+      "count": 73
+    },
+    {
+      "bigram": "void\u0000const",
+      "count": 72
+    },
+    {
+      "bigram": "new\u0000error",
+      "count": 70
+    },
+    {
+      "bigram": "session\u0000id",
+      "count": 70
+    },
+    {
+      "bigram": "e\u0000target",
+      "count": 69
+    },
+    {
+      "bigram": "body\u0000json",
+      "count": 68
+    },
+    {
+      "bigram": "new\u0000date",
+      "count": 68
+    },
+    {
+      "bigram": "string\u0000void",
+      "count": 68
+    },
+    {
+      "bigram": "min\u0000w",
+      "count": 67
+    },
+    {
+      "bigram": "shrink\u0000text",
+      "count": 67
+    },
+    {
+      "bigram": "req\u0000body",
+      "count": 65
+    },
+    {
+      "bigram": "its\u0000own",
+      "count": 64
+    },
+    {
+      "bigram": "n\u0000n",
+      "count": 64
+    },
+    {
+      "bigram": "string\u0000string",
+      "count": 64
+    },
+    {
+      "bigram": "a\u0000message",
+      "count": 64
+    },
+    {
+      "bigram": "lg\u0000border",
+      "count": 64
+    },
+    {
+      "bigram": "throw\u0000new",
+      "count": 63
+    },
+    {
+      "bigram": "s\u0000own",
+      "count": 63
+    },
+    {
+      "bigram": "so\u0000it",
+      "count": 62
+    },
+    {
+      "bigram": "method\u0000post",
+      "count": 61
+    },
+    {
+      "bigram": "classname\u0000min",
+      "count": 61
+    },
+    {
+      "bigram": "with\u0000the",
+      "count": 60
+    },
+    {
+      "bigram": "record\u0000string",
+      "count": 60
+    },
+    {
+      "bigram": "string\u0000json",
+      "count": 60
+    },
+    {
+      "bigram": "from\u0000react",
+      "count": 60
+    },
+    {
+      "bigram": "space\u0000y",
+      "count": 60
+    },
+    {
+      "bigram": "onchange\u0000e",
+      "count": 60
+    },
+    {
+      "bigram": "text\u0000danger",
+      "count": 59
+    },
+    {
+      "bigram": "font\u0000medium",
+      "count": 59
+    },
+    {
+      "bigram": "$\u0000e",
+      "count": 57
+    },
+    {
+      "bigram": "req\u0000params",
+      "count": 57
+    },
+    {
+      "bigram": "usestate\u0000false",
+      "count": 57
+    },
+    {
+      "bigram": "with\u0000a",
+      "count": 56
+    },
+    {
+      "bigram": "the\u0000workspace",
+      "count": 56
+    },
+    {
+      "bigram": "the\u0000session",
+      "count": 56
+    },
+    {
+      "bigram": "error\u0000e",
+      "count": 55
+    },
+    {
+      "bigram": "try\u0000await",
+      "count": 55
+    },
+    {
+      "bigram": "when\u0000the",
+      "count": 55
+    },
+    {
+      "bigram": "trim\u0000if",
+      "count": 55
+    },
+    {
+      "bigram": "w\u0000flex",
+      "count": 55
+    },
+    {
+      "bigram": "onerror\u0000e",
+      "count": 55
+    },
+    {
+      "bigram": "span\u0000div",
+      "count": 54
+    },
+    {
+      "bigram": "s\u0000s",
+      "count": 53
+    },
+    {
+      "bigram": "r\u0000r",
+      "count": 53
+    },
+    {
+      "bigram": "string\u0000promise",
+      "count": 53
+    },
+    {
+      "bigram": "a\u0000routine",
+      "count": 53
+    },
+    {
+      "bigram": "catch\u0000return",
+      "count": 52
+    },
+    {
+      "bigram": "a\u0000session",
+      "count": 52
+    },
+    {
+      "bigram": "id\u0000if",
+      "count": 52
+    },
+    {
+      "bigram": "agent\u0000s",
+      "count": 51
+    },
+    {
+      "bigram": "return\u0000div",
+      "count": 51
+    },
+    {
+      "bigram": "rounded\u0000full",
+      "count": 51
+    },
+    {
+      "bigram": "mt\u0000text",
+      "count": 51
+    },
+    {
+      "bigram": "path\u0000resolve",
+      "count": 50
+    },
+    {
+      "bigram": "content\u0000string",
+      "count": 50
+    },
+    {
+      "bigram": "lg\u0000bg",
+      "count": 50
+    },
+    {
+      "bigram": "medium\u0000text",
+      "count": 50
+    },
+    {
+      "bigram": "classname\u0000truncate",
+      "count": 49
+    },
+    {
+      "bigram": "not\u0000found",
+      "count": 48
+    },
+    {
+      "bigram": "return\u0000const",
+      "count": 48
+    },
+    {
+      "bigram": "select\u0000from",
+      "count": 48
+    },
+    {
+      "bigram": "font\u0000size",
+      "count": 48
+    },
+    {
+      "bigram": "size\u0000px",
+      "count": 48
+    },
+    {
+      "bigram": "api\u0000sessions",
+      "count": 47
+    },
+    {
+      "bigram": "math\u0000max",
+      "count": 47
+    },
+    {
+      "bigram": "do\u0000not",
+      "count": 47
+    },
+    {
+      "bigram": "const\u0000name",
+      "count": 47
+    },
+    {
+      "bigram": "classname\u0000ml",
+      "count": 47
+    },
+    {
+      "bigram": "button\u0000button",
+      "count": 47
+    },
+    {
+      "bigram": "instead\u0000of",
+      "count": 46
+    },
+    {
+      "bigram": "content\u0000type",
+      "count": 46
+    },
+    {
+      "bigram": "where\u0000id",
+      "count": 46
+    },
+    {
+      "bigram": "does\u0000not",
+      "count": 46
+    },
+    {
+      "bigram": "disabled\u0000opacity",
+      "count": 46
+    },
+    {
+      "bigram": "div\u0000style",
+      "count": 46
+    },
+    {
+      "bigram": "a\u0000b",
+      "count": 45
+    },
+    {
+      "bigram": "if\u0000existssync",
+      "count": 45
+    },
+    {
+      "bigram": "join\u0000n",
+      "count": 45
+    },
+    {
+      "bigram": "e\u0000res",
+      "count": 45
+    },
+    {
+      "bigram": "d\u0000exec",
+      "count": 45
+    },
+    {
+      "bigram": "px\u0000font",
+      "count": 45
+    },
+    {
+      "bigram": "$\u0000s",
+      "count": 44
+    },
+    {
+      "bigram": "string\u0000description",
+      "count": 44
+    },
+    {
+      "bigram": "string\u0000return",
+      "count": 44
+    },
+    {
+      "bigram": "p\u0000p",
+      "count": 44
+    },
+    {
+      "bigram": "border\u0000accent",
+      "count": 44
+    },
+    {
+      "bigram": "new\u0000set",
+      "count": 43
+    },
+    {
+      "bigram": "$\u0000sessionid",
+      "count": 43
+    }
+  ],
+  "chunk_hashes": [
+    {
+      "hash": 1758039189,
+      "count": 4,
+      "example": "import express, { type Router } from \"express\"; "
+    },
+    {
+      "hash": 2409631529,
+      "count": 4,
+      "example": "import { execFile } from \"node:child_process\"; i"
+    },
+    {
+      "hash": 2872883953,
+      "count": 4,
+      "example": "import { useEffect, useState } from \"react\"; imp"
+    },
+    {
+      "hash": 3532354191,
+      "count": 4,
+      "example": "import { useCallback, useEffect, useState } from"
+    },
+    {
+      "hash": 3813360027,
+      "count": 3,
+      "example": "    <h3 className=\"text-xs font-semibold upperca"
+    },
+    {
+      "hash": 605846109,
+      "count": 3,
+      "example": "p:6px;background:#0d1117;color:#e6edf3;border:1p"
+    },
+    {
+      "hash": 1776629069,
+      "count": 2,
+      "example": "y } from \"node:util\"; import { existsSync, mkdir"
+    },
+    {
+      "hash": 1569456952,
+      "count": 2,
+      "example": "nc, writeFileSync } from \"node:fs\"; import path "
+    },
+    {
+      "hash": 641453025,
+      "count": 2,
+      "example": "s.status(500).json({ error: (e as Error).message"
+    },
+    {
+      "hash": 2000524221,
+      "count": 2,
+      "example": "import express, { type Router } from \"express\"; "
+    },
+    {
+      "hash": 3429757355,
+      "count": 2,
+      "example": " });     } catch (e) {       res.status(500).jso"
+    },
+    {
+      "hash": 2566542189,
+      "count": 2,
+      "example": "atch (e) {       res.status(500).json({ error: ("
+    },
+    {
+      "hash": 1872582929,
+      "count": 2,
+      "example": "} from \"nanoid\"; import {   appendThreadMessage,"
+    },
+    {
+      "hash": 2616010745,
+      "count": 2,
+      "example": "getSession(req.params.id);   if (!session) retur"
+    },
+    {
+      "hash": 3540974798,
+      "count": 2,
+      "example": "onst client = await sessions.client(session.id);"
+    },
+    {
+      "hash": 4247886530,
+      "count": 2,
+      "example": "e, levels, models, stats] = await Promise.all([ "
+    },
+    {
+      "hash": 2567400930,
+      "count": 2,
+      "example": "State(),       client.getThinkingLevels(),      "
+    },
+    {
+      "hash": 2909222361,
+      "count": 2,
+      "example": "   } catch (e) {     res.status(500).json({ erro"
+    },
+    {
+      "hash": 2090467687,
+      "count": 2,
+      "example": "import { Type } from \"typebox\"; import { getDb, "
+    },
+    {
+      "hash": 2831561407,
+      "count": 2,
+      "example": "import { Type } from \"typebox\"; import { existsS"
+    },
+    {
+      "hash": 3807746764,
+      "count": 2,
+      "example": "import { Type } from \"typebox\"; import { nanoid "
+    },
+    {
+      "hash": 2790754037,
+      "count": 2,
+      "example": ";       const name = meta.name?.trim() || path.b"
+    },
+    {
+      "hash": 2124599956,
+      "count": 2,
+      "example": "spaces/${encodeURIComponent(workspace)}/file?pat"
+    },
+    {
+      "hash": 492956679,
+      "count": 2,
+      "example": "ader className=\"rounded-2xl border border-line b"
+    },
+    {
+      "hash": 3988922590,
+      "count": 2,
+      "example": " from-accent/10 via-transparent to-transparent p"
+    },
+    {
+      "hash": 1205472783,
+      "count": 2,
+      "example": "s font-semibold uppercase tracking-wider text-fg"
+    },
+    {
+      "hash": 2608211376,
+      "count": 2,
+      "example": "     } catch (e) {       onError((e as Error).me"
+    },
+    {
+      "hash": 2681296083,
+      "count": 2,
+      "example": "ms-center gap-2 rounded-lg border border-line bg"
+    },
+    {
+      "hash": 1899596322,
+      "count": 2,
+      "example": "       className={`absolute top-0.5 h-4 w-4 roun"
+    },
+    {
+      "hash": 3140743294,
+      "count": 2,
+      "example": "     <LuChevronRight className=\"h-4 w-4 shrink-0"
+    },
+    {
+      "hash": 858261268,
+      "count": 2,
+      "example": "   <div className=\"flex items-center gap-2\">    "
+    },
+    {
+      "hash": 2079542803,
+      "count": 2,
+      "example": "import { useEffect, useMemo, useRef, useState } "
+    },
+    {
+      "hash": 1011444527,
+      "count": 2,
+      "example": "inline-flex items-center gap-1 rounded-md px-1.5"
+    },
+    {
+      "hash": 261532297,
+      "count": 2,
+      "example": "        </p>                 <button            "
+    },
+    {
+      "hash": 1295606205,
+      "count": 2,
+      "example": "             <dd className=\"ml-auto truncate pl-"
+    },
+    {
+      "hash": 500099183,
+      "count": 2,
+      "example": "  onError((e as Error).message);     } finally {"
+    },
+    {
+      "hash": 977507776,
+      "count": 2,
+      "example": "}               className={primaryCls}          "
+    },
+    {
+      "hash": 1578258631,
+      "count": 2,
+      "example": "1 text-fg-faint transition hover:bg-fg/5 hover:t"
+    },
+    {
+      "hash": 3643898638,
+      "count": 2,
+      "example": "import { useEffect, useState } from \"react\"; imp"
+    },
+    {
+      "hash": 2666854174,
+      "count": 2,
+      "example": "ap-2 rounded-xl border border-danger/30 bg-dange"
+    },
+    {
+      "hash": 3287219773,
+      "count": 2,
+      "example": "ackground:#0d1117;color:#e6edf3;border:1px solid"
+    },
+    {
+      "hash": 1889250623,
+      "count": 2,
+      "example": "border-radius:6px;padding:6px;\"></div>         <"
+    },
+    {
+      "hash": 3539548629,
+      "count": 2,
+      "example": "nd:#0d1117;color:#e6edf3;border:1px solid #30363"
+    },
+    {
+      "hash": 532054026,
+      "count": 1,
+      "example": "{   \"name\": \"@pithagoras/server\",   \"private\": t"
+    },
+    {
+      "hash": 3973083328,
+      "count": 1,
+      "example": "module\",   \"scripts\": {     \"build\": \"tsc -p tsc"
+    },
+    {
+      "hash": 1637185595,
+      "count": 1,
+      "example": " \"dev\": \"tsx watch src/index.ts\"   },   \"depende"
+    },
+    {
+      "hash": 1117636954,
+      "count": 1,
+      "example": "earendil-works/pi-coding-agent\": \"0.82.1\",     \""
+    },
+    {
+      "hash": 1600579369,
+      "count": 1,
+      "example": " \"13.0.2\",     \"cookie-parser\": \"1.4.7\",     \"ex"
+    },
+    {
+      "hash": 2156887801,
+      "count": 1,
+      "example": "     \"nanoid\": \"5.1.16\",     \"typebox\": \"1.1.38\""
+    },
+    {
+      "hash": 1815106212,
+      "count": 1,
+      "example": "ndencies\": {     \"@types/better-sqlite3\": \"7.6.1"
+    },
+    {
+      "hash": 1016227436,
+      "count": 1,
+      "example": "cookie-parser\": \"1.4.10\",     \"@types/express\": "
+    },
+    {
+      "hash": 4292239691,
+      "count": 1,
+      "example": "ypes/node\": \"22.20.1\",     \"tsx\": \"4.23.1\",     "
+    },
+    {
+      "hash": 575279050,
+      "count": 1,
+      "example": "#!/usr/bin/env node /**  * pre-tokenize-project."
+    },
+    {
+      "hash": 1707753156,
+      "count": 1,
+      "example": "ze every file in a project against the  * model'"
+    },
+    {
+      "hash": 3342393808,
+      "count": 1,
+      "example": " (the remote llama-server's /tokenize, or the lo"
+    },
+    {
+      "hash": 706509504,
+      "count": 1,
+      "example": "ama-tokens CLI), so the agent/model can ingest p"
+    },
+    {
+      "hash": 4249065383,
+      "count": 1,
+      "example": "ns  * instead of the model re-tokenizing raw tex"
+    },
+    {
+      "hash": 1322035065,
+      "count": 1,
+      "example": "gather loop.  *  * This is the direct-token-inpu"
+    },
+    {
+      "hash": 2490026374,
+      "count": 1,
+      "example": "el's token stream IS the thing  * we optimise. B"
+    },
+    {
+      "hash": 2155483708,
+      "count": 1,
+      "example": "oken IDs + counts means a runtime can feed the  "
+    },
+    {
+      "hash": 2521538070,
+      "count": 1,
+      "example": "ens (no text→token work at inference), and the f"
+    },
+    {
+      "hash": 2645448323,
+      "count": 1,
+      "example": "ng can reason over exact token budgets per file."
+    },
+    {
+      "hash": 1102213906,
+      "count": 1,
+      "example": "itignored): a JSON manifest at data/project-toke"
+    },
+    {
+      "hash": 3036537975,
+      "count": 1,
+      "example": "*     \"tokenizer\": { \"kind\": \"remote|llama-token"
+    },
+    {
+      "hash": 2109753360,
+      "count": 1,
+      "example": "d or path>\" },  *     \"total_tokens\": <int>,  * "
+    },
+    {
+      "hash": 3853632652,
+      "count": 1,
+      "example": "*       { \"path\": \"server/src/index.ts\", \"chars\""
+    },
+    {
+      "hash": 2913054171,
+      "count": 1,
+      "example": "\": 6513,  *         \"tokenIds\": [ ...pre-compute"
+    },
+    {
+      "hash": 3222457573,
+      "count": 1,
+      "example": "    ]  *   }  *  * Usage:  *   node server/scrip"
+    },
+    {
+      "hash": 2025152991,
+      "count": 1,
+      "example": "project.mjs [projectDir]  * Env:  *   TOKENIZE_U"
+    },
+    {
+      "hash": 2831034223,
+      "count": 1,
+      "example": "tp://192.168.2.64:6464/tokenize — the 27B)  *   "
+    },
+    {
+      "hash": 1906934713,
+      "count": 1,
+      "example": "path to fork's llama-tokens binary, if using it "
+    },
+    {
+      "hash": 979701114,
+      "count": 1,
+      "example": "T            (default $PWD/data/project-tokens.j"
+    },
+    {
+      "hash": 52032925,
+      "count": 1,
+      "example": "path from \"node:path\"; import {   readdirSync,  "
+    },
+    {
+      "hash": 2456502540,
+      "count": 1,
+      "example": " writeFileSync,   statSync,   unlinkSync, } from"
+    },
+    {
+      "hash": 1890001817,
+      "count": 1,
+      "example": "rt { tmpdir } from \"node:os\"; import { execFileS"
+    },
+    {
+      "hash": 3155580026,
+      "count": 1,
+      "example": ":child_process\"; const TOKENIZE_URL = process.en"
+    },
+    {
+      "hash": 154354932,
+      "count": 1,
+      "example": "|| \"http://192.168.2.64:6464/tokenize\"; const LL"
+    },
+    {
+      "hash": 2153079706,
+      "count": 1,
+      "example": "cess.env.LLAMA_TOKENS || \"\"; const OUT = process"
+    },
+    {
+      "hash": 1654181687,
+      "count": 1,
+      "example": ".join(process.cwd(), \"data\", \"project-tokens.jso"
+    },
+    {
+      "hash": 670772221,
+      "count": 1,
+      "example": "= process.argv[2] || process.cwd(); const EXCLUD"
+    },
+    {
+      "hash": 3379165801,
+      "count": 1,
+      "example": " \"node_modules\",   \".git\",   \"dist\",   \"build\", "
+    },
+    {
+      "hash": 365412175,
+      "count": 1,
+      "example": "ta\",   \"gitrepos\",   \"vendor\",   \".cache\", ]); c"
+    },
+    {
+      "hash": 1070616915,
+      "count": 1,
+      "example": "E = 10_000_000; // hard safety cap per file (byt"
+    },
+    {
+      "hash": 3472977826,
+      "count": 1,
+      "example": "lk(dir, out) {   let ents;   try {     ents = re"
+    },
+    {
+      "hash": 2538617558,
+      "count": 1,
+      "example": " withFileTypes: true });   } catch {     return "
+    },
+    {
+      "hash": 197642433,
+      "count": 1,
+      "example": "sort((a, b) => (a.name < b.name ? -1 : a.name > "
+    },
+    {
+      "hash": 284443437,
+      "count": 1,
+      "example": ";   for (const ent of ents) {     if (EXCLUDE.ha"
+    },
+    {
+      "hash": 2990075922,
+      "count": 1,
+      "example": "tinue;     const full = path.join(dir, ent.name)"
+    },
+    {
+      "hash": 3946640287,
+      "count": 1,
+      "example": "Directory()) walk(full, out);     else if (ent.i"
+    },
+    {
+      "hash": 3207355282,
+      "count": 1,
+      "example": "h(path.relative(PROJ, full));   }   return out; "
+    },
+    {
+      "hash": 126218644,
+      "count": 1,
+      "example": "n tokenizeRemote(text) {   const res = await fet"
+    },
+    {
+      "hash": 3705524131,
+      "count": 1,
+      "example": " {     method: \"POST\",     headers: { \"content-t"
+    },
+    {
+      "hash": 2169433097,
+      "count": 1,
+      "example": "on/json\" },     body: JSON.stringify({ content: "
+    },
+    {
+      "hash": 3800979958,
+      "count": 1,
+      "example": "l: false }),     signal: AbortSignal.timeout(120"
+    },
+    {
+      "hash": 2431269846,
+      "count": 1,
+      "example": "f (!res.ok) throw new Error(`tokenize HTTP ${res"
+    },
+    {
+      "hash": 3001788599,
+      "count": 1,
+      "example": "nst j = await res.json();   return Array.isArray"
+    },
+    {
+      "hash": 572102841,
+      "count": 1,
+      "example": "okens : []; } function tokenizeLocal(text) {   /"
+    },
+    {
+      "hash": 2966109721,
+      "count": 1,
+      "example": "ama-tokens CLI. Writes text to a temp file to av"
+    },
+    {
+      "hash": 1491623105,
+      "count": 1,
+      "example": "mits on large files. The exact flag shape may va"
+    },
+    {
+      "hash": 2784149406,
+      "count": 1,
+      "example": "uild;   // the remote /tokenize path is the veri"
+    },
+    {
+      "hash": 3537569553,
+      "count": 1,
+      "example": "const bin = path.isAbsolute(LLAMA_TOKENS) ? LLAM"
+    },
+    {
+      "hash": 3514309523,
+      "count": 1,
+      "example": "_TOKENS;   const tmp = path.join(tmpdir(), `pret"
+    },
+    {
+      "hash": 3397498363,
+      "count": 1,
+      "example": ".txt`);   writeFileSync(tmp, text, \"utf8\");   tr"
+    },
+    {
+      "hash": 1803279971,
+      "count": 1,
+      "example": "t = execFileSync(bin, [\"--input\", tmp], {       "
+    },
+    {
+      "hash": 1080068007,
+      "count": 1,
+      "example": ",       maxBuffer: 256 * 1024 * 1024,       time"
+    },
+    {
+      "hash": 2810874324,
+      "count": 1,
+      "example": "  });     return out       .split(/\\s+/)       ."
+    },
+    {
+      "hash": 2999471521,
+      "count": 1,
+      "example": "-?\\d+$/.test(x))       .map(Number);   } finally"
+    },
+    {
+      "hash": 334479296,
+      "count": 1,
+      "example": "   unlinkSync(tmp);     } catch {       /* best "
+    },
+    {
+      "hash": 1160474459,
+      "count": 1,
+      "example": "  } } async function main() {   const files = wa"
+    },
+    {
+      "hash": 1982957782,
+      "count": 1,
+      "example": " const useLocal = !!LLAMA_TOKENS;   console.log("
+    },
+    {
+      "hash": 917040975,
+      "count": 1,
+      "example": "ngth} files to tokenize (tokenizer: ${useLocal ?"
+    },
+    {
+      "hash": 1422761631,
+      "count": 1,
+      "example": ": \"remote \" + TOKENIZE_URL})`   );   const manif"
+    },
+    {
+      "hash": 808320778,
+      "count": 1,
+      "example": "enizer: {       kind: useLocal ? \"llama-tokens\" "
+    },
+    {
+      "hash": 70733,
+      "count": 1,
+      "example": "  model: useLocal ? process.env.TOKENIZER_MODEL "
+    },
+    {
+      "hash": 3310958433,
+      "count": 1,
+      "example": "_URL,     },     total_tokens: 0,     files: [],"
+    },
+    {
+      "hash": 1971271288,
+      "count": 1,
+      "example": " 0;   for (const rel of files) {     const full "
+    },
+    {
+      "hash": 1170439304,
+      "count": 1,
+      "example": ", rel);     let txt;     try {       if (statSyn"
+    },
+    {
+      "hash": 4141672459,
+      "count": 1,
+      "example": "AX_PER_FILE) {         console.log(`  skip (too "
+    },
+    {
+      "hash": 1571365693,
+      "count": 1,
+      "example": "        continue;       }       txt = readFileSy"
+    },
+    {
+      "hash": 1699680634,
+      "count": 1,
+      "example": ";     } catch {       continue;     }     let to"
+    },
+    {
+      "hash": 1207090526,
+      "count": 1,
+      "example": "{       tokenIds = useLocal ? tokenizeLocal(txt)"
+    },
+    {
+      "hash": 14106481,
+      "count": 1,
+      "example": "eRemote(txt);     } catch (e) {       console.wa"
+    },
+    {
+      "hash": 2762088513,
+      "count": 1,
+      "example": "AILED ${rel}: ${e.message}`);       continue;   "
+    },
+    {
+      "hash": 1281377724,
+      "count": 1,
+      "example": ".files.push({ path: rel, chars: txt.length, toke"
+    },
+    {
+      "hash": 1081590998,
+      "count": 1,
+      "example": "gth, tokenIds });     manifest.total_tokens += t"
+    },
+    {
+      "hash": 30006530,
+      "count": 1,
+      "example": "    i += 1;     if (i % 20 === 0) console.log(` "
+    },
+    {
+      "hash": 2761736276,
+      "count": 1,
+      "example": ".length} tokenized`);   }   writeFileSync(OUT, J"
+    },
+    {
+      "hash": 2091609711,
+      "count": 1,
+      "example": "anifest));   console.log(     `\\nDone: ${manifes"
+    },
+    {
+      "hash": 1821333603,
+      "count": 1,
+      "example": "files, ${manifest.total_tokens} total tokens`   "
+    },
+    {
+      "hash": 2442724202,
+      "count": 1,
+      "example": "(`Manifest: ${OUT}`); } main().catch((e) => {   "
+    },
+    {
+      "hash": 635461332,
+      "count": 1,
+      "example": "#!/usr/bin/env node /**  * run-upgrade-agent.mjs"
+    },
+    {
+      "hash": 3569646320,
+      "count": 1,
+      "example": "nt to upgrade the pi workspace, with a  * timed "
+    },
+    {
+      "hash": 581101194,
+      "count": 1,
+      "example": "col.  *  * Protocol (matches the request):  *   "
+    },
+    {
+      "hash": 3675060164,
+      "count": 1,
+      "example": " session against the workspace.  *   2. Prompt i"
+    },
+    {
+      "hash": 3041312784,
+      "count": 1,
+      "example": " non-destructive upgrade task.  *   3. Wait 30s,"
+    },
+    {
+      "hash": 1186936349,
+      "count": 1,
+      "example": "t is producing usable actions (tool calls /  *  "
+    },
+    {
+      "hash": 3887850896,
+      "count": 1,
+      "example": "tput recorded since the prompt).  *   4. Wait an"
+    },
+    {
+      "hash": 4087049748,
+      "count": 1,
+      "example": "5. Run the 600s \"keep going / finish\" command (a"
+    },
+    {
+      "hash": 1969420573,
+      "count": 1,
+      "example": "passed).  *  * Drives the portal over its own HT"
+    },
+    {
+      "hash": 1374900240,
+      "count": 1,
+      "example": "t:4100) and validates via  * the portal DB (even"
+    },
+    {
+      "hash": 3067154147,
+      "count": 1,
+      "example": "the session). No code is pushed; the  * agent on"
+    },
+    {
+      "hash": 2242477684,
+      "count": 1,
+      "example": "kspace it was given.  *  * Usage:  *   node serv"
+    },
+    {
+      "hash": 2977013487,
+      "count": 1,
+      "example": "pgrade-agent.mjs [workspace] [--no-run]  * Env: "
+    },
+    {
+      "hash": 1446932143,
+      "count": 1,
+      "example": "ult http://localhost:4100), PORTAL_PASS (default"
+    },
+    {
+      "hash": 716233223,
+      "count": 1,
+      "example": " WS (default the pithagorus-upgrades/pithagoras "
+    },
+    {
+      "hash": 1866354325,
+      "count": 1,
+      "example": "import Database from \"better-sqlite3\"; import pa"
+    },
+    {
+      "hash": 3768269884,
+      "count": 1,
+      "example": "th\"; import { existsSync, mkdirSync, readFileSyn"
+    },
+    {
+      "hash": 1852919157,
+      "count": 1,
+      "example": "statSync, writeFileSync } from \"node:fs\"; import"
+    },
+    {
+      "hash": 590203228,
+      "count": 1,
+      "example": "} from \"node:child_process\"; const ROOT = path.r"
+    },
+    {
+      "hash": 729843744,
+      "count": 1,
+      "example": "name(new URL(import.meta.url).pathname), \"../..\""
+    },
+    {
+      "hash": 3476384167,
+      "count": 1,
+      "example": "= process.env.PORTAL_URL || \"http://localhost:41"
+    },
+    {
+      "hash": 1362892300,
+      "count": 1,
+      "example": "= process.env.PORTAL_PASS || \"deathlover\"; const"
+    },
+    {
+      "hash": 4043675075,
+      "count": 1,
+      "example": "ss.env.DATA_DIR ? path.join(process.env.DATA_DIR"
+    },
+    {
+      "hash": 2542585486,
+      "count": 1,
+      "example": " path.join(ROOT, \"data\", \"portal.db\"); const WS "
+    },
+    {
+      "hash": 3298963173,
+      "count": 1,
+      "example": " || path.join(ROOT, \"data/workspaces/pithagorus-"
+    },
+    {
+      "hash": 4194303890,
+      "count": 1,
+      "example": "ras\"); const NO_RUN = process.argv.includes(\"--n"
+    },
+    {
+      "hash": 1938145860,
+      "count": 1,
+      "example": "/prompt endpoint can block while the model negot"
+    },
+    {
+      "hash": 525109958,
+      "count": 1,
+      "example": " undici's // default 300s headers timeout throws"
+    },
+    {
+      "hash": 1464520469,
+      "count": 1,
+      "example": "_TIMEOUT even though the // prompt was accepted."
+    },
+    {
+      "hash": 3138931144,
+      "count": 1,
+      "example": "h a 10-min overall budget so the harness // hold"
+    },
+    {
+      "hash": 3022060527,
+      "count": 1,
+      "example": "nd keeps supervising the run. const REQ_TIMEOUT_"
+    },
+    {
+      "hash": 3193791226,
+      "count": 1,
+      "example": " The remote 27B is a REASONING model: it thinks "
+    },
+    {
+      "hash": 2038831779,
+      "count": 1,
+      "example": "re emitting // its first message or tool call, s"
+    },
+    {
+      "hash": 3607865530,
+      "count": 1,
+      "example": "tion gate aborts genuinely // working runs (scor"
+    },
+    {
+      "hash": 2305926959,
+      "count": 1,
+      "example": " it reasoned). Be patient: wait up to // WAIT_FI"
+    },
+    {
+      "hash": 1171870650,
+      "count": 1,
+      "example": "le action; only abort if truly nothing appears. "
+    },
+    {
+      "hash": 508275657,
+      "count": 1,
+      "example": "_MS = 240_000;    // up to 4 min for the first m"
+    },
+    {
+      "hash": 40640876,
+      "count": 1,
+      "example": " const MIN_FIRST_SCORE = 1;        // any single"
+    },
+    {
+      "hash": 98664309,
+      "count": 1,
+      "example": "or tool call proves it's alive const WAIT_BETWEE"
+    },
+    {
+      "hash": 493079584,
+      "count": 1,
+      "example": " // then wait 45s more to confirm it's still mov"
+    },
+    {
+      "hash": 3679977016,
+      "count": 1,
+      "example": "COND_SCORE = 3;       // by then it should have "
+    },
+    {
+      "hash": 4223432532,
+      "count": 1,
+      "example": "const RUN_LONG_MS = 60_000;       // the long fo"
+    },
+    {
+      "hash": 1905252887,
+      "count": 1,
+      "example": "600_000; use 60s for a smoke test) // Reasoning "
+    },
+    {
+      "hash": 3998719111,
+      "count": 1,
+      "example": "to the session. Tuned empirically: \"low\" made th"
+    },
+    {
+      "hash": 3284843718,
+      "count": 1,
+      "example": "ting (0 tool calls, score 2 — too timid), while "
+    },
+    {
+      "hash": 4154085086,
+      "count": 1,
+      "example": "// the model blowing its context on endless thin"
+    },
+    {
+      "hash": 1469985787,
+      "count": 1,
+      "example": "+, abort mid- // edit). The right fix for the bl"
+    },
+    {
+      "hash": 531470185,
+      "count": 1,
+      "example": "SONING DISCIPLINE directive // block (keep reaso"
+    },
+    {
+      "hash": 2406963445,
+      "count": 1,
+      "example": "tences, never dump the 7MB token file), // NOT s"
+    },
+    {
+      "hash": 3257274838,
+      "count": 1,
+      "example": "l of reasoning. So default back to \"medium\" so i"
+    },
+    {
+      "hash": 2419737724,
+      "count": 1,
+      "example": " and let the directive bound the prose. Overrida"
+    },
+    {
+      "hash": 3798700917,
+      "count": 1,
+      "example": "VEL. const THINK_LEVEL = process.env.THINK_LEVEL"
+    },
+    {
+      "hash": 2693881882,
+      "count": 1,
+      "example": "/ The executor that actually performs edits in t"
+    },
+    {
+      "hash": 4203994496,
+      "count": 1,
+      "example": "irically the // 27B Q1_0 DEGENERATES on normal i"
+    },
+    {
+      "hash": 2997743919,
+      "count": 1,
+      "example": " emits only an EOS token // (content:[], output:"
+    },
+    {
+      "hash": 3452839863,
+      "count": 1,
+      "example": "ent turn, on both remote and local. The // 500MB"
+    },
+    {
+      "hash": 3336692683,
+      "count": 1,
+      "example": " instructions and returns tool-call-shaped outpu"
+    },
+    {
+      "hash": 2695136109,
+      "count": 1,
+      "example": "th 'content'\"), and it is the model this whole l"
+    },
+    {
+      "hash": 1107267393,
+      "count": 1,
+      "example": " self-augment. So default the executor to the 50"
+    },
+    {
+      "hash": 3826289634,
+      "count": 1,
+      "example": "ocal-4b // provider. Override with EXEC_MODEL / "
+    },
+    {
+      "hash": 2897877709,
+      "count": 1,
+      "example": "onst EXEC_PROVIDER = process.env.EXEC_PROVIDER |"
+    },
+    {
+      "hash": 3610971936,
+      "count": 1,
+      "example": "nst EXEC_MODEL = process.env.EXEC_MODEL || \"bons"
+    },
+    {
+      "hash": 3904527239,
+      "count": 1,
+      "example": "B has a small built-in context; use the COMPACT "
+    },
+    {
+      "hash": 2714385402,
+      "count": 1,
+      "example": "prompt // fits. Overridable (e.g. EXEC_COMPACT=0"
+    },
+    {
+      "hash": 273123568,
+      "count": 1,
+      "example": "xt model). const EXEC_COMPACT = (process.env.EXE"
+    },
+    {
+      "hash": 3469946311,
+      "count": 1,
+      "example": ") !== \"0\"; if (!existsSync(WS)) {   console.erro"
+    },
+    {
+      "hash": 247804613,
+      "count": 1,
+      "example": "t found: ${WS}`);   process.exit(1); } if (!exis"
+    },
+    {
+      "hash": 271088307,
+      "count": 1,
+      "example": " {   console.error(`portal db not found: ${DB_PA"
+    },
+    {
+      "hash": 1393625640,
+      "count": 1,
+      "example": ".exit(1); } const sleep = (ms) => new Promise((r"
+    },
+    {
+      "hash": 2330419925,
+      "count": 1,
+      "example": "(r, ms)); async function login() {   const res ="
+    },
+    {
+      "hash": 4092908662,
+      "count": 1,
+      "example": "{PORTAL}/api/auth/login`, {     method: \"POST\", "
+    },
+    {
+      "hash": 3236529405,
+      "count": 1,
+      "example": "content-type\": \"application/json\" },     body: J"
+    },
+    {
+      "hash": 3889175720,
+      "count": 1,
+      "example": "username: \"\", password: PASS }),     signal: Abo"
+    },
+    {
+      "hash": 2004683232,
+      "count": 1,
+      "example": "(REQ_TIMEOUT_MS),   });   const setCookie = res."
+    },
+    {
+      "hash": 455520742,
+      "count": 1,
+      "example": "-cookie\") || \"\";   return setCookie.split(\";\")[0"
+    },
+    {
+      "hash": 3249805020,
+      "count": 1,
+      "example": "ing } async function createSession(cookie) {   c"
+    },
+    {
+      "hash": 2744265484,
+      "count": 1,
+      "example": "t fetch(`${PORTAL}/api/sessions`, {     method: "
+    },
+    {
+      "hash": 3554041072,
+      "count": 1,
+      "example": "ers: { \"content-type\": \"application/json\", cooki"
+    },
+    {
+      "hash": 1631778451,
+      "count": 1,
+      "example": "SON.stringify({ workspace: WS, title: \"autonomou"
+    },
+    {
+      "hash": 2381141980,
+      "count": 1,
+      "example": ",     signal: AbortSignal.timeout(REQ_TIMEOUT_MS"
+    },
+    {
+      "hash": 3204849361,
+      "count": 1,
+      "example": " j = await res.json();   if (!j.id) throw new Er"
+    },
+    {
+      "hash": 1831356952,
+      "count": 1,
+      "example": "on failed: ${JSON.stringify(j)}`);   return j.id"
+    },
+    {
+      "hash": 196742355,
+      "count": 1,
+      "example": "session down (deletes its persistent sandbox con"
+    },
+    {
+      "hash": 1531424818,
+      "count": 1,
+      "example": "fort. */ async function deleteSession(cookie, se"
+    },
+    {
+      "hash": 1496662835,
+      "count": 1,
+      "example": "it fetch(`${PORTAL}/api/sessions/${sessionId}`, "
+    },
+    {
+      "hash": 4190685185,
+      "count": 1,
+      "example": "ELETE\",     headers: { cookie },     signal: Abo"
+    },
+    {
+      "hash": 2440012941,
+      "count": 1,
+      "example": "(REQ_TIMEOUT_MS),   }); } async function prompt("
+    },
+    {
+      "hash": 972473082,
+      "count": 1,
+      "example": "Id, message, behavior = \"followUp\") {   // Fire-"
+    },
+    {
+      "hash": 179175462,
+      "count": 1,
+      "example": "rpose: the /prompt route returns only once pi's "
+    },
+    {
+      "hash": 2306057415,
+      "count": 1,
+      "example": ") for the model resolves, which for a big contex"
+    },
+    {
+      "hash": 2387818225,
+      "count": 1,
+      "example": "te   // model can take >10min. This harness supe"
+    },
+    {
+      "hash": 3539404383,
+      "count": 1,
+      "example": "B (events/status),   // so it should NOT hold th"
+    },
+    {
+      "hash": 3817640980,
+      "count": 1,
+      "example": "pen — it accepts the prompt and   // polls. Reso"
+    },
+    {
+      "hash": 1345182405,
+      "count": 1,
+      "example": "the request is dispatched; errors are logged,   "
+    },
+    {
+      "hash": 4200017957,
+      "count": 1,
+      "example": "e session keeps running server-side regardless)."
+    },
+    {
+      "hash": 155978979,
+      "count": 1,
+      "example": " = fetch(`${PORTAL}/api/sessions/${sessionId}/pr"
+    },
+    {
+      "hash": 1264810004,
+      "count": 1,
+      "example": "hod: \"POST\",     headers: { \"content-type\": \"app"
+    },
+    {
+      "hash": 20628176,
+      "count": 1,
+      "example": "cookie },     body: JSON.stringify({ message, be"
+    },
+    {
+      "hash": 3194485290,
+      "count": 1,
+      "example": "ignal: AbortSignal.timeout(REQ_TIMEOUT_MS),   })"
+    },
+    {
+      "hash": 2305692863,
+      "count": 1,
+      "example": "    console.warn(`[prompt dispatched, response n"
+    },
+    {
+      "hash": 2596724887,
+      "count": 1,
+      "example": ".cause?.code || e?.message}`);   });   // Await "
+    },
+    {
+      "hash": 3713853106,
+      "count": 1,
+      "example": " to confirm the request reached the server? No —"
+    },
+    {
+      "hash": 3033132403,
+      "count": 1,
+      "example": "tion below polls the DB and will notice the sess"
+    },
+    {
+      "hash": 2894130580,
+      "count": 1,
+      "example": "Keep   // the promise referenced so any rejectio"
+    },
+    {
+      "hash": 1970358463,
+      "count": 1,
+      "example": "hen move on.   void promise;   return { ok: true"
+    },
+    {
+      "hash": 3269830318,
+      "count": 1,
+      "example": "esh readonly connection per query.  *  * The sin"
+    },
+    {
+      "hash": 762512540,
+      "count": 1,
+      "example": "db` instance opens a WAL snapshot at connect tim"
+    },
+    {
+      "hash": 2652831070,
+      "count": 1,
+      "example": "dvances it, so it silently missed every event th"
+    },
+    {
+      "hash": 3552695816,
+      "count": 1,
+      "example": "fter  * startup — scoring 0 even while the agent"
+    },
+    {
+      "hash": 1262239492,
+      "count": 1,
+      "example": "ading. A new  * connection per poll sees the cur"
+    },
+    {
+      "hash": 1408553522,
+      "count": 1,
+      "example": "idation reflects reality.  */ function freshDb()"
+    },
+    {
+      "hash": 2239694008,
+      "count": 1,
+      "example": "ew Database(DB_PATH, { readonly: true });   d.pr"
+    },
+    {
+      "hash": 2518333267,
+      "count": 1,
+      "example": "de = WAL\");   return d; } /** Events recorded fo"
+    },
+    {
+      "hash": 422030817,
+      "count": 1,
+      "example": "ce a seq. */ function eventsSince(sessionId, sin"
+    },
+    {
+      "hash": 423759997,
+      "count": 1,
+      "example": "= freshDb();   try {     return d       .prepare"
+    },
+    {
+      "hash": 3209631366,
+      "count": 1,
+      "example": "pe FROM events WHERE session_id = ? AND seq > ? "
+    },
+    {
+      "hash": 2984034177,
+      "count": 1,
+      "example": "\")       .all(sessionId, since);   } finally {  "
+    },
+    {
+      "hash": 710679934,
+      "count": 1,
+      "example": "} } /** How much \"usable action\" happened: tool "
+    },
+    {
+      "hash": 1356198997,
+      "count": 1,
+      "example": "nt text updates. */ function usableAction(events"
+    },
+    {
+      "hash": 611365094,
+      "count": 1,
+      "example": "s = events.filter((e) => e.type === \"tool_execut"
+    },
+    {
+      "hash": 531882358,
+      "count": 1,
+      "example": "th;   const prose = events.filter((e) => e.type "
+    },
+    {
+      "hash": 2031844623,
+      "count": 1,
+      "example": "ate\").length;   return { tools, prose, score: to"
+    },
+    {
+      "hash": 1271739071,
+      "count": 1,
+      "example": "}; } /** Wait until the session is not running ("
+    },
+    {
+      "hash": 2269235771,
+      "count": 1,
+      "example": "s final status. */ async function waitUntilIdle("
+    },
+    {
+      "hash": 629718145,
+      "count": 1,
+      "example": ", pollMs = 15_000) {   const start = Date.now();"
+    },
+    {
+      "hash": 1284277736,
+      "count": 1,
+      "example": "ow() - start < capMs && !stopping && !sentinelEx"
+    },
+    {
+      "hash": 1304775716,
+      "count": 1,
+      "example": "nst row = freshDb()       .prepare(\"SELECT statu"
+    },
+    {
+      "hash": 3575492772,
+      "count": 1,
+      "example": "WHERE id = ?\")       .get(sessionId);     if (ro"
+    },
+    {
+      "hash": 540132584,
+      "count": 1,
+      "example": "!== \"running\") return row.status;     await slee"
+    },
+    {
+      "hash": 3823169735,
+      "count": 1,
+      "example": " // Stop signaled mid-wait — abort the running a"
+    },
+    {
+      "hash": 3637949169,
+      "count": 1,
+      "example": " stops.   if (stopping || sentinelExists()) retu"
+    },
+    {
+      "hash": 1337646400,
+      "count": 1,
+      "example": "return \"still-running\"; } /** Try to run a verif"
+    },
+    {
+      "hash": 1753687986,
+      "count": 1,
+      "example": "; returns {ok, output} or throws. */ function tr"
+    },
+    {
+      "hash": 302507828,
+      "count": 1,
+      "example": "s) {   try {     const out = execFileSync(cmd[0]"
+    },
+    {
+      "hash": 2336313214,
+      "count": 1,
+      "example": "{       cwd: WS,       encoding: \"utf8\",       s"
+    },
+    {
+      "hash": 3130584017,
+      "count": 1,
+      "example": " \"pipe\", \"pipe\"],       timeout: 240_000,       "
+    },
+    {
+      "hash": 2542936289,
+      "count": 1,
+      "example": "     return { ok: true, output: (out || \"\").slic"
+    },
+    {
+      "hash": 2091732850,
+      "count": 1,
+      "example": "catch (e) {     return {       ok: false,       "
+    },
+    {
+      "hash": 954365426,
+      "count": 1,
+      "example": "?.stdout || e?.message || \"\").slice(-4000),     "
+    },
+    {
+      "hash": 1095711155,
+      "count": 1,
+      "example": "ue if `rel` is modified vs the workspace git HEA"
+    },
+    {
+      "hash": 2439096556,
+      "count": 1,
+      "example": "te). */ function isDirtyFile(absPath) {   try { "
+    },
+    {
+      "hash": 3061964937,
+      "count": 1,
+      "example": "path.relative(WS, absPath);     const out = exec"
+    },
+    {
+      "hash": 3331142092,
+      "count": 1,
+      "example": "[\"status\", \"--porcelain\", \"--\", rel], {       cw"
+    },
+    {
+      "hash": 1052753897,
+      "count": 1,
+      "example": "oding: \"utf8\",       stdio: [\"ignore\", \"pipe\", \""
+    },
+    {
+      "hash": 1944858052,
+      "count": 1,
+      "example": "    return (out || \"\").trim().length > 0;   } ca"
+    },
+    {
+      "hash": 3454456195,
+      "count": 1,
+      "example": "git is unavailable, be conservative: treat as di"
+    },
+    {
+      "hash": 4089022458,
+      "count": 1,
+      "example": "fails     // closed rather than trusting an unve"
+    },
+    {
+      "hash": 399036805,
+      "count": 1,
+      "example": "e.     return true;   } } /**  * The net-negativ"
+    },
+    {
+      "hash": 3366537805,
+      "count": 1,
+      "example": "he agent finishes, actually verify the changes  "
+    },
+    {
+      "hash": 1801710476,
+      "count": 1,
+      "example": "ing its word: inspect the diff for obvious destr"
+    },
+    {
+      "hash": 2180717418,
+      "count": 1,
+      "example": " then run typecheck/build. Only if it passes is "
+    },
+    {
+      "hash": 2781635333,
+      "count": 1,
+      "example": "ovement.  */ function verifyChanges() {   const "
+    },
+    {
+      "hash": 3418665424,
+      "count": 1,
+      "example": " // 0) Lockfiles must be untouched — a dirty loc"
+    },
+    {
+      "hash": 2010973330,
+      "count": 1,
+      "example": " an iteration   //    (agents repeatedly mangle "
+    },
+    {
+      "hash": 4108827742,
+      "count": 1,
+      "example": "n, breaking the build).   for (const lf of [\"pac"
+    },
+    {
+      "hash": 3221926321,
+      "count": 1,
+      "example": " \"yarn.lock\", \"pnpm-lock.yaml\"]) {     const lfP"
+    },
+    {
+      "hash": 1404703252,
+      "count": 1,
+      "example": "WS, lf);     if (existsSync(lfPath)) {       con"
+    },
+    {
+      "hash": 3913406940,
+      "count": 1,
+      "example": "tyFile(lfPath);       verdicts.push({ name: `loc"
+    },
+    {
+      "hash": 3653955635,
+      "count": 1,
+      "example": "f})`, ok: !dirty, detail: dirty ? \"modified\" : \""
+    },
+    {
+      "hash": 2180297970,
+      "count": 1,
+      "example": "   }   }   // 1) Manifest sanity: a project root"
+    },
+    {
+      "hash": 1336845759,
+      "count": 1,
+      "example": "st stay a real manifest.   const pkg = path.join"
+    },
+    {
+      "hash": 2773832488,
+      "count": 1,
+      "example": "on\");   if (existsSync(pkg)) {     try {       c"
+    },
+    {
+      "hash": 1506697264,
+      "count": 1,
+      "example": "rse(readFileSync(pkg, \"utf8\"));       const sane"
+    },
+    {
+      "hash": 4265264598,
+      "count": 1,
+      "example": ".name === \"string\" && (Array.isArray(j.workspace"
+    },
+    {
+      "hash": 2078147937,
+      "count": 1,
+      "example": ";       verdicts.push({ name: \"root manifest int"
+    },
+    {
+      "hash": 4063689817,
+      "count": 1,
+      "example": ", detail: j?.name || \"broken JSON\" });     } cat"
+    },
+    {
+      "hash": 1956551979,
+      "count": 1,
+      "example": "cts.push({ name: \"root manifest intact\", ok: fal"
+    },
+    {
+      "hash": 1970261164,
+      "count": 1,
+      "example": "kage.json unparseable\" });     }   }   // 1b) No"
+    },
+    {
+      "hash": 4288453364,
+      "count": 1,
+      "example": "e collapse. A \"verified\" edit that guts a workin"
+    },
+    {
+      "hash": 2311101845,
+      "count": 1,
+      "example": "e file down to a stub (e.g. 325 lines -> 3) is a"
+    },
+    {
+      "hash": 3622209342,
+      "count": 1,
+      "example": "   //     an improvement — it passes `node --che"
+    },
+    {
+      "hash": 1790939629,
+      "count": 1,
+      "example": "e a stub parses.   //     Reject any modified so"
+    },
+    {
+      "hash": 872788986,
+      "count": 1,
+      "example": "ost > 55% of its lines.   try {     const diff ="
+    },
+    {
+      "hash": 3168996281,
+      "count": 1,
+      "example": "it\", [\"diff\", \"--numstat\"], {       cwd: WS, enc"
+    },
+    {
+      "hash": 585252572,
+      "count": 1,
+      "example": "tdio: [\"ignore\", \"pipe\", \"pipe\"],     });     co"
+    },
+    {
+      "hash": 1959517169,
+      "count": 1,
+      "example": "[];     for (const line of (diff || \"\").split(\"\\"
+    },
+    {
+      "hash": 2746351190,
+      "count": 1,
+      "example": "an)) {       const [add, del, file] = line.split"
+    },
+    {
+      "hash": 37082468,
+      "count": 1,
+      "example": " (!/\\.(ts|js|mjs|jsx|tsx|py|sh)$/i.test(file || "
+    },
+    {
+      "hash": 317275827,
+      "count": 1,
+      "example": "     // Baseline = committed lines before this c"
+    },
+    {
+      "hash": 264216568,
+      "count": 1,
+      "example": "b, since a       // stub replacing a big file sh"
+    },
+    {
+      "hash": 2083342079,
+      "count": 1,
+      "example": "huge del).       const delN = Number(del || 0); "
+    },
+    {
+      "hash": 3000947117,
+      "count": 1,
+      "example": " = Number(add || 0);       if (delN > 0 && delN "
+    },
+    {
+      "hash": 1248791145,
+      "count": 1,
+      "example": "elN - addN) / (delN + Math.max(1, addN)) > 0.55)"
+    },
+    {
+      "hash": 1401699852,
+      "count": 1,
+      "example": "pses.push({ file, delN, addN });       }     }  "
+    },
+    {
+      "hash": 3058851289,
+      "count": 1,
+      "example": "({       name: \"no destructive file collapse\",  "
+    },
+    {
+      "hash": 1423772423,
+      "count": 1,
+      "example": "es.length === 0,       detail: collapses.length "
+    },
+    {
+      "hash": 362057532,
+      "count": 1,
+      "example": "ses.map((c) => `${c.file} -${c.delN}+${c.addN}`)"
+    },
+    {
+      "hash": 510226425,
+      "count": 1,
+      "example": "    : \"no source file lost >55% of its lines\",  "
+    },
+    {
+      "hash": 1996635034,
+      "count": 1,
+      "example": " {     verdicts.push({ name: \"no destructive fil"
+    },
+    {
+      "hash": 2418418308,
+      "count": 1,
+      "example": " true, detail: \"git diff unavailable — skipped\" "
+    },
+    {
+      "hash": 2736389883,
+      "count": 1,
+      "example": "The repo builds / typechecks (whatever tool the "
+    },
+    {
+      "hash": 4150430024,
+      "count": 1,
+      "example": ".   const checks = [     [\"npm\", \"run\", \"build\"]"
+    },
+    {
+      "hash": 1816743410,
+      "count": 1,
+      "example": "sc\", \"-p\", \"server/tsconfig.json\", \"--noEmit\"], "
+    },
+    {
+      "hash": 1279192964,
+      "count": 1,
+      "example": "t cmd of checks) {     const r = tryVerify(cmd);"
+    },
+    {
+      "hash": 4148129632,
+      "count": 1,
+      "example": "sh({ name: cmd.join(\" \"), ...r });     if (r.ok)"
+    },
+    {
+      "hash": 2232856796,
+      "count": 1,
+      "example": " passing check is enough   }   return verdicts; "
+    },
+    {
+      "hash": 3055253138,
+      "count": 1,
+      "example": "a compact, pre-loaded picture of the project so "
+    },
+    {
+      "hash": 1471755088,
+      "count": 1,
+      "example": "OT have  * to burn turns on `find`/`ls`/`cat` di"
+    },
+    {
+      "hash": 659227549,
+      "count": 1,
+      "example": "ips (the #1 cause of the  * \"keeps gathering inf"
+    },
+    {
+      "hash": 2901983647,
+      "count": 1,
+      "example": "). Reading the tree + a few key files  * here on"
+    },
+    {
+      "hash": 42163364,
+      "count": 1,
+      "example": "tant and free; injecting it as context means the"
+    },
+    {
+      "hash": 2841114162,
+      "count": 1,
+      "example": "y knows the layout and jumps straight to work.  "
+    },
+    {
+      "hash": 3443281883,
+      "count": 1,
+      "example": "  - the file tree (excluding node_modules / .git"
+    },
+    {
+      "hash": 3196829396,
+      "count": 1,
+      "example": "output),  *  - the full text of the small key fi"
+    },
+    {
+      "hash": 2363354327,
+      "count": 1,
+      "example": "n, tsconfig, README,  *    SOUL/MEMORY/agent hom"
+    },
+    {
+      "hash": 258516834,
+      "count": 1,
+      "example": "terially shape what to change.  */ function buil"
+    },
+    {
+      "hash": 253727633,
+      "count": 1,
+      "example": "compact = false) {   const EXCLUDE = new Set([\"n"
+    },
+    {
+      "hash": 2989009292,
+      "count": 1,
+      "example": "git\", \"dist\", \"build\", \".venv\", \"data\", \"gitrepo"
+    },
+    {
+      "hash": 1738483364,
+      "count": 1,
+      "example": "  const KEY_FILES = [     \"package.json\",     \"s"
+    },
+    {
+      "hash": 44431606,
+      "count": 1,
+      "example": "on\",     \"web/package.json\",     \"docs/package.j"
+    },
+    {
+      "hash": 3707255254,
+      "count": 1,
+      "example": "fig.json\",     \"server/tsconfig.json\",     \"web/"
+    },
+    {
+      "hash": 3289549927,
+      "count": 1,
+      "example": "    \"README.md\",     \"SOUL.md\",     \"MEMORY.md\","
+    },
+    {
+      "hash": 1183475222,
+      "count": 1,
+      "example": "entation path — give the agent the RAW source it"
+    },
+    {
+      "hash": 3542224486,
+      "count": 1,
+      "example": "   // so it never has to guess a path (it previo"
+    },
+    {
+      "hash": 2549433,
+      "count": 1,
+      "example": "  // `server/src/pi/model-server.ts` and hit ENO"
+    },
+    {
+      "hash": 2161753647,
+      "count": 1,
+      "example": "r/src/model-server.ts\",     \"server/src/pi/proje"
+    },
+    {
+      "hash": 2332537297,
+      "count": 1,
+      "example": "s\",     \"server/src/pi/sdk-client.ts\",     \"serv"
+    },
+    {
+      "hash": 1839258173,
+      "count": 1,
+      "example": "d-inspect.ts\",     \"server/scripts/pre-tokenize-"
+    },
+    {
+      "hash": 3923911461,
+      "count": 1,
+      "example": "  \"server/scripts/run-upgrade-agent.mjs\",     \"s"
+    },
+    {
+      "hash": 2238178806,
+      "count": 1,
+      "example": ".sh\",   ];   const MAX_KEY_BYTES = 300_000; // c"
+    },
+    {
+      "hash": 617203768,
+      "count": 1,
+      "example": "key-file text total   // COMPACT mode: for a sma"
+    },
+    {
+      "hash": 1367912648,
+      "count": 1,
+      "example": "utor (the 500MB 4B, ~8-16k ctx) the   // full 16"
+    },
+    {
+      "hash": 1844092542,
+      "count": 1,
+      "example": " + key-file dump overflows context and the model"
+    },
+    {
+      "hash": 933441595,
+      "count": 1,
+      "example": "ing. Instead send a tiny directed brief: point a"
+    },
+    {
+      "hash": 2249768550,
+      "count": 1,
+      "example": "  // PROJECT_TOKENS.md for layout, inject 2-3 cr"
+    },
+    {
+      "hash": 3232373706,
+      "count": 1,
+      "example": "d tell it to   // read only what it needs for on"
+    },
+    {
+      "hash": 371872315,
+      "count": 1,
+      "example": "e fragment must stay small.   if (compact) {    "
+    },
+    {
+      "hash": 39950217,
+      "count": 1,
+      "example": "       \"# PROJECT (compact — small-context execu"
+    },
+    {
+      "hash": 3172132085,
+      "count": 1,
+      "example": "       \"cwd IS the project root; paths are RELAT"
+    },
+    {
+      "hash": 3389505872,
+      "count": 1,
+      "example": "ce mount).\",       \"Make ONE small, VERIFIED edi"
+    },
+    {
+      "hash": 1556321014,
+      "count": 1,
+      "example": "`node --check <file>`.\",       \"\",       \"HARD R"
+    },
+    {
+      "hash": 3792784434,
+      "count": 1,
+      "example": "ce a real file with a stub, and never delete mos"
+    },
+    {
+      "hash": 1079874194,
+      "count": 1,
+      "example": "f a file's code. A 'simplification' that guts a "
+    },
+    {
+      "hash": 3671399121,
+      "count": 1,
+      "example": "o a \" +         \"one-line require is a REGRESSIO"
+    },
+    {
+      "hash": 23302862,
+      "count": 1,
+      "example": "D. Keep every existing \" +         \"function wor"
+    },
+    {
+      "hash": 1997088386,
+      "count": 1,
+      "example": "l additive or narrowly-fixing edit.\",       \"\", "
+    },
+    {
+      "hash": 1965724566,
+      "count": 1,
+      "example": "O-EDIT (pick ONE, keep the file fully working):\""
+    },
+    {
+      "hash": 1751144129,
+      "count": 1,
+      "example": "cripts/augment-500mb.mjs, add a `--dry-run` earl"
+    },
+    {
+      "hash": 934034083,
+      "count": 1,
+      "example": "\" +         \"top of run() (when process.argv inc"
+    },
+    {
+      "hash": 883316580,
+      "count": 1,
+      "example": " print the steps \" +         \"and return before "
+    },
+    {
+      "hash": 214960864,
+      "count": 1,
+      "example": "tune call). Keep all existing \" +         \"funct"
+    },
+    {
+      "hash": 3099275967,
+      "count": 1,
+      "example": "     \"B) In scripts/augment-500mb.mjs collectTea"
+    },
+    {
+      "hash": 975957420,
+      "count": 1,
+      "example": "er try/catch \" +         \"around the complete() "
+    },
+    {
+      "hash": 2777935889,
+      "count": 1,
+      "example": " 500/timeout is logged and \" +         \"skipped "
+    },
+    {
+      "hash": 2401727152,
+      "count": 1,
+      "example": "ng the loop. Keep everything else intact.\",     "
+    },
+    {
+      "hash": 3963964944,
+      "count": 1,
+      "example": "/compare-topk.mjs, guard the profile() against a"
+    },
+    {
+      "hash": 2269288907,
+      "count": 1,
+      "example": "    \"logprobs content array so a model returning"
+    },
+    {
+      "hash": 2704715309,
+      "count": 1,
+      "example": " clear \" +         \"message and returns an empty"
+    },
+    {
+      "hash": 1848579214,
+      "count": 1,
+      "example": " of throwing. Keep all \" +         \"existing log"
+    },
+    {
+      "hash": 4268525723,
+      "count": 1,
+      "example": "      \"Steps: (a) ONE read of the file, (b) appl"
+    },
+    {
+      "hash": 1880779962,
+      "count": 1,
+      "example": "coped edit with \" +         \"the edit tool (do n"
+    },
+    {
+      "hash": 1764182845,
+      "count": 1,
+      "example": "hole file), (c) run `node --check \" +         \"s"
+    },
+    {
+      "hash": 1896119977,
+      "count": 1,
+      "example": "o prove it is valid plain JS.\",       \"Do NOT to"
+    },
+    {
+      "hash": 1860810295,
+      "count": 1,
+      "example": " or any lockfile. Do NOT reduce the file to a \" "
+    },
+    {
+      "hash": 3169835633,
+      "count": 1,
+      "example": " Do NOT end the turn without an edit + a node --"
+    },
+    {
+      "hash": 3596436008,
+      "count": 1,
+      "example": "+         \"and saw pass.\",       \"\",     ].join("
+    },
+    {
+      "hash": 2190415455,
+      "count": 1,
+      "example": "n lines;   }   const lines = [\"# PROJECT SNAPSHO"
+    },
+    {
+      "hash": 2274781295,
+      "count": 1,
+      "example": " do not re-discover it)\", \"\"];   // Tell the age"
+    },
+    {
+      "hash": 3168896113,
+      "count": 1,
+      "example": "e it is so it never hunts for its own files   //"
+    },
+    {
+      "hash": 181610824,
+      "count": 1,
+      "example": ": it ran `find / -name package.json` because the"
+    },
+    {
+      "hash": 515686059,
+      "count": 1,
+      "example": "n't pin down its working directory). Every path "
+    },
+    {
+      "hash": 2011011083,
+      "count": 1,
+      "example": " is   // RELATIVE — resolve it from your CURRENT"
+    },
+    {
+      "hash": 794621564,
+      "count": 1,
+      "example": "ry (your cwd IS the   // project root). Do NOT p"
+    },
+    {
+      "hash": 3806324697,
+      "count": 1,
+      "example": "unt like `/workspace`: this portal   // runs the"
+    },
+    {
+      "hash": 2290625678,
+      "count": 1,
+      "example": "so `/workspace` does not exist here.   lines.pus"
+    },
+    {
+      "hash": 2970442416,
+      "count": 1,
+      "example": "king directory (cwd) IS the project root, and ev"
+    },
+    {
+      "hash": 2192972203,
+      "count": 1,
+      "example": " \" +       \"this snapshot is RELATIVE to it. To "
+    },
+    {
+      "hash": 3230021776,
+      "count": 1,
+      "example": "/index.ts`, open the \" +       \"path `server/src"
+    },
+    {
+      "hash": 1095933707,
+      "count": 1,
+      "example": "your cwd — do NOT prefix it with \" +       \"`/wo"
+    },
+    {
+      "hash": 2922515705,
+      "count": 1,
+      "example": "other mount (that does not exist in this runtime"
+    },
+    {
+      "hash": 1764337765,
+      "count": 1,
+      "example": "u do not need to locate the project; it is alrea"
+    },
+    {
+      "hash": 175091126,
+      "count": 1,
+      "example": "not \" +       \"run `find`/`ls`/`pwd` to discover"
+    },
+    {
+      "hash": 3912153986,
+      "count": 1,
+      "example": "re.\",     \"\"   );   // 1) COMPLETE file-location"
+    },
+    {
+      "hash": 3407186308,
+      "count": 1,
+      "example": "/   // Every file in the project, as its relativ"
+    },
+    {
+      "hash": 1697777113,
+      "count": 1,
+      "example": " agent knows the   // full layout before doing a"
+    },
+    {
+      "hash": 869526265,
+      "count": 1,
+      "example": "r needs to `find`/`ls` to locate   // a file. Ex"
+    },
+    {
+      "hash": 1588272881,
+      "count": 1,
+      "example": "heavy/build/private dirs that aren't project   /"
+    },
+    {
+      "hash": 2658972027,
+      "count": 1,
+      "example": "odules, .git, dist, data, vendored trees). No tr"
+    },
+    {
+      "hash": 1704202714,
+      "count": 1,
+      "example": " long inventory is cheap tokens and is exactly w"
+    },
+    {
+      "hash": 848578640,
+      "count": 1,
+      "example": "scovery   // loop.   const files = [];   (functi"
+    },
+    {
+      "hash": 697559910,
+      "count": 1,
+      "example": "   let ents;     try {       ents = readdirSync("
+    },
+    {
+      "hash": 3438985612,
+      "count": 1,
+      "example": "ypes: true });     } catch {       return;     }"
+    },
+    {
+      "hash": 3269561416,
+      "count": 1,
+      "example": "a, b) => (a.name < b.name ? -1 : a.name > b.name"
+    },
+    {
+      "hash": 3883544627,
+      "count": 1,
+      "example": "for (const ent of ents) {       if (EXCLUDE.has("
+    },
+    {
+      "hash": 175182773,
+      "count": 1,
+      "example": "nue;       const full = path.join(dir, ent.name)"
+    },
+    {
+      "hash": 2027810509,
+      "count": 1,
+      "example": "isDirectory()) {         walk(full);       } els"
+    },
+    {
+      "hash": 1681452308,
+      "count": 1,
+      "example": "()) {         files.push(path.relative(WS, full)"
+    },
+    {
+      "hash": 1452913348,
+      "count": 1,
+      "example": "   })(WS);   lines.push(\"## All files\", \"\");   l"
+    },
+    {
+      "hash": 3993334852,
+      "count": 1,
+      "example": "les.length} files total._`);   // Pre-tokenized "
+    },
+    {
+      "hash": 3151948488,
+      "count": 1,
+      "example": "okenize-project.mjs has run for this project.   "
+    },
+    {
+      "hash": 924198466,
+      "count": 1,
+      "example": "rect-token API output already on disk (data/proj"
+    },
+    {
+      "hash": 1705678496,
+      "count": 1,
+      "example": "   // so the agent knows each file's real token "
+    },
+    {
+      "hash": 2162119415,
+      "count": 1,
+      "example": "tokenizing.   const tokenMap = new Map();   try "
+    },
+    {
+      "hash": 2336181458,
+      "count": 1,
+      "example": "ath = path.join(ROOT, \"data\", \"project-tokens.js"
+    },
+    {
+      "hash": 3280330119,
+      "count": 1,
+      "example": "istsSync(tokPath)) {       const j = JSON.parse("
+    },
+    {
+      "hash": 820090740,
+      "count": 1,
+      "example": "Path, \"utf8\"));       for (const f of j.files ||"
+    },
+    {
+      "hash": 2390399638,
+      "count": 1,
+      "example": "t(f.path, f.tokens);     }   } catch {     /* op"
+    },
+    {
+      "hash": 3356056286,
+      "count": 1,
+      "example": "ation is optional */   }   if (tokenMap.size) { "
+    },
+    {
+      "hash": 4218532629,
+      "count": 1,
+      "example": "      \"_Pre-tokenized (via the model's direct-to"
+    },
+    {
+      "hash": 832777611,
+      "count": 1,
+      "example": "ne: `path [tokens]`)._\"     );     lines.push(  "
+    },
+    {
+      "hash": 4072886510,
+      "count": 1,
+      "example": "      files.map((f) => `${f} [${tokenMap.get(f) "
+    },
+    {
+      "hash": 1268488018,
+      "count": 1,
+      "example": "\"\\n\") || \"(empty project)\",       \"```\",       \""
+    },
+    {
+      "hash": 2810187289,
+      "count": 1,
+      "example": "e {     lines.push(\"```text\", files.length ? fil"
+    },
+    {
+      "hash": 3559928710,
+      "count": 1,
+      "example": "\"(empty project)\", \"```\", \"\");   }   // 2) Key f"
+    },
+    {
+      "hash": 4000184593,
+      "count": 1,
+      "example": "nly what exists, capped in total size).   lines."
+    },
+    {
+      "hash": 1071811265,
+      "count": 1,
+      "example": "es (contents pre-loaded)\", \"\");   let budget = M"
+    },
+    {
+      "hash": 4294464569,
+      "count": 1,
+      "example": "for (const rel of KEY_FILES) {     const full = "
+    },
+    {
+      "hash": 4093083781,
+      "count": 1,
+      "example": "l);     if (!existsSync(full)) continue;     let"
+    },
+    {
+      "hash": 3644203554,
+      "count": 1,
+      "example": "      txt = readFileSync(full, \"utf8\");     } ca"
+    },
+    {
+      "hash": 1583253675,
+      "count": 1,
+      "example": "inue;     }     if (txt.length > 60_000) txt = t"
+    },
+    {
+      "hash": 281977463,
+      "count": 1,
+      "example": "00) + \"\\n[… truncated …]\\n\";     budget -= txt.l"
+    },
+    {
+      "hash": 3878288792,
+      "count": 1,
+      "example": "udget < 0) {       lines.push(`- (skipped furthe"
+    },
+    {
+      "hash": 2109939691,
+      "count": 1,
+      "example": "tay compact)`);       break;     }     lines.pus"
+    },
+    {
+      "hash": 44978040,
+      "count": 1,
+      "example": "n\\`\\`\\`\\n${txt}\\n\\`\\`\\``, \"\");   }   return line"
+    },
+    {
+      "hash": 3178869745,
+      "count": 1,
+      "example": " const RUNNER_IMAGE = \"pithagoras-runner-arch:la"
+    },
+    {
+      "hash": 3022630752,
+      "count": 1,
+      "example": "O_ROOT = path.resolve(ROOT); // the repo baked i"
+    },
+    {
+      "hash": 9899683,
+      "count": 1,
+      "example": " image const RUNNER_DOCKERFILE = path.join(ROOT,"
+    },
+    {
+      "hash": 2949063456,
+      "count": 1,
+      "example": "er-arch.dockerfile\"); const REPO_EXCLUDE = new S"
+    },
+    {
+      "hash": 2272626474,
+      "count": 1,
+      "example": "s\", \".git\", \"dist\", \"build\", \".venv\", \"data\", \"g"
+    },
+    {
+      "hash": 1290880670,
+      "count": 1,
+      "example": "r\"]); /** Newest mtime under a dir (walking), ex"
+    },
+    {
+      "hash": 1300628313,
+      "count": 1,
+      "example": "endored dirs. */ function newestMtime(dir) {   l"
+    },
+    {
+      "hash": 3743845312,
+      "count": 1,
+      "example": " (function walk(d) {     let ents;     try {    "
+    },
+    {
+      "hash": 1001850485,
+      "count": 1,
+      "example": "rSync(d, { withFileTypes: true });     } catch {"
+    },
+    {
+      "hash": 163623828,
+      "count": 1,
+      "example": "   }     for (const e of ents) {       const p ="
+    },
+    {
+      "hash": 3029519436,
+      "count": 1,
+      "example": "name);       if (e.isDirectory()) {         if ("
+    },
+    {
+      "hash": 3675968710,
+      "count": 1,
+      "example": "s(e.name)) walk(p);       } else if (e.isFile())"
+    },
+    {
+      "hash": 515083470,
+      "count": 1,
+      "example": "           const t = statSync(p).mtimeMs;       "
+    },
+    {
+      "hash": 4103598416,
+      "count": 1,
+      "example": "st) newest = t;         } catch {           /* s"
+    },
+    {
+      "hash": 2018319762,
+      "count": 1,
+      "example": "       }     }   })(dir);   return newest; } /**"
+    },
+    {
+      "hash": 1518620131,
+      "count": 1,
+      "example": "runner image's baked /repo is un-to-date with th"
+    },
+    {
+      "hash": 1153012909,
+      "count": 1,
+      "example": ".  *  * `docker build` bakes a SNAPSHOT of the r"
+    },
+    {
+      "hash": 1572447414,
+      "count": 1,
+      "example": "o) at build time, so  * a stale image makes the "
+    },
+    {
+      "hash": 3200114544,
+      "count": 1,
+      "example": "d code. Rebuild the image (via the  * normal scr"
+    },
+    {
+      "hash": 2486652895,
+      "count": 1,
+      "example": "re-snapshots the non-root node_modules overlay) "
+    },
+    {
+      "hash": 1002794767,
+      "count": 1,
+      "example": "Dockerfile or any tracked source file under the "
+    },
+    {
+      "hash": 2926643811,
+      "count": 1,
+      "example": " than the cached image. Runs once per process, g"
+    },
+    {
+      "hash": 801851163,
+      "count": 1,
+      "example": "s, so a  * never-stopping harness doesn't rebuil"
+    },
+    {
+      "hash": 774832518,
+      "count": 1,
+      "example": "n.  */ let _imageChecked = false; async function"
+    },
+    {
+      "hash": 3120431154,
+      "count": 1,
+      "example": "erImage() {   if (_imageChecked || process.env.S"
+    },
+    {
+      "hash": 1700848090,
+      "count": 1,
+      "example": "D === \"1\") return;   _imageChecked = true;   con"
+    },
+    {
+      "hash": 3033922169,
+      "count": 1,
+      "example": "(() => {     try {       const out = execFileSyn"
+    },
+    {
+      "hash": 2560744899,
+      "count": 1,
+      "example": "age\", \"inspect\", RUNNER_IMAGE, \"--format\", \"{{.C"
+    },
+    {
+      "hash": 884211083,
+      "count": 1,
+      "example": "      encoding: \"utf8\",         stdio: [\"ignore\""
+    },
+    {
+      "hash": 2992230655,
+      "count": 1,
+      "example": "],       });       const t = Date.parse(String(o"
+    },
+    {
+      "hash": 541906891,
+      "count": 1,
+      "example": "   return Number.isFinite(t) ? t : 0;     } catc"
+    },
+    {
+      "hash": 2891548826,
+      "count": 1,
+      "example": " 0; // image missing → rebuild     }   })();   c"
+    },
+    {
+      "hash": 2361025021,
+      "count": 1,
+      "example": "Mtime = existsSync(RUNNER_DOCKERFILE) ? statSync"
+    },
+    {
+      "hash": 303653531,
+      "count": 1,
+      "example": "LE).mtimeMs : 0;   const srcMtime = newestMtime("
+    },
+    {
+      "hash": 4066117926,
+      "count": 1,
+      "example": "nst newest = Math.max(dockerfileMtime, srcMtime)"
+    },
+    {
+      "hash": 2686824534,
+      "count": 1,
+      "example": "= imageTime) {     console.log(`runner image ${R"
+    },
+    {
+      "hash": 740542933,
+      "count": 1,
+      "example": "current (repo/src not newer than image) — no reb"
+    },
+    {
+      "hash": 3894033378,
+      "count": 1,
+      "example": "urn;   }   console.log(`repo/src changed since i"
+    },
+    {
+      "hash": 3005307008,
+      "count": 1,
+      "example": "MAGE} (image=${new Date(imageTime).toISOString()"
+    },
+    {
+      "hash": 128087979,
+      "count": 1,
+      "example": "=${new Date(newest).toISOString()}) — rebuilding"
+    },
+    {
+      "hash": 403621721,
+      "count": 1,
+      "example": "ts up-to-date /repo...`);   execFileSync(path.jo"
+    },
+    {
+      "hash": 2328700621,
+      "count": 1,
+      "example": "s\", \"update-runner-node_modules.sh\"), [], {     "
+    },
+    {
+      "hash": 166803333,
+      "count": 1,
+      "example": "tdio: \"inherit\",     timeout: 30 * 60_000,   });"
+    },
+    {
+      "hash": 2811042804,
+      "count": 1,
+      "example": "runner image rebuilt with fresh /repo.\"); } /** "
+    },
+    {
+      "hash": 826647741,
+      "count": 1,
+      "example": " 27B (this PC, :41001) actually serving a comple"
+    },
+    {
+      "hash": 3467808272,
+      "count": 1,
+      "example": "mpletion-verification as probeRemote so a busy/h"
+    },
+    {
+      "hash": 1093226883,
+      "count": 1,
+      "example": " not  * trusted either.  */ async function probe"
+    },
+    {
+      "hash": 3684022150,
+      "count": 1,
+      "example": "{     const h = await fetch(`http://127.0.0.1:41"
+    },
+    {
+      "hash": 156788725,
+      "count": 1,
+      "example": "ignal: AbortSignal.timeout(4000) });     if (!h."
+    },
+    {
+      "hash": 3711315515,
+      "count": 1,
+      "example": ";     const ctl = AbortSignal.timeout(15_000);  "
+    },
+    {
+      "hash": 2733551880,
+      "count": 1,
+      "example": "it fetch(`http://127.0.0.1:41001/completion`, { "
+    },
+    {
+      "hash": 2310264774,
+      "count": 1,
+      "example": "OST\",       headers: { \"content-type\": \"applicat"
+    },
+    {
+      "hash": 3399379219,
+      "count": 1,
+      "example": "   body: JSON.stringify({ prompt: \"Reply with th"
+    },
+    {
+      "hash": 1862612749,
+      "count": 1,
+      "example": "k\", n_predict: 4, temperature: 0, stream: false "
+    },
+    {
+      "hash": 1621089527,
+      "count": 1,
+      "example": ": ctl,     });     if (!c.ok) return false;     "
+    },
+    {
+      "hash": 2811152333,
+      "count": 1,
+      "example": "c.json().catch(() => null);     return !!(j && t"
+    }
+  ]
+}
