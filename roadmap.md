@@ -110,3 +110,10 @@ node scripts/augment-500mb.mjs --grow
 # 4. Self-augmentation loop (relaunch after a stop)
 SKIP_IMAGE_REBUILD=1 node server/scripts/run-upgrade-agent.mjs
 ```
+
+
+====================================================
+designer notes:
+the 27b is suposed to train the 4b
+
+they should be given identical tasks and have the same top k token value at every total token set, so once 27b adds a token the next prompt becomes the 4b's new prompt, we only give it 5 tokens output and we score based on the new token compression (favored) and the top k of base tokens

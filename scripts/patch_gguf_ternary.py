@@ -8,12 +8,14 @@ WHY this instead of reassembling a fresh GGUF:
   like qwen35.attention.layer_norm_rms_epsilon / qwen35.rope.dimension_sections).
   This probe copies the ENTIRE source GGUF (all metadata/tokenizer/hyperparams
   stay byte-identical and valid) and ONLY overwrites each Q1_0 weight tensor's
-  bytes with the corrected ternary values (re-encoded Q1_0 row-major, block=128)
-  read from the RAM per-file model (model/layers/* + model/experts/* .tern).
+  bytes with the row-major re-encoded Q1_0 (block=128, preserving each block's
+  original fp16 scale) read from the RAM per-file model (model/layers/* + model/
+  experts/* .tern), using the SAME shared codec as grow_model_30b.py so the
+  round-trip is byte-identical for every shape (including irregular cols like
+  the [5120,48] SSM tensors, which the old flat-block encode scrambled into a
+  '/'-only collapse).
 
 The result is a loadable GGUF whose weights are the custom native-ternary model.
-(Runtime topology/params = same as source since we don't add layers here; the
-"30B" is nominal — see grow_model_30b.py for the per-file resizable parts.)
 
 Usage:
   python3 scripts/patch_gguf_ternary.py \
@@ -24,39 +26,17 @@ Usage:
 import argparse, json, os, shutil, time
 import numpy as np
 import gguf
+from q1_codec import (Q1_0_NBLOCK, Q1_0_BYTES_PER_BLOCK, tensor_n_bytes,
+                      decode_q1_row, encode_q1_row, unpack_tern_2bit)
 
-Q1_0_NBLOCK = 128
-Q1_0_BYTES_PER_BLOCK = 18
+Q1_0_NBLOCK = Q1_0_NBLOCK
+Q1_0_BYTES_PER_BLOCK = Q1_0_BYTES_PER_BLOCK
 
 
 def read_tern(path, n):
     with open(path, "rb") as f:
-        raw = np.frombuffer(f.read(), dtype=np.uint8)
-    vals = np.zeros(len(raw) * 4, dtype=np.int8)
-    vals[0::4] = (raw & 0x03).astype(np.int8) - 1
-    vals[1::4] = ((raw >> 2) & 0x03).astype(np.int8) - 1
-    vals[2::4] = ((raw >> 4) & 0x03).astype(np.int8) - 1
-    vals[3::4] = ((raw >> 6) & 0x03).astype(np.int8) - 1
-    return vals[:n]
-
-
-def encode_q1_0_row(vals, cols):
-    """Row-major Q1_0: [R,C] -> R*ceil(C/128)*18 bytes (block=128, 18B/block)."""
-    flat = np.clip(vals.astype(np.int8), -1, 1)
-    rows = flat.size // cols
-    blocks_per_row = (cols + Q1_0_NBLOCK - 1) // Q1_0_NBLOCK
-    padded = np.zeros((rows, blocks_per_row * Q1_0_NBLOCK), dtype=np.int8)
-    padded[:, :cols] = flat.reshape(rows, cols)
-    bits = (padded >= 0).reshape(rows * blocks_per_row, Q1_0_NBLOCK).astype(np.uint8)
-    packed = np.packbits(bits, bitorder="little")
-    s16 = 0x3C00  # fp16 1.0
-    qb = Q1_0_NBLOCK // 8
-    out = bytearray()
-    nblock = rows * blocks_per_row
-    for b in range(nblock):
-        out += s16.to_bytes(2, "little")
-        out += packed[b * qb:(b + 1) * qb].tobytes()
-    return bytes(out)
+        data = f.read()
+    return unpack_tern_2bit(data, n)
 
 
 def find_tern_file(model_dir, tname, reader, tensor):
@@ -128,11 +108,17 @@ def main():
             continue
         fpath, cols = loc
         n = int(t.n_elements)
-        vals = read_tern(fpath, n)
-        q1 = encode_q1_0_row(vals, cols)
-        # guard: the re-encoded length MUST match the source tensor's byte length
         rows = int(t.shape[0]) if len(t.shape) == 2 else (n // int(t.shape[-1]))
-        expected = rows * ((cols + Q1_0_NBLOCK - 1) // Q1_0_NBLOCK) * Q1_0_BYTES_PER_BLOCK
+        cols = int(t.shape[-1])
+        expected = tensor_n_bytes(rows, cols)
+        vals = read_tern(fpath, n)
+        # Extract the ORIGINAL per-block fp16 scales from the source tensor's raw
+        # Q1_0 bytes (row-major, same layout the shared codec uses) so the model's
+        # magnitude structure survives — this is what makes it generate instead of
+        # collapsing to uniform random tokens.
+        src_raw = np.ascontiguousarray(reader.data[int(t.data_offset): int(t.data_offset) + expected]).tobytes()
+        q1 = encode_q1_row(vals, rows, cols, src_scale_bytes=src_raw)
+        # guard: the re-encoded length MUST match the source tensor's byte length
         if len(q1) != expected:
             missing.append(f"{t.name}[len{q1.size}!=exp{expected}]")
             continue

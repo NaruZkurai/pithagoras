@@ -416,6 +416,211 @@ def analyze(address, limit=200, quiet=False, chains=None, apikey=None):
     return report
 
 
+# --- Network topology / "edge node" analysis ---------------------------------
+def _gini(xs):
+    """Gini coefficient (0 = equal, 1 = fully concentrated)."""
+    xs = [x for x in xs if x > 0]
+    if not xs:
+        return 0.0
+    xs = sorted(xs)
+    n = len(xs)
+    s = sum(xs)
+    if s <= 0:
+        return 0.0
+    cum = 0.0
+    for i, x in enumerate(xs, 1):
+        cum += i * x
+    return (2 * cum / (n * s)) - (n + 1) / n
+
+
+def node_role(chain_node):
+    """Classify an address's topology role in the fund-flow graph.
+
+    Returns short code, label, and a human explanation.
+    """
+    in_deg = chain_node["in_degree"]
+    out_deg = chain_node["out_degree"]
+    total_in = chain_node["total_in"]
+    total_out = chain_node["total_out"]
+    top_out_share = chain_node.get("top_out_share", 0.0)
+
+    # Pure collector (only ever receives)
+    if in_deg > 0 and out_deg == 0:
+        return ("SINK", "Sink / pure collector",
+                "Receives USDT from {} funder(s) but never sends - terminal deposit point."
+                .format(in_deg))
+    # Pure source (only ever sends) - e.g. an outgoing paymaster
+    if in_deg == 0 and out_deg > 0:
+        return ("SOURCE", "Source / paymaster",
+                "Only sends USDT to {} receiver(s) - origin of funds.".format(out_deg))
+    if in_deg == 0 and out_deg == 0:
+        return ("IDLE", "Idle", "No USDT flow observed.")
+
+    # Both directions present -> decide leaf vs hub vs relay by concentration
+    # EDGE/LEAF: funnels inflow to a single dominant collector (top_out_share high)
+    if out_deg >= 1 and top_out_share >= 0.9:
+        return ("EDGE-LEAF", "Edge / leaf (funnels to 1 dominant collector)",
+                "{} funder(s) in, but {:.0f}% of outflows go to a single address - "
+                "this looks like an edge node feeding one collector upstream."
+                .format(in_deg, top_out_share * 100))
+    # RELAY: comparable many-to-many, net roughly balanced
+    if in_deg >= 2 and out_deg >= 2:
+        return ("RELAY", "Relay / through-point",
+                "{} funders -> {} receivers with moderate concentration - a pass-through relay."
+                .format(in_deg, out_deg))
+    # HUB: many outbound, few inbound - distributes funds widely
+    if out_deg > in_deg:
+        return ("HUB", "Hub / distributor",
+                "Distributes to {} receiver(s) from {} funder(s) - a dispersal point."
+                .format(out_deg, in_deg))
+    # Otherwise fallback (small funnel, e.g. 1->2)
+    return ("FUNNEL", "Small funnel",
+            "{} -> {} with top receiver taking {:.0f}%."
+            .format(in_deg, out_deg, top_out_share * 100))
+
+
+def map_network(report, max_neighbors=25):
+    """Build a fund-flow graph per chain and classify the queried node + top neighbors.
+
+    Mutates `report['chain_map']`. Returns the same report (convenience).
+    """
+    alias = report["address"].lower()
+    report["chain_map"] = {}
+    if not report.get("chains"):
+        return report
+
+    for chain, ch in report["chains"].items():
+        transfers = ch.get("usdt_transfer_list") or []
+        # in/out edges: {counterparty: {in: usd, out: usd, tx: n}}
+        flow = {}  # addr -> {"in":0,"out":0,"n_in":0,"n_out":0}
+        nodes = {alias: {"in": 0.0, "out": 0.0, "n_in": 0, "n_out": 0}}
+        for t in transfers:
+            fr = (t.get("from") or "").lower()
+            to = (t.get("to") or "").lower()
+            val = t.get("value_usdt") or 0.0
+            nodes.setdefault(fr, {"in": 0.0, "out": 0.0, "n_in": 0, "n_out": 0})
+            nodes.setdefault(to, {"in": 0.0, "out": 0.0, "n_in": 0, "n_out": 0})
+            # direction through the queried alias
+            if to == alias:
+                nodes[fr]["in"] += val
+                nodes[fr]["n_in"] += 1
+            if fr == alias:
+                nodes[to]["out"] += val
+                nodes[to]["n_out"] += 1
+            # also, if edge is between queried and a neighbour the reverse bookkeeping:
+            if fr == alias:
+                nodes[alias]["out"] += val
+                nodes[alias]["n_out"] += 1
+            if to == alias:
+                nodes[alias]["in"] += val
+                nodes[alias]["n_in"] += 1
+
+        me = nodes[alias]
+        in_neighbors = [a for a, d in nodes.items() if a != alias and d["in"] > 0]
+        out_neighbors = [a for a, d in nodes.items() if a != alias and d["out"] > 0]
+
+        top_out_val = 0.0
+        if out_neighbors:
+            top_out_val = max(nodes[a]["out"] for a in out_neighbors)
+        top_out_share = (top_out_val / me["out"]) if me["out"] > 0 else 0.0
+
+        in_amounts = [nodes[a]["in"] for a in in_neighbors]
+        out_amounts = [nodes[a]["out"] for a in out_neighbors]
+
+        node = {
+            "in_degree": len(in_neighbors),
+            "out_degree": len(out_neighbors),
+            "total_in": round(me["in"], 2),
+            "total_out": round(me["out"], 2),
+            "net": round(me["in"] - me["out"], 2),
+            "top_out_share": round(top_out_share, 4),
+            "gini_in": round(_gini(in_amounts), 3),
+            "gini_out": round(_gini(out_amounts), 3),
+            "in_neighbors": sorted(in_neighbors, key=lambda a: -nodes[a]["in"])[:max_neighbors],
+            "out_neighbors": sorted(out_neighbors, key=lambda a: -nodes[a]["out"])[:max_neighbors],
+            "neighbor_flows": {a: {"in": round(nodes[a]["in"], 2),
+                                   "out": round(nodes[a]["out"], 2),
+                                   "n_in": nodes[a]["n_in"], "n_out": nodes[a]["n_out"]}
+                               for a in in_neighbors + out_neighbors},
+        }
+        code, label, expl = node_role(node)
+        node["role_code"] = code
+        node["role"] = label
+        node["role_explanation"] = expl
+
+        report["chain_map"][chain] = node
+
+        # Surface a flag when the node is a leaf/funnel feeding one collector
+        if code in ("EDGE-LEAF", "FUNNEL"):
+            report.setdefault("flags", []).append({
+                "severity": "HIGH",
+                "type": "edge_node_funnel",
+                "detail": f"[{chain}] {label}: {node['in_degree']} funder(s) in, "
+                          f"{node['out_degree']} receiver(s) out, "
+                          f"top receiver takes {node['top_out_share']*100:.0f}%",
+            })
+            report["risk_score"] = report.get("risk_score", 0) + 20
+        elif code == "SINK":
+            report.setdefault("flags", []).append({
+                "severity": "INFO",
+                "type": "sink_collector",
+                "detail": f"[{chain}] {label}: {node['in_degree']} funder(s), never sends",
+            })
+    return report
+
+
+def trace_two_hop(report, chains, apikey, max_neighbors=8, max_hops=2, quiet=False):
+    """Expand the top outbound neighbor(s) one more hop to see if funds fan out further.
+
+    Only possible when an API key (or a node allowing getLogs) is available.
+    Returns a list of 2-hop edge records and updates report['two_hop'].
+    """
+    alias = report["address"].lower()
+    report["two_hop"] = {}
+    for chain in chains:
+        ch = report["chains"].get(chain)
+        if not ch:
+            continue
+        node = report.get("chain_map", {}).get(chain)
+        if not node or not node["out_neighbors"]:
+            continue
+        hub = node["out_neighbors"][0]  # dominant collector
+        C = CHAINS[chain]
+        transfers, note = get_token_transfers(C["usdt"], hub, limit=500,
+                                              chain=chain, quiet=quiet, apikey=apikey)
+        out = {"collector": hub, "transfers": [], "note": note}
+        # decode, same as analyze
+        usdt_out = 0.0
+        receivers = Counter()
+        if "log" in (transfers[0] if transfers else {}):
+            for t in transfers:
+                lg = t.get("log", {})
+                try:
+                    addr_from = ("0x" + lg["topics"][1][-40:]).lower()
+                    addr_to = ("0x" + lg["topics"][2][-40:]).lower()
+                    value = hex_to_int(lg.get("data", "0x0")) / (10 ** C["usdt_decimals"])
+                except Exception:
+                    continue
+                out["transfers"].append({"kind": t["kind"], "from": addr_from,
+                                         "to": addr_to, "value_usdt": round(value, 4)})
+                if addr_from == hub.lower():
+                    receivers[addr_to] += value
+                    usdt_out += value
+        else:
+            for t in transfers:
+                out["transfers"].append(t)
+                if (t.get("from") or "").lower() == hub.lower():
+                    receivers[t.get("to", "")] += t.get("value_usdt", 0)
+                    usdt_out += t.get("value_usdt", 0)
+        out["collector_out_degree"] = len(receivers)
+        out["collector_top_receiver_share"] = round(
+            (max(receivers.values()) / usdt_out) if usdt_out > 0 else 0.0, 4)
+        top_recv = receivers.most_common(max_neighbors)
+        out["top_receivers"] = [{"address": a, "usdt": round(v, 2)} for a, v in top_recv]
+        report["two_hop"][chain] = out
+    return report
+
+
 # --- Rendering ---------------------------------------------------------------
 def render(report):
     R = report
@@ -461,6 +666,7 @@ def render(report):
     if nflags == 0:
         print("No red-flag indicators found in sampled data.")
     print("=" * 72)
+    render_network(report)
     print("HOW TO READ THIS")
     print("  * `nonce` = how many times THIS wallet has SENT a native txn. Nonce 0 +")
     print("    USDT flowing in = it only receives (typical funding/deposit address).")
@@ -470,6 +676,85 @@ def render(report):
     print("  * Open the Explorer links above and read the full transaction list.")
     print("  * Check the sending/receiving counterparties' own histories.")
     print("  * Never send more funds. Report to the platform/exchange + law enforcement.")
+    print("=" * 72)
+    render_resources(report)
+    print("=" * 72)
+
+
+def _resources():
+    """Curated, stable links for further investigation (3+ per area)."""
+    return {
+        "general": [
+            ("Etherscan (ETH explorer + API key signup)", "https://etherscan.io"),
+            ("BscScan (BSC explorer + API key signup)", "https://bscscan.com"),
+            ("Ethers.io (multi-chain / token search)", "https://ethers.io"),
+        ],
+        "scam_check": [
+            ("Etherscan AD (Address Database — label/sanction check)", "https://etherscan.io/address-label-cloud"),
+            ("Chainabuse — crypto scam & abuse reports", "https://www.chainabuse.com"),
+            ("US gov fraud reporting — FTC ReportFraud", "https://reportfraud.ftc.gov"),
+            ("IC3 — FBI Internet Crime Complaint Center", "https://www.ic3.gov"),
+        ],
+        "reverse_lookup": [
+            ("AddressWatcher (reverse address lookup)", "https://www.addresswatcher.com/reverse-address-lookup"),
+            ("CryptoScamDB", "https://cryptoscamdb.org"),
+        ],
+    }
+
+
+def render_resources(report):
+    print("RESOURCES & FURTHER LINKS")
+    seen = {}
+    for chain, ch in (report.get("chains") or {}).items():
+        # Dedupe explorer links that already appeared above
+        seen[ch["etherscan"]] = ch["name"]
+    groups = _resources()
+    for name, links in groups.items():
+        print(f"  [{name}]")
+        for label, url in links:
+            print(f"    - {label}: {url}")
+    for chain, ch in (report.get("chains") or {}).items():
+        print(f"    - {ch['name']} address view: {ch['etherscan']}/address/{report['address']}")
+
+
+def render_network(report):
+    cm = report.get("chain_map") or {}
+    if not cm:
+        return
+    print("\n" + "=" * 72)
+    print("FUND-FLOW NETWORK MAP  (edge-node topology)")
+    print("=" * 72)
+    alias = report["address"].lower()
+    for chain, node in cm.items():
+        print(f"\n[{chain}] role: {node['role']}")
+        print(f"    code            : {node['role_code']}")
+        print(f"    in_degree  (#funders)   : {node['in_degree']}")
+        print(f"    out_degree (#receivers) : {node['out_degree']}")
+        print(f"    total in / out          : {node['total_in']:,.2f} / {node['total_out']:,.2f}  "
+              f"(net {node['net']:+,.2f})")
+        print(f"    top receiver share      : {node['top_out_share']*100:.0f}%")
+        print(f"    gini in / out           : {node['gini_in']:.2f} / {node['gini_out']:.2f}")
+        print("    explanation : " + node["role_explanation"])
+        if node["in_neighbors"]:
+            print("    top funders (IN -> this wallet):")
+            for a in node["in_neighbors"][:10]:
+                print(f"        {a[:42]}  +{node['neighbor_flows'][a]['in']:>12,.2f}  "
+                      f"({node['neighbor_flows'][a]['n_in']}x)")
+        if node["out_neighbors"]:
+            print("    top receivers (this wallet -> OUT):")
+            for a in node["out_neighbors"][:10]:
+                print(f"        {a[:42]}  -{node['neighbor_flows'][a]['out']:>12,.2f}  "
+                      f"({node['neighbor_flows'][a]['n_out']}x)")
+
+    th = report.get("two_hop") or {}
+    for chain, info in th.items():
+        print(f"\n[2-hop trace] dominant collector of {chain}: {info['collector']}")
+        print(f"    collector out-degree: {info.get('collector_out_degree')}, "
+              f"top receiver share: {info.get('collector_top_receiver_share',0)*100:.0f}%")
+        for r in info.get("top_receivers", [])[:8]:
+            print(f"        {r['address'][:42]}  {r['usdt']:>12,.2f}")
+        if info.get("note"):
+            print(f"    note: {info['note']}")
     print("=" * 72)
 
 
@@ -540,6 +825,98 @@ def render_html(report):
   </table></div>
 </section>""")
 
+    # --- Network / edge-node topology section ---
+    cm = R.get("chain_map") or {}
+    network_blocks = ""
+    if cm:
+        role_palette = {"EDGE-LEAF": "#f43f5e", "FUNNEL": "#f97316", "RELAY": "#eab308",
+                        "HUB": "#60a5fa", "SINK": "#22c55e", "SOURCE": "#a78bfa",
+                        "IDLE": "#94a3b8"}
+        blocks = []
+        for chain, node in cm.items():
+            rolec = role_palette.get(node["role_code"], "#94a3b8")
+            fund_rows = "".join(
+                f'<div class="neigh"><span class="arrowin">▲ in</span> '
+                f'<a class="link mono" target="_blank" '
+                f'href="{_esc(CHAINS[chain]["etherscan"])}/address/{_esc(a)}">{_esc(a[:18])}…</a> '
+                f'<span class="val">+{node["neighbor_flows"][a]["in"]:,.2f} USDT '
+                f'({node["neighbor_flows"][a]["n_in"]}x)</span></div>'
+                for a in node["in_neighbors"][:12])
+            recv_rows = "".join(
+                f'<div class="neigh"><span class="arrow">▼ out</span> '
+                f'<a class="link mono" target="_blank" '
+                f'href="{_esc(CHAINS[chain]["etherscan"])}/address/{_esc(a)}">{_esc(a[:18])}…</a> '
+                f'<span class="val">-{node["neighbor_flows"][a]["out"]:,.2f} USDT '
+                f'({node["neighbor_flows"][a]["n_out"]}x)</span></div>'
+                for a in node["out_neighbors"][:12])
+            blocks.append(f"""
+<section class="card">
+  <div class="chain-head">
+    <h3>Network topology — {_esc(CHAINS[chain]['name'])} <span class="chaintag">{_esc(chain)}</span></h3>
+    <span class="role" style="background:{rolec}22;color:{rolec};border:1px solid {rolec}55">{_esc(node['role'])}</span>
+  </div>
+  <div class="stats">
+    <div class="stat"><span class="k">Funders (in)</span><span class="v">{node['in_degree']}</span></div>
+    <div class="stat"><span class="k">Receivers (out)</span><span class="v">{node['out_degree']}</span></div>
+    <div class="stat"><span class="k">In / Out</span><span class="v">{node['total_in']:,.0f} / {node['total_out']:,.0f}</span></div>
+    <div class="stat"><span class="k">Net flow</span><span class="v {'in' if node['net']>=0 else 'out'}">{node['net']:+,.0f}</span></div>
+    <div class="stat"><span class="k">Top receiver share</span><span class="v">{node['top_out_share']*100:.0f}%</span></div>
+    <div class="stat"><span class="k">Concentration (Gini)</span><span class="v">{node['gini_in']:.2f} / {node['gini_out']:.2f}</span></div>
+  </div>
+  <div class="note" style="color:{rolec}">{_esc(node['role_explanation'])}</div>
+  <div class="subhead">Inbound funders</div>
+  {fund_rows or '<div class="muted">No inbound USDT observed.</div>'}
+  <div class="subhead">Outbound receivers</div>
+  {recv_rows or '<div class="muted">No outbound USDT observed.</div>'}
+</section>""")
+        network_blocks = "".join(blocks)
+
+    th = R.get("two_hop") or {}
+    if th:
+        th_blocks = []
+        for chain, info in th.items():
+            recv = "".join(
+                f'<div class="neigh"><a class="link mono" target="_blank" '
+                f'href="{_esc(CHAINS[chain]["etherscan"])}/address/{_esc(r["address"])}">'
+                f'{_esc(r["address"][:18])}…</a> <span class="val monster">{r["usdt"]:,.2f} USDT</span></div>'
+                for r in info.get("top_receivers", [])[:8])
+            th_blocks.append(f"""
+<section class="card">
+  <div class="chain-head"><h3>2-hop trace — {_esc(CHAINS[chain]['name'])}</h3></div>
+  <p>Dominant collector: <a class="link mono" target="_blank"
+     href="{_esc(CHAINS[chain]['etherscan'])}/address/{_esc(info['collector'])}">{_esc(info['collector'])}</a></p>
+  <div class="stats">
+    <div class="stat"><span class="k">Collector out-degree</span><span class="v">{info.get('collector_out_degree','?')}</span></div>
+    <div class="stat"><span class="k">Top receiver share</span><span class="v">{info.get('collector_top_receiver_share',0)*100:.0f}%</span></div>
+  </div>
+  {('<div class="note">⚠ '+_esc(info.get('note'))+'</div>') if info.get('note') else ''}
+  <div class="subhead">Funds fan out to</div>
+  {recv or '<div class="muted">No 2-hop data.</div>'}
+</section>""")
+        network_blocks += "".join(th_blocks)
+
+    # --- Resources / links card ---
+    def _res_link(label, url):
+        return (f'<div class="neigh"><a class="link" target="_blank" '
+                f'href="{_esc(url)}">{_esc(label)}</a>'
+                f'<span class="muted mono">{_esc(url)}</span></div>')
+    res_groups_html = ""
+    for group, links in _resources().items():
+        items = "".join(_res_link(label, url) for label, url in links)
+        res_groups_html += f'<div class="subhead">{_esc(group)}</div>{items}'
+    addr_links = "".join(
+        _res_link(f"{ch['name']} — view this address",
+                  f"{ch['etherscan']}/address/{R['address']}")
+        for ch in R["chains"].values())
+    resources_html = f"""
+<section class="card">
+  <div class="chain-head"><h3>Resources &amp; further investigation</h3></div>
+  {addr_links}
+  {res_groups_html}
+</section>"""
+
+    chain_join = "".join(chain_blocks)
+
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -578,6 +955,9 @@ def render_html(report):
   th,td {{ text-align:left; padding:6px 8px; border-bottom:1px solid #1f2937; white-space:nowrap; }}
   th {{ color:#94a3b8; }}
   .val {{ font-variant-numeric:tabular-nums; }}
+  .role {{ display:inline-block; font-weight:700; padding:2px 10px; border-radius:20px; }}
+  .neigh {{ display:flex; gap:6px; align-items:center; padding:3px 0; font-size:12px; }}
+  .arrow {{ color:#f87171; }} .arrowin {{ color:#22c55e; }}
   .foot {{ color:#6b7280; font-size:12px; margin-top:8px; }}
   .disclaimer {{ border:1px solid #3f3f46; background:#18181b; color:#fbbf24; padding:10px 12px; border-radius:8px; margin:16px 0; }}
 </style></head>
@@ -590,7 +970,7 @@ def render_html(report):
     <div class="risk" style="color:{risk_color}">{risk} <span style="font-size:14px">/ {risk_label}</span></div>
   </div>
   <div class="disclaimer">⚠ {_esc(R.get('disclaimer','Indicators only; not a determination of guilt.'))}</div>
-  {''.join(chain_blocks)}
+  {chain_join}{network_blocks}{resources_html}
   <div class="foot">Indicators only — pair with full explorer tx review before drawing conclusions.</div>
 </div></body></html>"""
 
@@ -607,6 +987,10 @@ def main():
                     help="Only check given chain (may repeat); default: all")
     ap.add_argument("--apikey", help="Free Etherscan/BscScan API key (improves token history)",
                     default=None)
+    ap.add_argument("--map", type=int, default=0, metavar="HOPS",
+                    help="Trace N hops outward to map the fund-flow network / detect edge nodes")
+    ap.add_argument("--neighbors", type=int, default=25,
+                    help="Max immediate neighbors to list in the graph (default 25)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -614,15 +998,37 @@ def main():
         sys.exit("Invalid address: expected a 0x-prefixed 40-hex address.")
 
     chains = args.chain if args.chain else list(CHAINS.keys())
+    apikey = args.apikey
+
+    # Network mapping needs the real token-transfer history. If the user asks to
+    # map and hasn't given a key, prompt securely in the terminal (getpass) so a
+    # free Etherscan/BscScan key is never exposed on the command line or to a model.
+    if args.map and not apikey:
+        print("To map the fund-flow network I need the token TRANSFER history.")
+        print("Get a FREE key from https://etherscan.io (ETH) and/or "
+              "https://bscscan.com (BSC) -> API-Keys.")
+        try:
+            import getpass
+            apikey = getpass.getpass("Paste one key (works for any chain; hidden input): ").strip()
+        except Exception:
+            apikey = None
+        if not apikey:
+            print("No key provided — network map will be empty (balances still work).")
+
     note = ""
-    if not args.quiet and not args.apikey:
+    if not args.quiet and not apikey:
         note = " (no API key — token HISTORY may be limited by public-node restrictions)"
     if not args.quiet:
         print(f"Fetching public on-chain data for {args.address} on {', '.join(chains)}{note} ...")
         time.sleep(0.2)
 
     report = analyze(args.address, limit=args.limit, quiet=args.quiet,
-                     chains=chains, apikey=args.apikey)
+                     chains=chains, apikey=apikey)
+    map_network(report, max_neighbors=args.neighbors)
+    if args.map:
+        trace_two_hop(report, chains, apikey=apikey,
+                      max_neighbors=args.neighbors, max_hops=args.map, quiet=args.quiet)
+
     if args.html or args.output:
         html = render_html(report)
         if args.output:

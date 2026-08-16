@@ -31,7 +31,12 @@
     "compressor_tokens_only": true,
     "compressor_role": "mutations",
     "compressor_note": "EACH COMPRESSOR MUST USE ONLY COMPRESSOR TOKENS: experts designated as compressors (role starts with 'compr' or listed in compressor_experts) may only route/emit tokens from the compressor-token set (the compressed-chunk / formulaic tokens in newTokenSet), never the general vocabulary. This is what makes the extra layers fight to become token-COMPRESSOR layers (they can only express compressed tokens).",
-    "compressor_experts": ["EMTP", "E101", "E100", "E99"],
+    "compressor_experts": [
+      "EMTP",
+      "E101",
+      "E100",
+      "E99"
+    ],
     "experts": {
       "E1": {
         "role": "base",
@@ -756,8 +761,8 @@
   },
   "scoring": {
     "base": {
-      "per_topk_token_match": 1,
-      "per_topp_token_match": 1,
+      "per_topk_token_match": 4,
+      "per_topp_token_match": 4,
       "per_teacher_emit_match": 20,
       "note": "+1 per token in student's top-n/k that's in teacher's top-n/k; +1 per token in student's top-n/p that's in teacher's top-n/p; +2 per student CHOSEN token that's in the teacher's ACTUAL emitted top-k"
     },
@@ -771,7 +776,7 @@
       "note": "500x when the 5-token compression footprint token appears in the top-k of the next-5 AND a match is in the top-100 of the next 5 generated tokens"
     },
     "penalties": {
-      "overconfidence": 0,
+      "overconfidence": 4400,
       "redundant_expert": 0,
       "note": "subtract from total when flagged; adjust live via UI"
     },
@@ -839,10 +844,10 @@
     "note": "LOOP-AND-INCREMENT training: all experts + MTP share the SAME teacher top-k over a fixed window of the first N tokens (not continuous forward streaming). Loop on those N tokens until the student output equals the teacher output within identity_tolerance (± offset), so additional layers fight to become token-COMPRESSION layers (compressed chunk == a more compact token set reproducing the same top-k). Then increment N: 5 rounds of 8 tokens, 5 of 9, ... until 2000 tokens."
   },
   "expert_policy": {
-    "top_n_survive": 10,
+    "top_n_survive": 20,
     "update_non_top": true,
     "update_losing_experts": "auto",
-    "losing_experts_update_every": 3,
+    "losing_experts_update_every": 21,
     "reset_from_last_window": false,
     "note": "at each round reset: top_n_survive experts keep their values. update_losing_experts = how many of the WORST (weakest) experts get updated; every losing_experts_update_every steps those losing experts are re-seeded from the previous window's data (reset_from_last_window=true) or fresh. All adjustable.",
     "bottom_m_refresh": 2

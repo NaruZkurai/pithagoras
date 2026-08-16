@@ -1,0 +1,629 @@
+{
+  "layers": {
+    "0": {
+      "dir": "L00",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "1": {
+      "dir": "L01",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "2": {
+      "dir": "L02",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "3": {
+      "dir": "L03",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "4": {
+      "dir": "L04",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "5": {
+      "dir": "L05",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "6": {
+      "dir": "L06",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "7": {
+      "dir": "L07",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "8": {
+      "dir": "L08",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "9": {
+      "dir": "L09",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "10": {
+      "dir": "L10",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "11": {
+      "dir": "L11",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "12": {
+      "dir": "L12",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "13": {
+      "dir": "L13",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "14": {
+      "dir": "L14",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "15": {
+      "dir": "L15",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "16": {
+      "dir": "L16",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "17": {
+      "dir": "L17",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "18": {
+      "dir": "L18",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "19": {
+      "dir": "L19",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "20": {
+      "dir": "L20",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "21": {
+      "dir": "L21",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "22": {
+      "dir": "L22",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "23": {
+      "dir": "L23",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "24": {
+      "dir": "L24",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "25": {
+      "dir": "L25",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "26": {
+      "dir": "L26",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "27": {
+      "dir": "L27",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "28": {
+      "dir": "L28",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "29": {
+      "dir": "L29",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "30": {
+      "dir": "L30",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "31": {
+      "dir": "L31",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "32": {
+      "dir": "L32",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "33": {
+      "dir": "L33",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "34": {
+      "dir": "L34",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "35": {
+      "dir": "L35",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "36": {
+      "dir": "L36",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "37": {
+      "dir": "L37",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "38": {
+      "dir": "L38",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "39": {
+      "dir": "L39",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "40": {
+      "dir": "L40",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "41": {
+      "dir": "L41",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "42": {
+      "dir": "L42",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "43": {
+      "dir": "L43",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "44": {
+      "dir": "L44",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "45": {
+      "dir": "L45",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "46": {
+      "dir": "L46",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "47": {
+      "dir": "L47",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "48": {
+      "dir": "L48",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "49": {
+      "dir": "L49",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "50": {
+      "dir": "L50",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "51": {
+      "dir": "L51",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "52": {
+      "dir": "L52",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "53": {
+      "dir": "L53",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "54": {
+      "dir": "L54",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "55": {
+      "dir": "L55",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "56": {
+      "dir": "L56",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "57": {
+      "dir": "L57",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "58": {
+      "dir": "L58",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "59": {
+      "dir": "L59",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    },
+    "60": {
+      "dir": "L60",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "61": {
+      "dir": "L61",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "62": {
+      "dir": "L62",
+      "tensors": [
+        "attn_gate_weight",
+        "attn_qkv_weight",
+        "ssm_alpha_weight",
+        "ssm_beta_weight",
+        "ssm_out_weight"
+      ]
+    },
+    "63": {
+      "dir": "L63",
+      "tensors": [
+        "attn_k_weight",
+        "attn_output_weight",
+        "attn_q_weight",
+        "attn_v_weight"
+      ]
+    }
+  },
+  "note": "FFN (gate/up/down) live in model/experts/* (authoritative); each layer is resized by adding/removing L<NN> dirs"
+}

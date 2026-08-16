@@ -6,10 +6,11 @@ USER wants: fast + ternary + compressed-token input. This does NOT rebuild a
 bloated float32 GGUF (too big / slow). Instead it:
   1. Reads the 27B MoE (Bonsai-27B-Q1_0.gguf, n_vocab 248320 — the teacher/MoE
      token space).
-  2. Vectorized-decodes every Q1_0 weight to strict ternary {-1,0,+1}.
+  2. Vectorized-decodes every Q1_0 weight to strict ternary {-1,0,+1} using the
+     SHARED row-major codec (scripts/q1_codec.py).
   3. Packs 2-bit (4 values/byte) so the ~30B model stays compact (fast to
      write, fast to load).
-  4. Emits model.bin + tensors.json + meta.json (same shape as
+  4. Emits model/*.tern + tensors.json + meta.json (same shape as
      export_ternary_model.py, but for the 27B MoE in the 248320 vocab).
   5. Records the compressed-token input scheme (footprint = sum of token ids)
      in meta so the harness's direct/compressed token input can ingest it.
@@ -17,22 +18,22 @@ bloated float32 GGUF (too big / slow). Instead it:
 Because every source weight is already 1-bit Q1_0, the ternary values ARE the
 model (no lossy re-quant) and the export is a pure fast sign-copy.
 
+MUST stay in sync with patch_gguf_ternary.py (both use q1_codec.py) so the
+round-trip is byte-identical for EVERY tensor shape — including irregular
+col sizes (e.g. ssm_alpha [5120,48]) where the old flat-block decode scrambled
+the weights and collapsed the model to '/'.
+
 Usage:
   python3 scripts/grow_model_30b.py                # -> 30b/ternary-30b/<ts>/
   python3 scripts/grow_model_30b.py --out DIR
 """
-import argparse, json, math, os, time
+import argparse, json, os, time
 import numpy as np
+from q1_codec import (Q1_0_NBLOCK, Q1_0_BYTES_PER_BLOCK, tensor_n_bytes,
+                      decode_q1_row, pack_tern_2bit)
 
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(PROJECT, "config", "moe-config.json")
-
-# This fork (llama-direct-token-input) redefines Q1_0 to 128 weights/block:
-#   block_q1_0 { ggml_half d; uint8_t qs[16]; }  => 2 (fp16 scale) + 16 (bitfield)
-#   = 18 bytes per 128 weights. (QK1_0 == 128, NOT the upstream 32.) Our original
-#   scripts wrongly assumed 32/block, which mis-decodes the source GGUF. Correct:
-Q1_0_NBLOCK = 128
-Q1_0_BYTES_PER_BLOCK = 18
 
 
 def load_config():
@@ -40,46 +41,12 @@ def load_config():
         return json.load(f)
 
 
-def fp16_to_float(h):
-    s = (h >> 15) & 1
-    e = (h >> 10) & 0x1F
-    m = h & 0x3FF
-    if e == 0:
-        val = math.ldexp(m, -24)
-    elif e == 31:
-        val = float("inf") if m == 0 else float("nan")
-    else:
-        val = math.ldexp(m + 1024, e - 25)
-    return -val if s else val
-
-
-def ternarize_q1_0(raw: bytes, n: int) -> np.ndarray:
-    """Vectorized Q1_0 -> strict ternary {-1,0,+1} (robust to block padding)."""
-    arr = np.frombuffer(raw, dtype=np.uint8)
-    nblock = len(arr) // Q1_0_BYTES_PER_BLOCK
-    nblock = max(1, min(nblock, (n + Q1_0_NBLOCK - 1) // Q1_0_NBLOCK))
-    usable = arr[: nblock * Q1_0_BYTES_PER_BLOCK]
-    sel = usable.reshape(nblock, Q1_0_BYTES_PER_BLOCK)
-    scale_u16 = (sel[:, 0].astype(np.uint16) | (sel[:, 1].astype(np.uint16) << 8))
-    qs_bytes = sel[:, 2:].astype(np.uint8)
-    bits = np.unpackbits(np.ascontiguousarray(qs_bytes), bitorder="little")[: nblock * Q1_0_NBLOCK]
-    bits = bits.reshape(nblock, Q1_0_NBLOCK)
-    ternary = np.where(bits == 1, 1, -1).astype(np.int8)
-    scale_arr = np.array([fp16_to_float(int(x)) for x in scale_u16])
-    ternary[scale_arr == 0, :] = 0
-    return ternary.reshape(-1)[: min(nblock * Q1_0_NBLOCK, n)]
-
-
 def pack_ternary(flat: np.ndarray, outfile, n: int):
     """2-bit packed ternary: -1->0, 0->1, +1->2 (4 values/byte). Returns bytes count."""
-    codes = (flat + 1).astype(np.uint8)          # -1->0, 0->1, 1->2
-    pad = (-n) % 4
-    if pad:
-        codes = np.concatenate([codes, np.zeros(pad, dtype=np.uint8)])
-    pods = codes.reshape(-1, 4)
-    out = (pods[:, 0] | (pods[:, 1] << 2) | (pods[:, 2] << 4) | (pods[:, 3] << 6)).astype(np.uint8)
-    out.tofile(outfile)
-    return n, out.nbytes
+    out = pack_tern_2bit(flat, n)
+    outfile.write(out)
+    outfile.close()
+    return n, len(out)
 
 
 def main():
@@ -134,10 +101,17 @@ def main():
         return nparams, nbytes
 
     def ternarize_tensor(t):
+        # Q1_0 is ROW-MAJOR with per-row padding to a multiple of 128. The real
+        # byte length is rows*ceil(cols/128)*18 — NOT ceil(n/128)*18. Using the
+        # wrong (flat) length reads past this tensor into the next one and
+        # scrambles every weight (the '/'-only collapse bug).
+        rows = int(t.shape[0]) if len(t.shape) >= 2 else 1
+        cols = int(t.shape[-1])
+        nbytes = tensor_n_bytes(rows, cols)
+        raw = bytes(np.ascontiguousarray(reader.data[int(t.data_offset): int(t.data_offset) + nbytes]))
         n = int(t.n_elements)
-        exp = (n // 32) * Q1_0_BYTES_PER_BLOCK + (Q1_0_BYTES_PER_BLOCK if n % 32 else 0)
-        raw = bytes(np.ascontiguousarray(reader.data[int(t.data_offset): int(t.data_offset) + exp]))
-        vals = ternarize_q1_0(raw, n)
+        vals = decode_q1_row(raw, rows, cols)
+        return vals.reshape(-1)[:n]
         sample_pool.update(int(x) for x in vals.flat[:2000])
         return vals
 

@@ -27,3 +27,17 @@ scripts/output/
 # topk-compare / augmentation runtime outputs
 data/augment/
 output/
+
+# Native-ternary model segments + exported ternary models — multi-GB,
+# regenerable via grow_model_30b.py / prepare-model-ram.py from source GGUFs.
+config/moe/model/**/*.tern
+config/moe/model/**/model.bin
+config/moe/model/**/ternary-*/
+
+# Python bytecode (export/rebuild/patch models)
+__pycache__/
+*.pyc
+
+# Generated USDT wallet-tracer risk report (wallet_tracer.py --html output)
+scripts/report.html
+*.report.html
