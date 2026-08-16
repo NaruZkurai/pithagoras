@@ -162,7 +162,11 @@
         <div class="stat"><div class="label">Base pts / top-k match</div><input id="cBase" type="number" step="1" value="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">500× pts</div><input id="c500" type="number" step="10" value="500" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Penalty (overconfidence)</div><input id="cPen" type="number" step="1" value="0" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
-        <div class="stat"><div class="label">Expert count (add)</div><input id="cExp" type="number" step="1" value="5" min="5" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+      </div>
+      <div style="margin-top:8px;">
+        <div class="label" style="font-size:11px;color:#8b949e;margin-bottom:4px">Add parameters to the model — experts &amp; layers: <b id="cExpVal" style="color:#58a6ff">50</b></div>
+        <input id="cExp" type="range" min="5" max="256" step="1" value="50" style="width:100%;background:#0d1117;accent-color:#58a6ff;">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#8b949e;margin-top:2px"><span>5</span><span>256</span></div>
       </div>
       <div style="margin-top:10px;padding-top:8px;border-top:1px solid #30363d;">
         <div class="label" style="font-size:11px;color:#8b949e;margin-bottom:4px">Expert update policy (top-n survive · update losing experts)</div>
@@ -176,7 +180,7 @@
       </div>
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
         <button id="bBase" style="background:#238636;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">Apply points</button>
-        <button id="bAddExp" style="background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">+ Add expert/layer</button>
+        <button id="bAddExp" style="background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">Add parameters</button>
         <button id="bSave" style="background:#6e7681;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">Save snapshot</button>
         <span id="cfgStatus" style="font-size:12px;color:#8b949e;align-self:center"></span>
       </div>
@@ -490,16 +494,44 @@ function renderExpertScores(d) {
   const sig = sigOf((esScores||[]).map(e=>[e.expert,e.score,e.active]), d.total_score, last?.step, sb);
   memoRender("expertScores", sig, () => {
     if (!esScores.length) { el.innerHTML = '<div style="color:#8b949e">waiting for expert scores…</div>'; return; }
-    el.innerHTML = esScores.map(e => {
-    const c = expColor(e.expert);
-    const pct = Math.max(2, Math.min(100, (e.score / (d.total_score || 1)) * 100));
-    return `<div class="token-row">
+    // TEACHER is always pinned at the TOP of the expert column, regardless of
+    // whether its overlap/score is the highest. Its bar reflects the student↔
+    // teacher top-k overlap (curve_overlap, 0..1). If it is NOT in 1st place,
+    // a second teacher placement is shown at its true rank.
+    const tOverlap = Number(sb.curve_overlap ?? 0);
+    const teacherPct = Math.round(tOverlap * 100);
+    const teacherScore = Number(sb.curve ?? 0);
+    const sorted = esScores.slice().sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const topExpertScore = sorted.length ? Number(sorted[0].score ?? 0) : 0;
+    // Teacher is "1st" when its overlap-based bar dominates (>= the top expert's bar).
+    const teacherIsFirst = teacherScore >= topExpertScore || topExpertScore === 0;
+
+    const teacherRow = `<div class="token-row" title="perfect teacher — student↔teacher top-k overlap ${teacherPct}%">
+      <span class="chip" style="background:#ffffff;color:#0d1117">TEACHER</span>
+      <div class="token-bar" style="background:#ffffff;width:${Math.max(4, teacherPct * 1.6)}px"></div>
+      <div class="token-val" style="color:#ffffff;width:auto">${teacherPct}%</div>
+      <div style="font-size:10px;color:#8b949e;flex:1">top-k overlap · ${sb.curve_matched ?? 0} slots</div>
+    </div>`;
+    // Second teacher placement ONLY if it is not already in 1st place.
+    const secondPlacement = teacherIsFirst ? "" :
+      `<div class="token-row" style="opacity:.75" title="teacher's true rank">
+        <span class="chip" style="background:#ffffff;color:#0d1117">#2 TEACHER</span>
+        <div class="token-bar" style="background:#ffffff;width:${Math.max(4, teacherPct * 1.6 * 0.6)}px"></div>
+        <div class="token-val" style="color:#8b949e;width:auto">#${sorted.findIndex(e => (e.score??0) <= teacherScore) + 1 || "?"}</div>
+        <div style="font-size:10px;color:#8b949e;flex:1">below current leader</div>
+      </div>`;
+
+    el.innerHTML = teacherRow + secondPlacement +
+      esScores.map(e => {
+      const c = expColor(e.expert);
+      const pct = Math.max(2, Math.min(100, (e.score / (d.total_score || 1)) * 100));
+      return `<div class="token-row">
       <span class="chip" style="background:${c}">${e.expert}${e.active ? " ★" : ""}</span>
       <div class="token-bar" style="background:${c};width:${pct * 1.6}px"></div>
       <div class="token-val" style="color:${c};width:auto">+${e.score}</div>
       <div style="font-size:10px;color:#8b949e;flex:1">${e.mutation || e.role || ""}</div>
     </div>`;
-  }).join("") +
+    }).join("") +
   `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #30363d;display:flex;gap:8px;align-items:center">
      <span style="font-size:11px;color:#8b949e">Σ experts</span>
      <span style="font-size:15px;font-weight:700;color:#58a6ff">${esScores.reduce((a,e)=>a+e.score,0).toFixed(1)}</span>
@@ -694,8 +726,15 @@ document.getElementById("bBase")?.addEventListener("click", () => {
   }, "points/penalty + expert policy");
 });
 
+// Live-update the "experts & layers" slider label, and apply params on button.
+document.getElementById("cExp")?.addEventListener("input", () => {
+  const v = document.getElementById("cExp").value;
+  const l = document.getElementById("cExpVal");
+  if (l) l.textContent = v;
+});
+// Apply the current expert/layer count from the parameter slider.
 document.getElementById("bAddExp")?.addEventListener("click", () => {
-  const n = Number(document.getElementById("cExp").value || 5);
+  const n = Number(document.getElementById("cExp").value || 50);
   const experts = {};
   for (let i = 1; i <= n; i++) {
     experts["E" + i] = i <= 5

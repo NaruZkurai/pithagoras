@@ -247,11 +247,22 @@ export function addLayerNoise(state, noise, layerCount = 5, tokenIdx = 0) {
     Math.max(-1, Math.min(1, d + nz * (noise01((+new Date()) + i * 131 + tokenIdx * 17) - 0.5) * 2))
   );
   // Layer sizes themselves stay in a sane range (no multiplicative blowup).
+  // NOTE: layer sizes PERSIST (they are the trained weights of the MoE) — we
+  // only clamp them, never zero them. The round/step counter is advanced once
+  // per HARNESS step via bumpMoeStep(), not per token here.
   _moeState.layerSizes = _moeState.layerSizes.map((v, i) =>
     Math.max(10, Math.min(1000, v + _moeState.noiseDeltas[i] * 20))
   );
-  _moeState.step += 1;
   return { layers: _moeState.noiseDeltas.slice(), step: _moeState.step };
+}
+
+/** Advance the MoE round/step counter ONCE per harness step (not per token).
+ *  This is what drives maybeResetMoeState / updateLosingExperts so a "round"
+ *  spans real generation steps, not 5x per step. */
+export function bumpMoeStep() {
+  if (!_moeState) initMoeState();
+  _moeState.step += 1;
+  return _moeState.step;
 }
 
 /**
