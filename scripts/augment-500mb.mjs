@@ -182,8 +182,9 @@ async function collectTeacher(url) {
 // ===========================================================================
 function growModel() {
   const trainFile = [TRAIN_TXT, TRAIN_JSONL].find((f) => fs.existsSync(f));
+  const mode = process.env.GROW_MODE === "gpu" ? "--gpu" : "--cpu";
   if (DRY) {
-    console.log(`[grow --dry-run] would run: scripts/train-6gb.sh llama-finetune -m ${TERNARY_MODEL} -f ${trainFile} -o ${GROWN_MODEL} --epochs 1`);
+    console.log(`[grow --dry-run] would run: scripts/train-6gb.sh llama-finetune ${mode} -m ${TERNARY_MODEL} -c ${process.env.GROW_CTX || "1024"} -f ${trainFile} -o ${GROWN_MODEL} --epochs 1`);
     return;
   }
   if (!trainFile) {
@@ -192,11 +193,14 @@ function growModel() {
   }
   console.log(`[grow] finetuning TRUE-TERNARY ${TERNARY_MODEL} from teacher data (${trainFile}) -> ${GROWN_MODEL}`);
   fs.mkdirSync(path.dirname(GROWN_MODEL), { recursive: true });
-  // 6GiB system-RAM cap + GPU offload via the wrapper.
+  // 6GiB system-RAM cap + mode. GPU OOMs (cudaMalloc); on CPU the f32 KV cache
+  // must be bounded or it tries to allocate ~9GB. Cap the training context
+  // (GROW_CTX, default 1024) so the KV buffer fits inside the 6GiB cap.
+  const ctx = process.env.GROW_CTX || "1024";
   execFileSync(
     "scripts/train-6gb.sh",
-    ["llama-finetune", "--gpu", "-m", TERNARY_MODEL, "-f", trainFile, "-o", GROWN_MODEL, "--epochs", process.env.GROW_EPOCHS || "1"],
-    { cwd: ROOT, stdio: "inherit", timeout: (Number(process.env.GROW_TIMEOUT) || 60) * 60_000 }
+    ["llama-finetune", mode, "-m", TERNARY_MODEL, "-c", ctx, "-f", trainFile, "-o", GROWN_MODEL, "--epochs", process.env.GROW_EPOCHS || "1"],
+    { cwd: REPO, stdio: "inherit", timeout: (Number(process.env.GROW_TIMEOUT) || 60) * 60_000 }
   );
   console.log(`[grow] grown true-ternary model written: ${GROWN_MODEL}`);
 }

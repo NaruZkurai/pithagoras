@@ -86,6 +86,13 @@ drive them to completion.
 - Growth direction keeps the model **true ternary**: never FP16. The direct-
   token fork's `llama-finetune` operates on the Q1_0 model; compounding runs
   grow semantic capacity toward 30B in ternary values.
+- **Grow blocker (as of 2026-08-15)**: `llama-finetune` aborts (SIGABRT) in
+  `ggml_build_backward_expand` — `ggml.c:7309 GGML_ASSERT(!node->view_src ||
+  op == CPY|VIEW|RESHAPE|PERMUTE|TRANSPOSE)` — because the Q1_0/ternary model
+  uses a tensor op whose gradient the fork's backward pass doesn't support.
+  This is a C++/ggml-level limitation (unfixable from scripts); unblocking
+  requires patching/raising the fork's backward pass. Teacher collection and
+  the KV/top-k compare continue to work; only the train step is blocked.
 - All generated/derived artifacts (`output/`, `data/augment/`, grown `.gguf`s)
   are gitignored; landing-pad scripts are committed.
 

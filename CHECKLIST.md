@@ -22,12 +22,20 @@ only if `N == sum n_j`).
 ## TO-DO (must / advancing the mission)
 
 ### M1 — Run the ternary grow for real
-- [ ] `node scripts/augment-500mb.mjs --grow` (llama-finetune on the Q1_0).
-- [ ] Verify the grown GGUF **stays true-ternary Q1_0** (weights `{-1,0,+1}`),
-      not silently FP16 — load attempt via `llama-server`, and check the
-      GGUF tensor types (Q1_0, not F16/F32).
-- [ ] If `llama-finetune -o` emits F16, add a quantize step back to Q1_0 so the
-      grown model is ternary (record the exact command in roadmap.md).
+- [x] `node scripts/augment-500mb.mjs --grow` wired: feeds plain-text train.txt
+      to `llama-finetune`, bounded context so it fits the 6 GiB cap, CPU mode
+      (GPU OOMs — `cudaMalloc failed` offloading the f32 KV).
+- [~] **BLOCKED (fork training bug)**: `llama-finetune` aborts (SIGABRT) in
+      `ggml_build_backward_expand`:
+      `ggml.c:7309 GGML_ASSERT(!node->view_src || op == CPY|VIEW|RESHAPE|PERMUTE|TRANSPOSE)`
+      — the Q1_0/ternary model uses a tensor op whose gradient the fork's
+      backward pass doesn't support. This is a **C++/ggml-level limitation of
+      the direct-token fork**, NOT fixable from the harness/script layer.
+      Retry with `-b 64 -ub 32 -c 512 -lr 1e-5` confirmed the same abort.
+- [ ] To unblock: patch the fork's ggml backward pass to support the op (or
+      raise it upstream), or find a quant/layer config the backward graph
+      accepts. Until then, `--grow` cannot produce a grown GGUF.
+- [ ] Verify the grown GGUF **stays true-ternary Q1_0** once grow is unblocked.
 
 ### M2 — Compare grown vs 27B, KV / top-k
 - [ ] `node scripts/compare-topk.mjs --tokens N --chunk S` against the grown
