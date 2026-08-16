@@ -60,9 +60,10 @@ function emitFor(who) { // {top_k, top_p} for teacher|student
 const noiseToLayer = () => Number(SAMPLING().noise_to_layer ?? 0.05);
 const STUDENT_STEP = Number(process.env.STUDENT_STEP || 5);
 const STEPS = Number(process.env.STEPS || 0); // 0 = run forever
-const PROMPT =
+let PROMPT =
   process.env.PROMPT ||
   "Consider the Pithagoras portal: the pi model picker sends provider and modelId. The issue is that";
+let promptChanged = false; // set true by a /prompt POST to reseed shared next step
 
 // Token used to denote the 5-token compression footprint (e.g. token 999993
 // == the token ids 9,4,3,200,2). We treat "compressed token == sum of its
@@ -194,6 +195,32 @@ function startServer() {
       return;
     }
 
+    // /prompt POST: set the teacher/student prompt LIVE. The next step re-seeds
+    // `shared` with this new prompt (a fresh generation run).
+    if (url === "/prompt" && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        try {
+          const patch = JSON.parse(body || "{}");
+          const p = String(patch.prompt ?? patch.p ?? "").trim();
+          if (!p) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "missing prompt" }));
+            return;
+          }
+          PROMPT = p;
+          promptChanged = true;
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, prompt: PROMPT }));
+        } catch (e) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+        }
+      });
+      return;
+    }
+
     if (url.startsWith("/events")) {
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
       const push = () => {
@@ -232,6 +259,18 @@ async function run() {
   const alwaysRun = _steps === 0;
 
   while (!ended && (alwaysRun || step < _steps)) {
+    // Live prompt change (from /prompt POST): reseed the shared prompt, clear
+    // the teacher's accumulated output, and reset the step counter so the new
+    // prompt starts a fresh generation run.
+    if (promptChanged) {
+      promptChanged = false;
+      shared = PROMPT;
+      teacherOutput.length = 0;
+      layerNoiseState = null;
+      recent.length = 0;
+      step = 0;
+      console.log(`  >> prompt changed to: ${JSON.stringify(PROMPT.slice(0, 80))}... (restarting generation)`);
+    }
     step++;
     let stepRec = { step, ts: Date.now() };
     try {

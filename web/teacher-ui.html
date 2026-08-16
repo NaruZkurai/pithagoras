@@ -131,6 +131,11 @@
     </div>
     <div class="card">
       <h2>Config / controls (live, applies next step)</h2>
+      <div style="margin-bottom:10px">
+        <div class="label" style="font-size:11px;color:#8b949e;margin-bottom:4px">Set prompt (live — restarts generation)</div>
+        <textarea id="cPrompt" rows="3" style="width:100%;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:8px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;"></textarea>
+        <button id="bPrompt" style="background:#8b5cf6;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;margin-top:6px">Set prompt</button>
+      </div>
       <div class="stats" style="grid-template-columns:1fr 1fr; align-items:end;">
         <div class="stat"><div class="label">Base pts / top-k match</div><input id="cBase" type="number" step="1" value="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">500× pts</div><input id="c500" type="number" step="10" value="500" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
@@ -290,6 +295,12 @@ function renderTeacher(d) {
   const out = d.teacher_output || [];
   document.getElementById("teachPromoteCount").textContent = "(" + (d.teacher_prompt_output_tokens ?? "?") + " total)";
   document.getElementById("teachOutCount").textContent = "(" + out.length + ")";
+  // Keep the prompt editor in sync with the live base prompt (only when the
+  // user isn't mid-editing it).
+  const cp = document.getElementById("cPrompt");
+  if (cp && document.activeElement !== cp) {
+    cp.value = d.teacher_prompt ?? cp.value;
+  }
   const el = document.getElementById("teachOut");
   if (!out.length) { el.innerHTML = '<div style="color:#8b949e">waiting for teacher output…</div>'; return; }
   const html = out.map((t, i) =>
@@ -453,6 +464,22 @@ document.getElementById("bAddExp")?.addEventListener("click", () => {
 
 document.getElementById("bSave")?.addEventListener("click", () => {
   postCfg({ "_request_save_snapshot": true }, "snapshot");
+});
+
+// Live prompt setter: POST /prompt to change the prompt now (restarts
+// generation from the new prompt next step).
+document.getElementById("bPrompt")?.addEventListener("click", async () => {
+  const p = document.getElementById("cPrompt").value;
+  if (!p.trim()) return;
+  document.getElementById("cfgStatus").textContent = "setting prompt…";
+  try {
+    const r = await fetch("http://127.0.0.1:4199/prompt", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: p }),
+    });
+    const j = await r.json();
+    document.getElementById("cfgStatus").textContent = j.ok ? "prompt set ✓" : "err ✗ " + (j.error || "");
+  } catch (e) { document.getElementById("cfgStatus").textContent = "offline (prompt server :4199)"; }
 });
 
 function appendStream(d) {
