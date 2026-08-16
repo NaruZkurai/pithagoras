@@ -423,8 +423,16 @@ async function postCfg(patch, note) {
 // Sync the sampling number inputs from the latest payload (same style as the
 // config controls: values are shown/edited directly in the inputs).
 function renderSampling(d) {
-  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   const e = d.emit || {};
+  // Only sync the value into an input if it is NOT currently focused (being
+  // edited). This prevents the Live stream updates from resetting what the
+  // user typed, matching the config controls' behavior.
+  const set = (id, v) => {
+    const el = document.getElementById(id);
+    if (!el || document.activeElement === el) return;
+    const sv = String(v);
+    if (el.value !== sv) el.value = sv;
+  };
   set("sView", d.view_top_k ?? 100);
   set("sTKt", e.teacher?.top_k ?? 20);
   set("sTPt", Number(e.teacher?.top_p ?? 0.9).toFixed(2));
@@ -514,17 +522,22 @@ document.getElementById("bPause")?.addEventListener("click", async () => {
   } catch (e) { /* server offline; keep optimistic */ }
 });
 
+let _lastStreamStep = null;
 function appendStream(d) {
   const s = document.getElementById("stream");
   const recent = d.recent || [];
   const last = recent[recent.length - 1];
-  if (last) {
-    const five = last.is_500x_value_generation ? ' <span class="fivehundred">[500×]</span>' : "";
-    const line = document.createElement("div");
-    line.innerHTML = `step ${last.step}: base+${last.base_step_score ?? 0} → total ${last.total_score ?? 0}${five}`;
-    s.appendChild(line);
-    s.scrollTop = s.scrollHeight;
-  }
+  if (!last) return;
+  // Only append a NEW line when the step actually changed — otherwise the SSE
+  // pushes duplicate "step n" lines every ~400ms (incl. while paused).
+  const key = last.step + "|" + (last.ts || "");
+  if (key === _lastStreamStep) return;
+  _lastStreamStep = key;
+  const five = last.is_500x_value_generation ? ' <span class="fivehundred">[500×]</span>' : "";
+  const line = document.createElement("div");
+  line.innerHTML = `step ${last.step}: ${d.paused ? '<span style="color:#d29922">⏸ PAUSED</span> ' : ""}base+${last.base_step_score ?? 0} → total ${last.total_score ?? 0}${five}`;
+  s.appendChild(line);
+  s.scrollTop = s.scrollHeight;
 }
 </script>
 </body>
