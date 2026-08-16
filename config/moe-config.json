@@ -30,6 +30,9 @@
     "mtp_expert": "EMTP",
     "compressor_tokens_only": true,
     "allow_new_token_output": true,
+    "expert_steering": 0.3,
+    "steering_max_bias": 2.0,
+    "steering_top_n": 20,
     "compressor_role": "mutations",
     "compressor_note": "EACH COMPRESSOR MUST USE ONLY COMPRESSOR TOKENS: experts designated as compressors (role starts with 'compr' or listed in compressor_experts) may only route/emit tokens from the compressor-token set (the compressed-chunk / formulaic tokens in newTokenSet), never the general vocabulary. This is what makes the extra layers fight to become token-COMPRESSOR layers (they can only express compressed tokens). allow_new_token_output=true lets those compressor experts actually EMIT the compressed new token as part of the scored output (so 500x can fire), instead of only matching it one-directionally.",
     "compressor_experts": [

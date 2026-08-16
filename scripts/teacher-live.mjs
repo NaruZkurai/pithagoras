@@ -240,6 +240,56 @@ function compressorConstrained(top, compressor) {
   return out;
 }
 
+/**
+ * EXPERT STEERING logit bias — the bridge that makes MoE training affect the
+ * served student's OUTPUT.
+ *
+ * The served model is fixed; the MoE layer above it only maintained routing
+ * metadata, so the student could never actually learn to emit new tokens. We
+ * close that loop with llama.cpp's `logit_bias`: for the STUDENT request we add
+ * a positive additive bias to the teacher's top-k token ids (the tokens the
+ * experts have been rewarded for matching), weighted by teacher rank — the
+ * model that the experts "want" is nudged up, so a collapsed student can break
+ * out and track the teacher. Bias strength scales with how well the experts are
+ * currently matching (steer_progress = best overlap seen this window), so it is
+ * a nudge toward LEARNED preferences, not a hard force.
+ *
+ * Config (moe): expert_steering (0 = off, 1 = full), steering_max_bias (cap),
+ * steering_top_n (how many teacher top-k tokens to bias).
+ */
+function buildExpertSteeringBias(teacherTopK, currentOverlap, tol = 0.95, extraTokenIds = []) {
+  const moe = loadConfig()?.moe || {};
+  const mult = Number(moe.expert_steering ?? 0.3);
+  if (mult <= 0) return null;
+  const maxBias = Number(moe.steering_max_bias ?? 2.0);
+  const topN = Math.max(1, Number(moe.steering_top_n ?? 20));
+  // Strength = overall multiplier × (0.15 floor to break a collapsed model +
+  // progress toward convergence), so steering is present early (to initiate
+  // learning) and grows as the model learns, capped at 1. Once converged
+  // (overlap>=tol) it relaxes because the model tracks on its own.
+  const progress = Math.max(0, Math.min(1, (Number(currentOverlap ?? 0) / Math.max(0.001, tol))));
+  const strength = Math.max(0, Math.min(1, mult * (0.15 + progress)));
+  if (strength <= 0.001) return null;
+  const bias = {};
+  // Teacher top-k tokens first (weighted by teacher rank).
+  const teacherList = (teacherTopK || []).slice(0, topN);
+  teacherList.forEach((x, i) => {
+    const id = x?.id != null ? Number(x.id) : NaN;
+    if (!Number.isFinite(id)) return;
+    const w = strength * maxBias * (1 - (i / Math.max(1, teacherList.length - 1)) * 0.5);
+    if (w > 0.01) bias[String(id)] = Number(Math.min(w, maxBias).toFixed(3));
+  });
+  // NEW-TOKEN targets (the compressed fpId / sentinel): these are the tokens we
+  // specifically want "on output" — nudge them at FULL strength so the model
+  // has a real chance to actually emit the new token (aids 500x).
+  for (const t of (extraTokenIds || [])) {
+    const id = Number(t);
+    if (!Number.isFinite(id)) continue;
+    bias[String(id)] = Number(strength * maxBias).toFixed(3);
+  }
+  return Object.keys(bias).length ? bias : null;
+}
+
 // Token used to denote the 5-token compression footprint (e.g. token 999993
 // == the token ids 9,4,3,200,2). We treat "compressed token == sum of its
 // constituent token ids" as the signature the 500x detector looks for.
@@ -254,13 +304,18 @@ const _steps = flag("steps", STEPS);
  *  (logprobs=N) but only EMITS from the top-k / top-p of the given role
  *  (teacher/student) — which also keeps the teacher coherent.
  *  `who` selects the live sampling.emit.<who> values from config. */
-async function profile(url, prompt, n, who = "teacher") {
+async function profile(url, prompt, n, who = "teacher", logitBias = null) {
   const { top_k, top_p, temperature } = emitFor(who);
   // `prompt` may be a STRING (plain text) or a NUMBER ARRAY (raw token ids —
   // direct token input). The direct-token fork's /v1/completions accepts both.
+  // `logitBias` (optional, student-only): { tokenIdString: additiveBias } used
+  // to STEER the student's emission toward the trained experts' preferences
+  // (the teacher's top-k that the MoE has learned to match). This is what makes
+  // the MoE training actually affect the served model's output.
   const body = JSON.stringify({
     model: "x", prompt, max_tokens: n, temperature,
     top_p, top_k, logprobs: viewTopK(), echo: false, stream: false,
+    ...(url !== TEACHER_URL && logitBias && Object.keys(logitBias).length ? { logit_bias: logitBias } : {}),
   });
   const res = await fetch(`${url}/v1/completions`, {
     method: "POST", headers: { "content-type": "application/json" }, body,
@@ -311,11 +366,11 @@ function tokenizeShared(text) {
  * box) so a single flaky call never corrupts a whole step into {error}. Gives
  * up after ~3 tries over ~6s; the caller then skips the step cleanly.
  */
-async function profileRetry(url, prompt, n, who = "teacher", tries = 3) {
+async function profileRetry(url, prompt, n, who = "teacher", tries = 3, logitBias = null) {
   let last;
   for (let i = 0; i < tries; i++) {
     try {
-      return await profile(url, prompt, n, who);
+      return await profile(url, prompt, n, who, logitBias);
     } catch (e) {
       last = e;
       await new Promise((r) => setTimeout(r, 2000));
@@ -592,6 +647,8 @@ async function run() {
   let winSeq = 0;            // sequence number (for the payload)
   let bestWinOverlap = 0;    // best student↔window overlap seen within the current tier
   let lastConvergedStep = -1;// step at which the student last hit identity_tolerance
+  let lastFpId = null;       // compressed new token id from the previous step (steered toward)
+  let lastFpRaw = 0;         // raw sum from the previous step (debug)
   const curWindowTier = () => win && win.tiers ? win.tiers[Math.min(winTierIdx, win.tiers.length - 1)] : null;
 
   while (!ended && (alwaysRun || step < _steps)) {
@@ -682,6 +739,7 @@ async function run() {
       stepRec.window = { tier: curWindowTier().tokens, idx: winTierIdx + 1, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, topk_size: (winRefTopK || []).length };
     }
     let _b = 0, _bP = 0, _bE = 0, _cP = 0, _cmp = 0;
+    let steerBias = null; // expert-steering logit-bias for the student request (surfaced in UI)
     try {
       // Teacher (27B) advances the shared prompt. In windowing mode we LOOP on
       // the same fixed window (sharedIds already holds it); otherwise continuous.
@@ -748,7 +806,18 @@ async function run() {
       // like "the input got deleted"). The teacher still sees the full prompt.
       const _stuPrompt = sharedToModelInput(sharedIds);
       if (step % 10 === 0) console.log(`    [dbg] student model input tokens: ${_stuPrompt.length} (raw ${sharedIds.length}, chunked ${compressedInputEnabled()}, cap ${studentCtxCap()})`);
-      const student = await profileRetry(STUDENT_URL, _stuPrompt, STUDENT_STEP, "student");
+      // EXPERT STEERING: build a logit bias toward the teacher's current top-k
+      // scaled by how well the MoE has learned this window. If enabled, the
+      // student request is nudged so the trained expert preferences (teacher-
+      // matching tokens) actually show up in output — breaking a collapsed
+      // student out of its single-token attractor toward the teacher.
+      const steerCur = win && win.enabled ? bestWinOverlap : (typeof curveRw !== "undefined" ? (curveRw?.overlapFraction ?? 0) : 0);
+      const steerTol = win && win.enabled ? (win.identityTolerance ?? 0.95) : 0.95;
+      // Steer toward teacher top-k AND the previous compressed new token (so the
+      // "new tokens on output" goal is a real nudge, not just a logical match).
+      steerBias = buildExpertSteeringBias((tPos.top || []), steerCur, steerTol, lastFpId != null ? [lastFpId, COMPRESS_AS_TOKEN] : []);
+      if (steerBias && step % 10 === 0) console.log(`    [steer] biasing ${Object.keys(steerBias).length} token ids (${Object.keys(steerBias).length - (lastFpId != null ? 2 : 0)} teacher + newtok, overlap ${steerCur.toFixed(3)})`);
+      const student = await profileRetry(STUDENT_URL, _stuPrompt, STUDENT_STEP, "student", 3, steerBias);
       if (!student.length) { stepRec.note = "student empty"; ended = true; break; }
 
       // STUDENT DEGENERACY GUARD: a 1-bit/ternary model can collapse to ONE
@@ -803,6 +872,7 @@ async function run() {
       const footprint = compressFootprint(studentIdNums.length ? studentIdNums : student.map((_, i) => i + 1));
       const fpId = footprint.id;                    // valid in-vocab compressed token id
       const fpRaw = footprint.rawSum;               // raw (huge) sum for display/debug
+      lastFpId = fpId; lastFpRaw = fpRaw;           // remember for next-step steering
       const top100All = new Set(student.flatMap((s) => (s.top || []).map((x) => x.token)));
 
       // ---- ALLOW NEW TOKENS ON OUTPUT ----
@@ -1176,6 +1246,7 @@ async function run() {
       layers_total: stepRec.moe?.layers_total ?? loadConfig()?.layers?.count ?? 5,
       pause_every_n_steps: Number(loadConfig()?.training?.pause_every_n_steps ?? 0),
       windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000, max_loops_per_tier: win.maxLoopsPerTier, overlap: stepRec.window?.overlap ?? 0, best_overlap: bestWinOverlap, tol: win.identityTolerance, graduated: !!(stepRec.window?.graduated), last_converged_step: lastConvergedStep, allow_new_token_output: !!loadConfig()?.moe?.allow_new_token_output } : undefined,
+      expert_steering: { enabled: Number(loadConfig()?.moe?.expert_steering ?? 0) > 0, factor: Number(loadConfig()?.moe?.expert_steering ?? 0), max_bias: Number(loadConfig()?.moe?.steering_max_bias ?? 2.0), top_n: Number(loadConfig()?.moe?.steering_top_n ?? 20), last_bias_tokens: steerBias ? Object.keys(steerBias).length : 0 },
       // PER-EXPERT scored/training detail (surfaced so the UI shows EVERY expert
       // getting a value/delta, not just the active top-k). Pulls from the moe
       // object built during the step.
