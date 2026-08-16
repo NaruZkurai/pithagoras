@@ -106,14 +106,13 @@ export function maybeResetMoeState() {
     noise: _moeState.noise,
     step: _moeState.step,
   };
-  // Apply the EXPERT POLICY: top_n_survive keep their values; non-top experts
-  // keep being updated via trainStep (we simply don't reset them); the bottom
-  // bottom_m_refresh worst experts get refreshed — either re-seeded from the
-  // previous window's data (reset_from_last_window) or fresh.
+  // Apply the EXPERT POLICY: top_n_survive keep their values; the 
+  // update_losing_experts worst experts get refreshed — either re-seeded from
+  // the previous window's data (reset_from_last_window) or fresh.
   const policy = loadConfig()?.expert_policy || {};
   const nExp = moeScoresSize();
   const topSurvive = Math.max(0, Math.min(nExp, Number(policy.top_n_survive ?? 3)));
-  const bottomRefresh = Math.max(0, Math.min(nExp, Number(policy.bottom_m_refresh ?? 2)));
+  const losingCount = Math.max(0, Math.min(nExp, Number(policy.update_losing_experts ?? 2)));
   const fromLast = policy.reset_from_last_window !== false;
   const doUpdateNonTop = policy.update_non_top !== false;
 
@@ -122,13 +121,13 @@ export function maybeResetMoeState() {
   // Rank experts by their accumulated score (best → worst) for the window.
   const ranked = names.slice().sort((a, b) => (_moeState.scores[b] || 0) - (_moeState.scores[a] || 0));
   const surviveSet = new Set(ranked.slice(0, topSurvive));        // keep these
-  const refreshSet = new Set(ranked.slice(ranked.length - bottomRefresh)); // refresh these
+  const refreshSet = new Set(ranked.slice(ranked.length - losingCount)); // refresh these
 
   let refreshed = [];
   for (const nm of names) {
     if (surviveSet.has(nm)) continue; // top-n survive unchanged
     if (refreshSet.has(nm)) {
-      // Bottom-m: re-seed from the previous window's data (or fresh if asked).
+      // Losing experts: re-seed from the previous window's data (or fresh).
       const seeded = fromLast && lastValues[nm] != null
         ? lastValues[nm] * (0.7 + 0.3 * noise01((+new Date()) + nm.length * 3))
         : 0.5 + 0.4 * noise01((+new Date()) + nm.length * 3);
@@ -136,10 +135,8 @@ export function maybeResetMoeState() {
       refreshed.push(nm);
       continue;
     }
-    // Non-top, non-bottom: keep being updated (trainStep handles the deltas), so
-    // leave value intact unless update_non_top=false.
+    // Non-top: keep being updated (trainStep handles the deltas).
     if (doUpdateNonTop) {
-      // mild drift so these still evolve
       _moeState.expertValues[nm] = Math.max(0, Math.min(1,
         (_moeState.expertValues[nm] || 0.5) + (noise01((+new Date()) + nm.length * 7) - 0.5) * 0.04));
     }
@@ -150,8 +147,38 @@ export function maybeResetMoeState() {
   _moeState.scores = Object.fromEntries(names.map((nm) => [nm, 0]));
   _moeState.step = 0;
   _moeState.round += 1;
-  console.log(`  >> MOE round reset: round ${_moeState.round} | survive ${topSurvive} | refresh(bottom ${bottomRefresh}) [${refreshed.join(",") || "none"}]`);
+  console.log(`  >> MOE round reset: round ${_moeState.round} | survive ${topSurvive} | update losing ${losingCount} [${refreshed.join(",") || "none"}]`);
   return true;
+}
+
+/**
+ * UPDATE LOSING EXPERTS EVERY N STEPS: unlike the full round reset, this runs
+ * on a shorter interval (config expert_policy.losing_experts_update_every) and
+ * re-seeds the WEAKEST experts directly from the previous window's data. This
+ * is the "update the losing experts after n steps" behaviour.
+ * Returns the names updated, or null if no update was due.
+ */
+export function updateLosingExperts() {
+  if (!_moeState) return null;
+  const policy = loadConfig()?.expert_policy || {};
+  const every = Math.max(1, Number(policy.losing_experts_update_every ?? 5));
+  if (_moeState.step === 0 || _moeState.step % every !== 0) return null;
+  const nExp = moeScoresSize();
+  const losingCount = Math.max(1, Math.min(nExp, Number(policy.update_losing_experts ?? 2)));
+  const names = Object.keys(_moeState.expertValues);
+  const ranked = names.slice().sort((a, b) => (_moeState.scores[b] || 0) - (_moeState.scores[a] || 0));
+  const losing = ranked.slice(ranked.length - losingCount);
+  const lastValues = _moeState.lastRound?.expertValues || {};
+  const fromLast = policy.reset_from_last_window !== false;
+  for (const nm of losing) {
+    const seeded = fromLast && lastValues[nm] != null
+      ? lastValues[nm] * (0.7 + 0.3 * noise01((+new Date()) + nm.length * 5))
+      : 0.5 + 0.4 * noise01((+new Date()) + nm.length * 5);
+    _moeState.expertValues[nm] = Math.max(0, Math.min(1, seeded));
+    _moeState.scores[nm] = 0; // reset the losing expert's score
+  }
+  console.log(`  >> update losing experts (every ${every} steps): [${losing.join(",") || "none"}]`);
+  return losing;
 }
 
 /** Number of experts currently tracked (used to clamp policy sizes). */

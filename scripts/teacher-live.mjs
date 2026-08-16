@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores } from "./moe-engine.mjs";
+import { loadConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts } from "./moe-engine.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -292,6 +292,7 @@ async function run() {
       promptChanged = false;
       shared = PROMPT;
       teacherOutput.length = 0;
+      newTokens.length = 0;      // clear the created new-token list on a new prompt
       layerNoiseState = null;
       recent.length = 0;
       step = 0;
@@ -409,6 +410,9 @@ async function run() {
         // Accumulate each expert's score into the persistent round state so all
         // experts build cumulative points (visible across resets via lastRound).
         const cumScores = accumulateExpertScores(perExpertPoints);
+        // UPDATE LOSING EXPERTS: every losing_experts_update_every steps, re-seed
+        // the weakest experts from the previous window's data.
+        updateLosingExperts();
         const st = route.state || {};
         // Per-expert "guess": ONE token per expert. Each expert Ei owns the
         // student's output position i % STUDENT_STEP, so we tag that chosen

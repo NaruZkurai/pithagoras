@@ -145,10 +145,11 @@
         <div class="stat"><div class="label">Expert count (add)</div><input id="cExp" type="number" step="1" value="5" min="5" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
       </div>
       <div style="margin-top:10px;padding-top:8px;border-top:1px solid #30363d;">
-        <div class="label" style="font-size:11px;color:#8b949e;margin-bottom:4px">Expert update policy (top-n survive · bottom-m refresh)</div>
+        <div class="label" style="font-size:11px;color:#8b949e;margin-bottom:4px">Expert update policy (top-n survive · update losing experts)</div>
         <div class="stats" style="grid-template-columns:1fr 1fr; align-items:end;">
           <div class="stat"><div class="label">Top-n survive</div><input id="cTopN" type="number" step="1" min="0" value="3" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
-          <div class="stat"><div class="label">Bottom-m refresh</div><input id="cBotM" type="number" step="1" min="0" value="2" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+          <div class="stat"><div class="label">Update losing experts (how many)</div><input id="cLosing" type="number" step="1" min="0" value="2" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+          <div class="stat"><div class="label">Update losing experts every N steps</div><input id="cLosingEvery" type="number" step="1" min="1" value="5" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
           <div class="stat"><div class="label"><label style="display:flex;gap:6px;align-items:center;font-size:12px;color:#e6edf3;margin-top:6px"><input id="cUpdMid" type="checkbox" checked> Update non-top</label></div></div>
           <div class="stat"><div class="label"><label style="display:flex;gap:6px;align-items:center;font-size:12px;color:#e6edf3;margin-top:6px"><input id="cFromLast" type="checkbox" checked> Reset from last window</label></div></div>
         </div>
@@ -326,12 +327,14 @@ function renderTeacher(d) {
   }
   const el = document.getElementById("teachOut");
   if (!out.length) { el.innerHTML = '<div style="color:#8b949e">waiting for teacher output…</div>'; return; }
-  const html = out.map((t, i) =>
-    `<span class="tok" title="token ${i}">${String(t).replace(/</g, "&lt;")}</span>`
+  // Cap the rendered token list so the panel doesn't grow forever (show last 100).
+  const shown = out.slice(-100);
+  const html = shown.map((t, i) =>
+    `<span class="tok" title="token ${out.length - shown.length + i}">${String(t).replace(/</g, "&lt;")}</span>`
   ).join(" ");
-  el.innerHTML = `<div style="color:#8b949e;margin-bottom:4px">total prompt + output (${d.teacher_prompt_output_tokens ?? "?"} tokens):</div>` +
-    `<div style="color:#8b949e;margin-bottom:2px">— output tokens (${out.length}):</div>${html}` +
-    `<div style="color:#8b949e;margin-top:8px;margin-bottom:2px">— full shared prompt (base + all output):</div><div style="word-break:break-word">${String(d.prompt || d.teacher_prompt || "").replace(/</g, "&lt;")}</div>`;
+  el.innerHTML = `<div style="color:#8b949e;margin-bottom:4px">total prompt + output (${d.teacher_prompt_output_tokens ?? "?"} tokens)</div>` +
+    `<div style="color:#8b949e;margin-bottom:2px">— output tokens (${out.length}${shown.length < out.length ? `, showing last ${shown.length}` : ""}):</div>${html}` +
+    `<div style="color:#8b949e;margin-top:8px;margin-bottom:2px">— full prompt head:</div><div style="word-break:break-word">${String(d.prompt || d.teacher_prompt || "").slice(0, 600).replace(/</g, "&lt;")}${String(d.prompt || "").length > 600 ? "…" : ""}</div>`;
   el.scrollTop = el.scrollHeight;
 }
 
@@ -482,7 +485,8 @@ function renderPolicy(d) {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
   set("cTopN", p.top_n_survive ?? 3);
-  set("cBotM", p.bottom_m_refresh ?? 2);
+  set("cLosing", p.update_losing_experts ?? 2);
+  set("cLosingEvery", p.losing_experts_update_every ?? 5);
   chk("cUpdMid", p.update_non_top !== false);
   chk("cFromLast", p.reset_from_last_window !== false);
 }
@@ -519,7 +523,8 @@ document.getElementById("bBase")?.addEventListener("click", () => {
     },
     expert_policy: {
       top_n_survive: Number(document.getElementById("cTopN").value || 3),
-      bottom_m_refresh: Number(document.getElementById("cBotM").value || 2),
+      update_losing_experts: Number(document.getElementById("cLosing").value || 2),
+      losing_experts_update_every: Number(document.getElementById("cLosingEvery").value || 5),
       update_non_top: document.getElementById("cUpdMid").checked,
       reset_from_last_window: document.getElementById("cFromLast").checked,
     },
@@ -579,8 +584,11 @@ function appendStream(d) {
   const recent = d.recent || [];
   const last = recent[recent.length - 1];
   if (!last) return;
-  // Only append a NEW line when the step actually changed — otherwise the SSE
-  // pushes duplicate "step n" lines every ~400ms (incl. while paused).
+  // When the step counter jumps backward (prompt change reset), clear the old
+  // stream so it doesn't keep growing with a stale run.
+  if (_lastStreamStep !== null && last.step < _lastStreamStep) {
+    s.innerHTML = "";
+  }
   const key = last.step + "|" + (last.ts || "");
   if (key === _lastStreamStep) return;
   _lastStreamStep = key;
@@ -588,6 +596,8 @@ function appendStream(d) {
   const line = document.createElement("div");
   line.innerHTML = `step ${last.step}: ${d.paused ? '<span style="color:#d29922">⏸ PAUSED</span> ' : ""}base+${last.base_step_score ?? 0} → total ${last.total_score ?? 0}${five}`;
   s.appendChild(line);
+  // Keep the stream bounded so the window doesn't grow forever.
+  while (s.childElementCount > 60) s.removeChild(s.firstChild);
   s.scrollTop = s.scrollHeight;
 }
 </script>
