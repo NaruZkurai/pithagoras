@@ -451,6 +451,22 @@ export function trainStep(route, teacherVal, studentVal, expertMatch) {
   const perExpert = route.rows.map((r, i) => {
     const spec = cfg.moe.experts[r.name] || {};
     const isActive = !!r.active;
+    // ---- TRAIN SCOPE = NEW-3B ADDON EXPERTS ONLY (user directive) ----
+    // "we only want to train the new 3b addon experts" — the "real" base 27B
+    // experts (role 'base' = E1..E5, the original model) are FROZEN: they are
+    // NOT retrained (no value change, no delta, no match-accum). Only the NEW
+    // ~3B addon experts (mutation / mtp_head / new_token / compr*) get trained
+    // to emit the etokens / compressed output. 'base' role experts stay fixed.
+    const role = String(spec.role || route.rows[i]?.role || "").toLowerCase();
+    const isRealBase = role === "base";
+    if (isRealBase) {
+      // Freeze the base expert: keep its current value, contribute no delta.
+      return {
+        expert: r.name, delta: 0, value: _moeState.expertValues?.[r.name] ?? r.value,
+        active: isActive, topk_weight: r.topk_weight, prev: _moeState.expertValues?.[r.name] ?? r.value,
+        match: 0, matchScore: _moeState.matchScore?.[r.name] ?? 0, frozen: true,
+      };
+    }
     // PER-EXPERT TEACHER-MATCH: how many of this expert's routed top-k tokens
     // matched the teacher's top-k this step (0 = no match, >0 = match). This is
     // the real differentiator — "the more topk tokens that match the teacher
