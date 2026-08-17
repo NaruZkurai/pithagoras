@@ -156,6 +156,12 @@ function codeBaselineSet() {
 // step so the UI sliders apply immediately). Helpers return current values.
 const SAMPLING = () => loadConfig()?.sampling || {};
 const viewTopK = () => Math.min(100, Number(SAMPLING().view_top_k ?? 100));   // how many top tokens model looks at (logprobs)
+// How many top-k tokens to SHOW per emitted position, and how many positions,
+// in the payload/UI. Tunable via the "next phase: more top-k tokens" control so
+// the output isn't clipped to a few tokens of the top-K and scoring is visibly
+// driven by the wider top-k. Defaults match the prior hard-coded top-5 × 16.
+const topkDisplayPerPos = () => Number(SAMPLING().topk_display_per_pos ?? 5);
+const topkDisplayPositions = () => Math.min(64, Number(SAMPLING().topk_display_positions ?? 16));
 function emitFor(who) { // {top_k, top_p, temperature} for teacher|student
   const s = SAMPLING().emit?.[who] || {};
   return {
@@ -1089,10 +1095,11 @@ async function run() {
         if (winRefToks && winRefToks.length) {
           teacherOutput.length = 0;
           teacherOutput.push(...winRefToks);
-          // Bound the stored per-position top-k (top-5, max 16 positions) so the
-          // payload / current.json stays small and the UI doesn't freeze.
-          liveEtokStats.last_teacher_topk_per_pos = (winRefTopKPerPos || []).slice(0, 16).map((k) =>
-            (k || []).slice(0, 5).map((x) => ({ id: x.id, token: x.token, logprob: x.logprob }))
+          // Bound the stored per-position top-k (top-k/depth tunable via the
+          // 'next phase: more top-k tokens' control) so the payload shows MORE
+          // of the top-K and scoring is visibly driven by the full top-k.
+          liveEtokStats.last_teacher_topk_per_pos = (winRefTopKPerPos || []).slice(0, topkDisplayPositions()).map((k) =>
+            (k || []).slice(0, topkDisplayPerPos()).map((x) => ({ id: x.id, token: x.token, logprob: x.logprob }))
           );
           // Feed the SAME window chunk through the e-tokenizer (Etokens.json
           // update) — the "token generated chunk of the teacher" the e-tokenizer
@@ -1842,6 +1849,8 @@ async function run() {
       mode: "teacher-anchored live",
       teacher: TEACHER_URL, student: STUDENT_URL,
       view_top_k: viewTopK(),
+      topk_display_per_pos: topkDisplayPerPos(),
+      next_phase: { max_tokens: Number(loadConfig()?.windowing?.max_tokens ?? 2000) },
       emit: { teacher: emitFor("teacher"), student: emitFor("student") },
       noise_to_layer: noiseToLayer(),
       base_model: loadConfig()?.model?.base_gguf ?? STUDENT_URL,
@@ -1949,10 +1958,10 @@ async function run() {
       teacher_prompt: PROMPT,
       teacher_output: teacherOutput,
       // The teacher's top-k distribution PER emitted token (file-loaded), so the
-      // UI can render "topk per token emitted". BOUNDED (top-5 per position,
-      // max 16 positions) so current.json doesn't blow up and the page stays
-      // responsive — the full per-position sort is kept in Etokens, not here.
-      teacher_topk_per_pos: (liveEtokStats.last_teacher_topk_per_pos || []).slice(0, 16).map((k) => (k || []).slice(0, 5)),
+      // UI can render "topk per token emitted". Depth/depth are tunable via the
+      // 'next phase: more top-k tokens' control (topk_display_per_pos,
+      // topk_display_positions) — raise them to show more of the top-K.
+      teacher_topk_per_pos: (liveEtokStats.last_teacher_topk_per_pos || []).slice(0, topkDisplayPositions()).map((k) => (k || []).slice(0, topkDisplayPerPos())),
       teacher_prompt_output_tokens: (PROMPT + " " + teacherOutput.join(" ")).trim().split(/\s+/).length,
       recent,
       prompt: shared,

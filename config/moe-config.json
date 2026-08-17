@@ -29,7 +29,7 @@
     "chunk_size": 4,
     "file": "data/Etokens.json",
     "train_scope": "new_3b_only",
-    "note": "E-TOKEN COMPRESSION SYSTEM (corrected): data/Etokens.json stores recallable functions etoken(e1) -> (o1,o2,o3,o2,o4) (the original token tuple, deduped of effective adjacent repeats). On startup the pre-tokenized token DB (data/project-tokens.json) is fed through the e-tokenizer to BUILD the base Etokens.json; then every teacher-generated chunk is e-tokenized and MERGED back live (etokens.live_update). The etoken id (in moe.new_token_base..+new_token_count) is the deterministic/recallable handle in the reserved range. TRAIN SCOPE (user directive): we are ONLY training the NEW ~3B parameters (the 30B-27B delta: mutation / mtp_head / new_token / compr* experts — isNewNetwork in teacher-live.mjs) to use the new etokens and produce COMPRESSED (etoken) output. Base 27B experts E1..E5 are NOT trained for etoken emission. Later we move to the model as a whole using this 3B 'expert' to save space/memory. ATM we train the final 3B expert/set to give compressed token output: etoken disqualification + repeat-train-top-k + phase-1 compressed-output reward apply ONLY to new-3B networks. An expert that produces a token whose ORIGINAL token is NOT in the teacher's top-k is DISQUALIFIED (no reward) for the round, and the etoken id is repeat-trained into each new expert's top-k until it appears (etokens.mjs).",
+    "note": "E-TOKEN COMPRESSION SYSTEM (corrected): data/Etokens.json stores recallable functions etoken(e1) -> (o1,o2,o3,o2,o4) (the original token tuple, deduped of effective adjacent repeats). On startup the pre-tokenized token DB (data/project-tokens.json) is fed through the e-tokenizer to BUILD the base Etokens.json; then every teacher-generated chunk is e-tokenized and MERGED back live (etokens.live_update). The etoken id (in moe.new_token_base..+new_token_count) is the deterministic/recallable handle in the reserved range. TRAIN SCOPE (user directive): we are ONLY training the NEW ~3B parameters (the 30B-27B delta: mutation / mtp_head / new_token / compr* experts \u2014 isNewNetwork in teacher-live.mjs) to use the new etokens and produce COMPRESSED (etoken) output. Base 27B experts E1..E5 are NOT trained for etoken emission. Later we move to the model as a whole using this 3B 'expert' to save space/memory. ATM we train the final 3B expert/set to give compressed token output: etoken disqualification + repeat-train-top-k + phase-1 compressed-output reward apply ONLY to new-3B networks. An expert that produces a token whose ORIGINAL token is NOT in the teacher's top-k is DISQUALIFIED (no reward) for the round, and the etoken id is repeat-trained into each new expert's top-k until it appears (etokens.mjs).",
     "disqualify_round": true,
     "repeat_train_topk_max_passes": 40
   },
@@ -50,9 +50,9 @@
     "new_token_base": 200000,
     "new_token_count": 512,
     "create_new_token_experts": true,
-    "new_token_formula_note": "USER CORRECTION: the compressed token must be a GENUINELY NEW token (a reserved id in [new_token_base, new_token_base+new_token_count)), NOT sum%n_vocab folded onto an existing vocab token. Its VALUE = the sum of the constituent token ids (footprint); its reserved id = new_token_base + (rawSum % new_token_count) — deterministic and decompressible (the rawSum is recoverable). create_new_token_experts=true makes the harness ADD a new MoE expert per distinct new token (NT<idx>) so each new token has its own network that learns to emit it, then steering/logit-bias 'convinces' the model to use that new token.",
+    "new_token_formula_note": "USER CORRECTION: the compressed token must be a GENUINELY NEW token (a reserved id in [new_token_base, new_token_base+new_token_count)), NOT sum%n_vocab folded onto an existing vocab token. Its VALUE = the sum of the constituent token ids (footprint); its reserved id = new_token_base + (rawSum % new_token_count) \u2014 deterministic and decompressible (the rawSum is recoverable). create_new_token_experts=true makes the harness ADD a new MoE expert per distinct new token (NT<idx>) so each new token has its own network that learns to emit it, then steering/logit-bias 'convinces' the model to use that new token.",
     "compressor_role": "mutations",
-    "compressor_note": "EACH COMPRESSOR MUST USE ONLY COMPRESSOR TOKENS: experts designated as compressors (role starts with 'compr' or listed in compressor_experts) may only route/emit tokens from the compressor-token set (the compressed-chunk / formulaic tokens in newTokenSet), never the general vocabulary. This is what makes the extra layers fight to become token-COMPRESSOR layers (they can only express compressed tokens). allow_new_token_output=true lets those compressor experts actually EMIT the compressed new token as part of the scored output (so 500x can fire), instead of only matching it one-directionally. skip_teacher_when_poor / self_update_when_poor: when the student top-k is BAD (best overlap < poor_topk_threshold), DON'T spend resources having the teacher generate a fresh top-k — reuse the existing reference and just update the COMPRESSION experts from the student's own generation output instead.",
+    "compressor_note": "EACH COMPRESSOR MUST USE ONLY COMPRESSOR TOKENS: experts designated as compressors (role starts with 'compr' or listed in compressor_experts) may only route/emit tokens from the compressor-token set (the compressed-chunk / formulaic tokens in newTokenSet), never the general vocabulary. This is what makes the extra layers fight to become token-COMPRESSOR layers (they can only express compressed tokens). allow_new_token_output=true lets those compressor experts actually EMIT the compressed new token as part of the scored output (so 500x can fire), instead of only matching it one-directionally. skip_teacher_when_poor / self_update_when_poor: when the student top-k is BAD (best overlap < poor_topk_threshold), DON'T spend resources having the teacher generate a fresh top-k \u2014 reuse the existing reference and just update the COMPRESSION experts from the student's own generation output instead.",
     "compressor_experts": [
       "EMTP",
       "E101",
@@ -66,7 +66,7 @@
       "layers_per_expert": 4,
       "rewire_every": 10,
       "rewire_rate": 0.05,
-      "note": "GRANULAR 3B STRUCTURE (user-corrected): MULTIPLE 3B segments trained in parallel (n_segments_3b=3), only the BEST is attached. We do NOT preset neurons/expert — sizes SEED small and EVOLVE via rewiring. REWIRING IS RANK-SCALED (user): the attached BEST segment NEVER changes ('best contains no change ever'); LOSERS mutate by rank 'layer change for less performing models increases based on position': loser at 1-based rank `place` changes (place-1)*5% of its neurons (floor 0 at the top loser, worst loser mutates most aggressively). rewire_every=steps between rewires; rewire_rate=base fraction (per-place step is +5%)."
+      "note": "GRANULAR 3B STRUCTURE (user-corrected): MULTIPLE 3B segments trained in parallel (n_segments_3b=3), only the BEST is attached. We do NOT preset neurons/expert \u2014 sizes SEED small and EVOLVE via rewiring. REWIRING IS RANK-SCALED (user): the attached BEST segment NEVER changes ('best contains no change ever'); LOSERS mutate by rank 'layer change for less performing models increases based on position': loser at 1-based rank `place` changes (place-1)*5% of its neurons (floor 0 at the top loser, worst loser mutates most aggressively). rewire_every=steps between rewires; rewire_rate=base fraction (per-place step is +5%)."
     },
     "experts": {
       "E1": {
@@ -778,7 +778,7 @@
       },
       "EMTP": {
         "role": "mtp_head",
-        "mutation": "NextN/MTP decoder block (blk.64) — predicts the NEXT token one step ahead of the trunk",
+        "mutation": "NextN/MTP decoder block (blk.64) \u2014 predicts the NEXT token one step ahead of the trunk",
         "topk_weight": 1.3,
         "training_formula": "mtp_next_match = whether the MTP head's predicted next token (teacher's +1 offset) lands in the teacher's actual next top-k; MTP value accumulates like other experts",
         "noise": 0.02,
@@ -839,7 +839,7 @@
       "reconstruct_weight": 120,
       "reconstruct_top_k": 20,
       "reconstruct_min_overlap": 0.5,
-      "note": "USER DESIGN: (PHASE 1) the NEW networks (all mutation + MTP experts beyond the 5 base ones) are trained to FAVOR compressed tokens — each new network that emits a compressed/new token (in newTokenSet) earns new_net_compression_weight per position, so the added networks become token-COMPRESSORS. (PHASE 2) the new compressed experts must then reproduce the SAME SHAPE as if they weren't attached: when a new network is active, its position's top-k must match the BASE (un-attached, E1-E5) experts' top-k at that position (reconstruct_min_overlap) — scoring reconstruct_weight times the base-overlap. Setting phase=2 gates reconstruction scoring on; phase=1 gates the compression-favor on. Both reward only NEW networks (role mutation/mtp_head), never the base experts."
+      "note": "USER DESIGN: (PHASE 1) the NEW networks (all mutation + MTP experts beyond the 5 base ones) are trained to FAVOR compressed tokens \u2014 each new network that emits a compressed/new token (in newTokenSet) earns new_net_compression_weight per position, so the added networks become token-COMPRESSORS. (PHASE 2) the new compressed experts must then reproduce the SAME SHAPE as if they weren't attached: when a new network is active, its position's top-k must match the BASE (un-attached, E1-E5) experts' top-k at that position (reconstruct_min_overlap) \u2014 scoring reconstruct_weight times the base-overlap. Setting phase=2 gates reconstruction scoring on; phase=1 gates the compression-favor on. Both reward only NEW networks (role mutation/mtp_head), never the base experts."
     },
     "compare": {
       "mode": "topk_first",
@@ -847,25 +847,27 @@
       "top_k": 20,
       "top_p": 0.95,
       "temperature": 0.7,
-      "note": "USER DIRECTIVE + ROOT-CAUSE FIX: analyse the teacher/student top-k head-to-head. identical_settings=false (CHANGED 2026-08-16) so the TEACHER uses top_k/top_p/temperature above (cold, coherent) while the STUDENT uses its OWN emit settings (sampling.emit.student: temperature 2.0, top_k 100, top_p 0.99) — the TQ1_0 student verifiably COLLAPSES to a single repeated token ('apart') at cold temp 0.7, flattening the score graph. Hot student sampling breaks the collapse so its top-k can overlap the teacher's coherent top-k. Both now generate a real multi-token chunk (compareN=STUDENT_STEP) instead of a single top-1 token."
+      "note": "USER DIRECTIVE + ROOT-CAUSE FIX: analyse the teacher/student top-k head-to-head. identical_settings=false (CHANGED 2026-08-16) so the TEACHER uses top_k/top_p/temperature above (cold, coherent) while the STUDENT uses its OWN emit settings (sampling.emit.student: temperature 2.0, top_k 100, top_p 0.99) \u2014 the TQ1_0 student verifiably COLLAPSES to a single repeated token ('apart') at cold temp 0.7, flattening the score graph. Hot student sampling breaks the collapse so its top-k can overlap the teacher's coherent top-k. Both now generate a real multi-token chunk (compareN=STUDENT_STEP) instead of a single top-1 token."
     }
   },
   "sampling": {
-    "view_top_k": 25,
+    "view_top_k": 60,
     "emit": {
       "teacher": {
-        "top_k": 20,
+        "top_k": 30,
         "top_p": 0.95,
         "temperature": 0.7
       },
       "student": {
-        "top_k": 20,
+        "top_k": 30,
         "top_p": 0.99,
         "temperature": 1
       }
     },
     "noise_to_layer": 0.01,
-    "note": "top-k sliders are capped at 100 (NOT 100k). view_top_k = how many top tokens the model looks at (logprobs); emit.* limits top-k/top-p/temperature sampling so the teacher stays coherent. STUDENT TEMPERATURE 2.0 + top_k 100: the native TQ1_0 student produces a delta-peaked (collapsed) distribution at temp 0.7 — every position emits the same token. Raising temperature ~2.0 (VERIFIED) breaks the collapse and yields varied output, so the expert-steering logit bias can actually nudge it toward teacher top-k and let overlap climb. noise_to_layer = per-token noise added to layers for the next output token."
+    "note": "top-k sliders are capped at 100 (NOT 100k). view_top_k = how many top tokens the model looks at (logprobs); emit.* limits top-k/top-p/temperature sampling so the teacher stays coherent. STUDENT TEMPERATURE 2.0 + top_k 100: the native TQ1_0 student produces a delta-peaked (collapsed) distribution at temp 0.7 \u2014 every position emits the same token. Raising temperature ~2.0 (VERIFIED) breaks the collapse and yields varied output, so the expert-steering logit bias can actually nudge it toward teacher top-k and let overlap climb. noise_to_layer = per-token noise added to layers for the next output token.",
+    "topk_display_per_pos": 12,
+    "topk_display_positions": 24
   },
   "layers": {
     "count": 50,
@@ -888,9 +890,9 @@
     "tokens_per_round_growth": 1,
     "rounds_per_tier": 5,
     "max_loops_per_tier": 200,
-    "max_tokens": 2000,
+    "max_tokens": 3000,
     "identity_tolerance": 0.95,
-    "note": "LOOP-AND-INCREMENT training: all experts + MTP share the SAME teacher top-k over a fixed window of the first N tokens (not continuous forward streaming). TRAIN TILL IT WORKS: a tier only advances once the student CONVERGES on the window's teacher top-k (student↔teacher top-k overlap >= identity_tolerance) — this forces the model to actually learn each window before growing N. max_loops_per_tier is the escape hatch (advance anyway after that many loops) so an unlearnable window can't deadlock the run. Then increment N: 8, 9, ... until max_tokens (2000)."
+    "note": "LOOP-AND-INCREMENT training: all experts + MTP share the SAME teacher top-k over a fixed window of the first N tokens (not continuous forward streaming). TRAIN TILL IT WORKS: a tier only advances once the student CONVERGES on the window's teacher top-k (student\u2194teacher top-k overlap >= identity_tolerance) \u2014 this forces the model to actually learn each window before growing N. max_loops_per_tier is the escape hatch (advance anyway after that many loops) so an unlearnable window can't deadlock the run. Then increment N: 8, 9, ... until max_tokens (2000)."
   },
   "expert_policy": {
     "top_n_survive": 20,
@@ -899,7 +901,7 @@
     "losing_experts_update_every": 21,
     "reset_from_last_window": false,
     "winner_similarity": 0.5,
-    "note": "at each round reset: top_n_survive experts keep their values. update_losing_experts = how many of the WORST (weakest) experts get updated; every losing_experts_update_every steps those losing experts are re-seeded. winner_similarity (0-1): when a losing/surpassed expert is refreshed, it is blended toward the winning/unculled (top_n_survive kept) experts so the best, when surpassed, does NOT decay too much — specifically anchored to the SINGLE kept expert it is most similar to (so a challenger can be a near-twin of ONE winner and CAN overtake it). 0 = old harsh fresh-random decay, 1 = fully pulled to that one kept expert (tiny jitter to avoid clones). All adjustable.",
+    "note": "at each round reset: top_n_survive experts keep their values. update_losing_experts = how many of the WORST (weakest) experts get updated; every losing_experts_update_every steps those losing experts are re-seeded. winner_similarity (0-1): when a losing/surpassed expert is refreshed, it is blended toward the winning/unculled (top_n_survive kept) experts so the best, when surpassed, does NOT decay too much \u2014 specifically anchored to the SINGLE kept expert it is most similar to (so a challenger can be a near-twin of ONE winner and CAN overtake it). 0 = old harsh fresh-random decay, 1 = fully pulled to that one kept expert (tiny jitter to avoid clones). All adjustable.",
     "bottom_m_refresh": 2
   },
   "ui": {
