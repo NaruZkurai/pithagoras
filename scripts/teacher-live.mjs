@@ -1982,7 +1982,6 @@ async function run() {
             //     doing it yourself always beats handing it off.
             //   - Decisions are PER-TOKEN, not just a leading prefix: an expert
             //     can self-produce positions AFTER delegating earlier ones.
-            const dW = Number(otokCfg.delegate_weight ?? otokCfg.delegate_discount ?? 0.5); // delegated-token credit vs self
             const combinedSeq = ownContent.slice();
             const modes = new Array(n).fill("delegate");
             let selfCount = 0, delegatedCount = 0;
@@ -2003,14 +2002,6 @@ async function run() {
             // with larger text outputs'. The parent's content = the saved etoken
             // ids of the run it covered itself (a real nested 'contains etokens'
             // compression node in the disjoint parent range).
-            //
-            // 'IT SHOULD COUNT AS CORRECT' (user): converting the last token
-            // series into an etoken with a LARGER CHUNK is a VALID completion of
-            // that run — the compressed etoken DELIVERS all those tokens in one
-            // step, SAVING otoken generation time. So the compressed run:
-            //   - COUNTS AS CORRECT (compressedTokens added to correct-credit),
-            //   - earns a compress_reward scaled by the CHUNK SAVINGS (bigger
-            //     chunk per etoken = more generation time saved = higher bonus).
             const compressPoints = [];
             let runStart = -1;
             for (let p = 0; p <= n; p++) {
@@ -2022,21 +2013,32 @@ async function run() {
               }
             }
             let compressed = compressPoints.length > 0;
-            let compressedTokens = 0, compressSavings = 0, compressRewardStep = 0;
-            const compressBonus = Number(otokCfg.compress_bonus ?? otokCfg.compress_credit ?? 8); // per-chunk-size bonus
+            let compressedTokens = 0, compressSavings = 0;
+            let compressRewardStep = 0, etokenCreationReward = 0;
+            // "THE REWARD FOR CREATING ETOKENS ALONE SHOULD BE BIGGER (default)".
+            // Creating a compression etoken is a PRIMARY reward, not a small side
+            // bonus: a flat per-etoken-created reward (etoken_creation_reward,
+            // default LARGE) PLUS a chunk-savings bonus (bigger bundle = more
+            // otoken generation time saved).
+            const etCfg = loadConfig()?.scoring?.otoken_sequence || {};
+            const etchunkBase = Number(etCfg.etoken_creation_reward ?? 40);      // flat per-etoken-created (BIG by default)
+            const compressBonus = Number(etCfg.compress_bonus ?? 8);             // per-chunk-size savings bonus
+            const nCompress = compressPoints.length;
             for (const cp of compressPoints) {
               let ce = cp; while (ce < n && modes[ce] === "self") ce++;
               const runIds = savedChunk.slice(cp, ce).map(Number).filter((v) => Number.isFinite(v));
               if (runIds.length >= 2) {
                 const par = superEtokenFromItems(runIds, { live: true, audit: `otok-compress@${r.name}@step${step}`, save: false });
                 if (par) liveEtokStats.e_tokenized++;
-                // The run is DELIVERED CORRECT by one etoken: count every token
-                // in the run as correct, and add generation-time-savings reward
-                // proportional to how much LARGER the chunk is vs the base
-                // chunk_size (more tokens bundled into one etoken = more saved).
+                // The run is DELIVERED CORRECT by one etoken (counts as correct)
+                // in ONE turn — saving otoken generation time vs generating each
+                // token separately.
                 compressedTokens += runIds.length;
-                compressSavings += runIds.length;       // tokens saved from re-generation
-                compressRewardStep += compressBonus * (runIds.length / Math.max(1, chunkSize()));
+                compressSavings += runIds.length;
+                // PRIMARY reward for creating the compression etoken (big);
+                // plus the chunk-savings bonus for the LARGER chunk.
+                etokenCreationReward += etchunkBase;                                             // 40 per etoken created
+                compressRewardStep += compressBonus * (runIds.length / Math.max(1, chunkSize())); // savings bonus
               }
             }
             const topKPerPos = savedChunk.map((_, p) => {
@@ -2047,65 +2049,84 @@ async function run() {
               savedChunk: savedContent, generatedSeq: combinedSeq, topKPerPos,
               degenerate: stepRec.student_collapsed === true,
             });
-            // 'DELEGATES SCORE LESS THAN SELF': scale the reward by how much of
-            // the sequence the expert did ITSELF. full self -> scale 1.0; all
-            // delegated -> scale delegate_weight (default 0.5, so delegating
-            // everything scores HALF of doing it yourself).
-            const selfFrac = n ? selfCount / n : 0;
-            const delegateScale = 1 - (1 - dW) * (delegatedCount / (n || 1));
-            // COMPRESS COUNTS AS CORRECT (user): converting the last token run
-            // into a LARGER-CHUNK etoken delivers those tokens correctly in one
-            // step (saving otoken generation time). We ADD the compressed-token
-            // count into the correct credit AND add a compress_reward scaled by
-            // the chunk savings, so an expert that bundles a big run into one
-            // etoken is rewarded for the generation-time it saved.
-            let rewardScaled = (Number(rw?.reward || 0) * delegateScale) + compressRewardStep;
-            rw.reward = Number(rewardScaled.toFixed(2));
+            // ---- "PHONING A FRIEND" IS ONLY A TEMPORARY TIE MARKER ----
+            // Delegation ('i'm phoning a friend') earns NO reward — it is just a
+            // temporary tie marker so the run doesn't stop. It does not end the
+            // round on its own; only doing it YOURSELF (self otokens) and/or via
+            // a COMPRESSION etoken earns reward. The self-produced positions have
+            // a SMALL base credit; the real reward is CREATING ETOKENS.
+            const selfBasePts = Number(etCfg.self_base_pts ?? 5); // small per-self-otoken credit
+            let selfReward = selfCount * selfBasePts;
+            // COMPRESS COUNTS AS CORRECT (user): the compressed run delivered
+            // correctly (compressedTokens), so those tokens also earn the self
+            // credit, AND the etoken-creation reward (big) + savings bonus.
+            selfReward += compressedTokens * selfBasePts;
+            const rewardTotal = selfReward + etokenCreationReward + compressRewardStep;
+            rw.reward = Number(rewardTotal.toFixed(2));
             rw.modes = modes;
             rw.delegated = delegatedCount > 0;
-            rw.own_etokens = selfCount;        // how many it did itself
-            rw.delegated_etokens = delegatedCount; // how many it handed off
-            rw.self_fraction = Number(selfFrac.toFixed(3));
-            rw.delegate_weight = dW;
-            rw.compress_decision = compressed; // it built a new kv-compression etoken this step
-            rw.compress_points = compressPoints.length;
+            rw.own_etokens = selfCount;          // how many it did itself
+            rw.delegated_etokens = delegatedCount; // how many it phoned a friend for (tie marker, no reward)
+            rw.self_fraction = Number((n ? selfCount / n : 0).toFixed(3));
+            rw.compress_decision = compressed;   // it built a new kv-compression etoken this step
+            rw.compress_points = nCompress;
             rw.compressed_tokens = compressedTokens;   // tokens delivered CORRECT via a larger-chunk etoken
             rw.compress_savings = compressSavings;      // otoken generation steps saved by bundling
-            rw.compress_reward = Number(compressRewardStep.toFixed(2)); // generation-time-savings bonus
+            rw.compress_reward = Number(compressRewardStep.toFixed(2)); // chunk-savings bonus
+            rw.etoken_creation_reward = Number(etokenCreationReward.toFixed(2)); // PRIMARY: reward for creating etokens
+
+            // ---- TURN-EFFICIENCY ("instant round win if the chunk was 4 long") ----
+            // Model GENERATION TURNS: a self otoken takes 1 turn; a compressed
+            // etoken delivers its WHOLE run in 1 turn. 'etoken(friend+guess olen2)
+            // = 4 otokens generated in 3 turns' => self 1 + self 1 + compressed 2
+            // = 4 otokens in 3 turns. Fewer turns for the same full chunk wins, so
+            // an expert that finishes a 4-token chunk in 3 turns via a compression
+            // etoken beats one that finishes (tie) in 4 turns without compression.
+            const selfTurns = selfCount;
+            const compressTurns = nCompress;                       // each etoken = 1 turn
+            const delegateTurns = delegatedCount;                  // phoning-a-friend = marker turns, no reward
+            const turnsUsed = selfTurns + compressTurns + delegateTurns;
+            const otokensDelivered = selfCount + compressedTokens; // what it actually delivered itself/compressed
+            rw.turns_used = turnsUsed;
+            rw.otokens_delivered = otokensDelivered;
+            rw.turn_efficiency = n ? Number((otokensDelivered / Math.max(1, turnsUsed)).toFixed(3)) : 0;
 
             // ---- ARRAY-INDICATOR TRUMP CARD (the "funny math" promise) ----
             // "a token indicator to say that the following n tokens are stored
             // as a representation of an array" — the SAVED otoken sequence is
-            // the array being promised. When MANY experts are TIED on the same
-            // (discounted) reward, the one that holds the CORRECT array-
-            // indicator (a promise kept within n tokens) is the winner: the
-            // "I'm not gonna die" card. Ties after the delegate discount are
-            // rare (more self = strictly higher reward), but when they do occur
-            // (e.g. everyone delegated everything -> equal half-reward) the
-            // array-promise holder resolves it.
+            // the array being promised. Breaks residual ties on reward then turns.
             const savedArray = savedChunk.map(Number).filter((v) => Number.isFinite(v));
             const ind = savedArray.length ? putArrayIndicator(savedArray, { save: false }) : null;
             rw.array_indicator = ind ? Number(ind.id) : null;
 
-            if (rw?.perfect && (otokCfg.round_end_on_perfect !== false)) {
+            // A run ENDS/round-ends when the expert delivers the full chunk
+            // correctly via ITSELF + compression (delegation alone never ends it —
+            // phoning a friend just keeps the tie alive so the run doesn't stop).
+            const deliversFull = (selfCount + compressedTokens) >= n;
+            if (rw?.perfect && deliversFull && (otokCfg.round_end_on_perfect !== false)) {
               const prev = otokenPerfectWinner;
-              const prevK = prev ? (prev.own_etokens ?? 0) : -1;
-              // Win by HIGHEST DISCOUNTED REWARD (favours doing it yourself).
-              // On an exact tie, break with the array-indicator trump card.
+              // Winner = HIGHEST ETOKEN-CREATION + SELF REWARD (creating etokens
+              // pays big; delegation earns nothing). On equal reward, FEWER TURNS
+              // wins (compression finished the chunk faster) -> the instant-round-
+              // win-if-chunk-was-4-tokens-long case. Then array-indicator trump.
               const beats = !prev
                 || Number(rw.reward) > Number(prev.reward)
                 || (Math.abs(Number(rw.reward) - Number(prev.reward)) < 1e-9
-                    && (selfCount > prevK || (selfCount === prevK && prev.trump)));
+                    && (turnsUsed < Number(prev.turns_used ?? 999)
+                        || (turnsUsed === Number(prev.turns_used ?? 999) && prev.trump)));
               if (beats) {
                 otokenPerfectWinner = {
                   expert: r.name, seq: savedChunk.slice(), tiebreakNext: rw.tiebreakNext || null,
                   step, delegated: delegatedCount > 0, own_etokens: selfCount,
                   delegated_etokens: delegatedCount,
-                  trump: rw.array_indicator != null && !!prev && Number(rw.reward) === Number(prev.reward),
+                  turns_used: turnsUsed, otokens_delivered: otokensDelivered,
+                  trump: rw.array_indicator != null && !!prev && Number(rw.reward) === Number(prev.reward) && turnsUsed === Number(prev.turns_used ?? 999),
                   array_indicator: rw.array_indicator,
                   promised_values: ind ? ind.values.slice(0, 20) : [],
                   compress_decision: compressed,
-                  compress_points: compressPoints.length,
+                  compress_points: nCompress,
+                  compress_reward: Number(compressRewardStep.toFixed(2)),
+                  etoken_creation_reward: Number(etokenCreationReward.toFixed(2)),
                 };
               }
             }

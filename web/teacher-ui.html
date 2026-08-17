@@ -660,27 +660,25 @@ function otokenPanelHtml(last) {
   const rows = per.map((p) => {
     const c = expColor(p.expert);
     const st = p.perfect ? `<span style="color:#3fb950;font-weight:700"> PERFECT ✓</span>` : "";
-    // Delegation is PER-TOKEN now: how many the expert did ITSELF (full credit)
-    // vs handed off to the assumed-correct content (discounted, user: 'delegate
-    // should score less than doing it itself').
+    // Delegation ('phoning a friend') = temporary tie marker only -> no reward.
     const dl = p.delegated
-      ? `<span style="color:#d29922;font-size:10px"> · did ${p.own_etokens ?? 0} itself · delegated ${p.delegated_etokens ?? 0} (×${p.delegate_weight ?? 0.5})</span>`
+      ? `<span style="color:#d29922;font-size:10px"> · did ${p.own_etokens ?? 0} itself · phoned-a-friend ${p.delegated_etokens ?? 0} (tie marker, no reward)</span>`
       : `<span style="color:#3fb950;font-size:10px"> · did ${p.own_etokens ?? p.n ?? 0} itself ✓</span>`;
     const cp = p.compress_decision
-      ? ` · <span style="color:#58a6ff;font-size:10px">📦 compressed ${p.compressed_tokens ?? 0} tok(s)→${p.compress_points ?? 0} etoken(s), +${Number(p.compress_reward ?? 0).toFixed(1)} (saved ${p.compress_savings ?? 0} gen steps)</span>`
-      : "";
+      ? ` · <span style="color:#58a6ff;font-size:10px">🧬 etokens +${Number(p.etoken_creation_reward ?? 0).toFixed(0)} · 📦 ${p.compressed_tokens ?? 0} tok→${p.compress_points ?? 0} et (${p.turns_used ?? "?"} turns, saved ${p.compress_savings ?? 0})</span>`
+      : ` · <span style="color:#8b949e;font-size:10px">no etoken created</span>`;
     const ai = p.array_indicator
       ? ` · <span style="color:#d29922;font-size:10px">🃏 array-promise</span>`
       : "";
     return `<div class="token-row" style="font-size:11px">
       <span class="chip" style="background:${c}">${p.expert}</span>
       <span class="tok" style="color:${c}">+${Number(p.reward || 0).toFixed(1)}</span>
-      <span style="color:#8b949e;font-size:10px">gen ${p.generatedCount ?? 0}/${p.n ?? "?"} · topk-only ${p.topkOnlyCount ?? 0} · self ${(p.self_fraction ?? 0)*100|0}%</span>${dl}${cp}${ai}${st}
+      <span style="color:#8b949e;font-size:10px">did ${p.own_etokens ?? 0}/${p.n ?? "?"} · turns ${p.turns_used ?? "?"}</span>${dl}${cp}${ai}${st}
     </div>`;
   }).join("");
   return `<div style="margin:6px 0;padding:6px;border:1px solid #a371f7;border-radius:8px;font-size:11px;color:#d2a8ff">
-    <b>otoken sequence (harsh · per-token delegate/compress)</b> · ${per.length} trained experts vs saved teacher chunk
-    ${winner ? `<div style="color:#3fb950;font-weight:700;margin-top:3px">FIRST PERFECT @ step ${winner.step}: ${winner.expert} — ROUND END, placed first${winner.delegated ? ` (did ${winner.own_etokens ?? 0} itself · delegated ${winner.delegated_etokens ?? 0} ×${winner.delegate_weight ?? 0.5})` : ` (all self ✓)`}${winner.tiebreakNext ? " · next-otoken ✓ tiebreak" : ""}${winner.trump ? " · 🃏 ARRAY-INDICATOR trump (tie won, promise kept)" : ""}${winner.array_indicator ? ` · array[${(winner.promised_values||[]).join(",")}]` : ""}${winner.compress_decision ? ` · 📦 compressed ${winner.compressed_tokens ?? 0} tok(s)→${winner.compress_points ?? 0} etoken(s) for +${Number(winner.compress_reward ?? 0).toFixed(1)} (saved ${winner.compress_savings ?? 0} gen steps)` : ""}</div>` : ""}
+    <b>otoken sequence (harsh · etoken-creation pays, phoned-a-friend = tie)</b> · ${per.length} trained experts vs saved teacher chunk
+    ${winner ? `<div style="color:#3fb950;font-weight:700;margin-top:3px">FIRST PERFECT @ step ${winner.step}: ${winner.expert} — ROUND END, placed first${winner.delegated ? ` (did ${winner.own_etokens ?? 0} itself · phoned-a-friend ${winner.delegated_etokens ?? 0} tie)` : ` (all self ✓)`}${winner.turns_used != null ? ` · delivered ${winner.otokens_delivered ?? 0} otoken(s) in ${winner.turns_used} turn(s)` : ""}${winner.tiebreakNext ? " · next-otoken ✓ tiebreak" : ""}${winner.trump ? " · 🃏 ARRAY-INDICATOR trump (tie won, promise kept)" : ""}${winner.array_indicator ? ` · array[${(winner.promised_values||[]).join(",")}]` : ""}${winner.compress_decision ? ` · 🧬 etokens +${Number(winner.etoken_creation_reward ?? 0).toFixed(0)} (${winner.compress_points ?? 0} et, ${winner.turns_used ?? "?"} turns)` : ""}</div>` : ""}
     ${rows || '<div style="color:#8b949e">no per-expert otoken data yet</div>'}
   </div>`;
 }
