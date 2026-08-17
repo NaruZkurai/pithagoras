@@ -39,18 +39,20 @@ let _cfgRaw = null; // the on-disk config WITH the documentation `note` fields
 let _cfgStat = null; // { mtimeMs, size } of the last config we parsed
 
 /**
- * THE TRAINER NEVER READS `note` FIELDS (user: "code doesn't do the notes; the
- * final file to send to trainer doesn't use notes"). Strip every `note` /
- * `*_note` key recursively so the trainer-facing config carries ZERO note bloat
- * (the live config's notes added ~14.5% dead weight). Docs remain in the raw
- * config (config/moe-config.json + the basdline reference file) for humans.
+ * THE TRAINER NEVER READS `note` FIELDS, and per-expert `training_formula` is
+ * documentation too (routeExperts only reads role / mutation / topk_weight /
+ * noise). Strip every `note` / `*_note` / `training_formula` key recursively so
+ * the trainer-facing config carries ZERO dead documentation weight (the live
+ * config's notes + 102 per-expert formula strings added ~22KB / ~28% bloat).
+ * Docs remain in the raw config (config/moe-config.json + the basdline reference
+ * file) for humans.
  */
 export function stripConfigNotes(cfg) {
   if (Array.isArray(cfg)) return cfg.map((x) => stripConfigNotes(x));
   if (cfg && typeof cfg === "object") {
     const out = {};
     for (const k of Object.keys(cfg)) {
-      if (k === "note" || k.endsWith("_note")) continue; // drop documentation keys
+      if (k === "note" || k.endsWith("_note") || k === "training_formula") continue; // drop documentation keys
       out[k] = stripConfigNotes(cfg[k]);
     }
     return out;

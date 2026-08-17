@@ -34,7 +34,7 @@ import { loadConfig, saveConfig, loadConfigRaw, routeExperts, trainStep, scoreSt
 // recallable etoken(e1) function stored in data/Etokens.json, the e-tokenizer
 // (touple), the base build from the pre-tokenized token DB, and the
 // disqualification / repeat-train-top-k helpers used in the scoring loop.
-import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, hasEtoken, putEtoken, saveEtokens, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT, etokenTernaryOf, etokenTernaryBarrel, kvBarrel, kvCompressionAlgo, kvCompressionFlag, kvSpaceSaving, isEtokenId, etokenDeep, etokenHierarchyStats, hierarchicalEtokenize, isArrayIndicatorId, putArrayIndicator, arrayIndicatorOf, arrayIndicatorTrump, isBaseEtokenId, isParentEtokenId, superEtokenFromItems } from "./etokens.mjs";
+import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, hasEtoken, putEtoken, saveEtokens, flushEtokensToDisk, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT, etokenTernaryOf, etokenTernaryBarrel, kvBarrel, kvCompressionAlgo, kvCompressionFlag, kvSpaceSaving, isEtokenId, etokenDeep, etokenHierarchyStats, hierarchicalEtokenize, isArrayIndicatorId, putArrayIndicator, arrayIndicatorOf, arrayIndicatorTrump, isBaseEtokenId, isParentEtokenId, superEtokenFromItems } from "./etokens.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -46,15 +46,31 @@ function deepMerge(base, patch) {
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(ROOT, "..");
+// LIVE working files: by default the high-churn JSONL (history, topk-curve,
+// tokens ledger) live under output/live/. With PITHAGORAS_RAMCACHE set (this box
+// keeps a ramdisk for a reason) the hot working copies move to the ramdisk and
+// get flushed to output/live/ on a cadence + on exit, so the constant per-step
+// appends of growing files don't thrash the slow disk nor balloon the loop.
+// current.json MUST stay on disk (the UI reads it via HTTP), so it is exempt.
+// When PITHAGORAS_RAMCACHE is unset we AUTO-USE the well-known ramdisk location
+// if present, so the "dump cache to ramdisk, save to disk later" behavior is
+// always on. Set PITHAGORAS_RAMCACHE="" to force off.
+const RAMCACHE = (() => {
+  if (process.env.PITHAGORAS_RAMCACHE === "") return null;
+  const ram = process.env.PITHAGORAS_RAMCACHE || "/dev/shm/pithagoras-moe-checkpoints";
+  try { if (fs.existsSync(ram) && fs.statSync(ram).isDirectory()) return path.resolve(ram); } catch {}
+  return process.env.PITHAGORAS_RAMCACHE ? path.resolve(ram) : null;
+})();
 const LIVE = path.join(REPO, "output", "live");
-const CURRENT = path.join(LIVE, "current.json");
-const HISTORY = path.join(LIVE, "history.jsonl");
-const TOKENS = path.join(LIVE, "tokens.jsonl"); // full per-step student-guess token ledger
+const RAM_LIVE = RAMCACHE ? path.join(RAMCACHE, "live") : LIVE;
+const CURRENT = path.join(LIVE, "current.json");      // disk (UI reads it)
+const HISTORY = path.join(RAM_LIVE, "history.jsonl"); // ramcache (flushed)
+const TOKENS = path.join(RAM_LIVE, "tokens.jsonl");   // ramcache (flushed)
 // TOP-K CURVE DATASET: one JSONL line per emitted teacher token, recording its
 // FULL top-n (k) distribution (id + token + logprob). This is the reference
 // "top-k curve" the student is trained to reproduce — the model should learn to
 // output a top-k distribution matching the teacher's at each step.
-const TOP_K_CURVE = path.join(LIVE, "topk-curve.jsonl");
+const TOP_K_CURVE = path.join(RAM_LIVE, "topk-curve.jsonl"); // ramcache (flushed)
 const TOP_K_TO_SAVE = Number(process.env.TOP_K_TO_SAVE || 40); // how many top tokens per line
 
 // The new tokens the student generated (compressed chunks + sentinel), kept in
@@ -657,6 +673,43 @@ function teacherDegeneracy(tokens, windowSize = 20) {
   return Math.min(1, maxRun / total);
 }
 
+/**
+ * LEAN per-step summary for the `recent` rolling window (MEMORY/OOM FIX).
+ * The full `stepRec` embeds the whole moe detail + per-expert + etoken system +
+ * teacher top-k, so keeping 60 of them in `recent` blew the `latest` payload up
+ * to ~9MB and sendCurrent() stringified it TWICE per step -> V8 OOM after a few
+ * hundred steps. We keep ONLY the fields the UI/charts actually read.
+ */
+function leanStepRec(s) {
+  return {
+    step: s.step,
+    ts: s.ts,
+    teacher_token: s.teacher_token,
+    student_tokens: s.student_tokens || [],
+    // Only {expert, token} — the full per-expert guesses carry huge etoken
+    // display strings + decompressed arrays per expert (102 of them), which
+    // made each lean record ~44KB. The UI only reads expert + token.
+    per_expert_guesses: (s.per_expert_guesses || []).map((g) => ({ expert: g.expert, token: g.token })),
+    base_score_total: s.base_score_total,
+    total_score: s.total_score,
+    is_500x_value_generation: s.is_500x_value_generation,
+    student_collapsed: s.student_collapsed,
+    score_breakdown: s.score_breakdown || {},
+    note: s.note,
+    moe: s.moe ? {
+      // charts need per-expert scores (by label) + cumulative scores per expert;
+      // the score panel needs expert_scores on the LAST step.
+      expert_scores: (s.moe.expert_scores || []).map((e) => ({
+        expert: e.expert, score: e.score, active: e.active, role: e.role,
+        mutation: e.mutation, rounds_survived: e.rounds_survived,
+        otoken_perfect: e.otoken_perfect, otoken_reward: e.otoken_reward,
+      })),
+      cumulative_scores: s.moe.cumulative_scores || [],
+      otoken_sequence: s.moe.otoken_sequence || { enabled: false, per_expert: [], perfect_winner: null },
+    } : undefined,
+  };
+}
+
 let latest = null; // latest current.json content to serve to the UI
 // E-TOKEN live statistics (reset each run; persisted summary folded into the
 // payload so the UI can show the etoken system's live behaviour).
@@ -748,6 +801,29 @@ function rotateHistoryIfNeeded() {
     }
   } catch { /* best-effort */ }
 }
+
+// RAM-CACHE FLUSH: when running with the hot working files on the ramdisk
+// (PITHAGORAS_RAMCACHE), copy the grown JSONL back to the durable output/live/
+// on the real disk at a cadence + on exit, so a crash never loses more than the
+// flush window and the disk mirror stays current ("dump cache to ramdisk, save
+// to disk later"). No-op when NOT in ramcache mode (files already on disk).
+const RAM_LIVE_FILES = () => [{ r: HISTORY, d: path.join(LIVE, "history.jsonl") },
+                             { r: TOKENS, d: path.join(LIVE, "tokens.jsonl") },
+                             { r: TOP_K_CURVE, d: path.join(LIVE, "topk-curve.jsonl") }];
+function flushRamLiveToDisk() {
+  if (!RAMCACHE) return { flushed: false, reason: "no-ramcache" };
+  let n = 0;
+  try {
+    fs.mkdirSync(LIVE, { recursive: true });
+    for (const { r, d } of RAM_LIVE_FILES()) {
+      if (fs.existsSync(r)) { fs.copyFileSync(r, d); n++; }
+    }
+  } catch (e) { /* best-effort */ }
+  let etok = null;
+  try { etok = typeof flushEtokensToDisk === "function" ? flushEtokensToDisk() : null; } catch {}
+  return { flushed: n > 0 || !!etok?.flushed, files: n, etokens: etok };
+}
+
 function sendCurrent(extra = {}) {
   const payload = { ...latest, ...extra, ts: Date.now() };
   // Async, fire-and-forget writes so the training loop never blocks the event
@@ -1121,9 +1197,22 @@ function startServer() {
 
 async function run() {
   fs.mkdirSync(LIVE, { recursive: true });
+  if (RAMCACHE) fs.mkdirSync(RAM_LIVE, { recursive: true });
   console.log("=== TEACHER-LIVE: 27B teacher -> 4B student, continuous scoring ===");
   console.log(`  teacher ${TEACHER_URL} | student ${STUDENT_URL} | view-top-${viewTopK()} emit teacher tK${emitFor("teacher").top_k}/tP${emitFor("teacher").top_p} student tK${emitFor("student").top_k}/tP${emitFor("student").top_p} | student step ${studentStep()}`);
   startServer();
+  // RAM-CACHE: flush the ramdisk hot files to the durable disk location every
+  // 15s ("save to disk later") so a crash loses at most the flush window.
+  if (RAMCACHE) {
+    const flushIv = setInterval(() => { try { flushRamLiveToDisk(); } catch {} }, 15_000);
+    flushIv.unref?.();
+    console.log(`  [ramcache] hot files on ${RAM_LIVE} -> flushed to ${LIVE} every 15s`);
+  }
+  // Flush ramcache to disk on a clean exit so nothing is lost.
+  const flushOnExit = () => { try { flushRamLiveToDisk(); } catch {} };
+  process.on("exit", flushOnExit);
+  process.on("SIGINT", () => { flushOnExit(); process.exit(0); });
+  process.on("SIGTERM", () => { flushOnExit(); process.exit(0); });
 
   // ---- E-TOKEN SYSTEM INIT (corrected "new token" feature) ----
   // Load data/Etokens.json if present, otherwise BUILD the base Etokens.json
@@ -2379,10 +2468,28 @@ async function run() {
       }
     } catch (e) { /* fitness recording is best-effort */ }
 
-    recent.push(stepRec);
+    // Memory / OOM fix: `recent` used to store the FULL giant stepRec (moe
+    // detail, per-expert, etoken system, teacher topk...) — 60 of those made the
+    // `latest` payload ~9MB and sendCurrent() JSON.stringify'd it TWICE every
+    // step, churning the V8 heap into OOM (observed 4.1GB crash after ~483 steps).
+    // Keep a LEAN per-step summary with only the fields the UI/charts read:
+    //   step, per-expert scores, cumulative scores, score_breakdown, tokens,
+    //   otoken perfect-winner. This cuts the payload ~20-30x.
+    recent.push(leanStepRec(stepRec));
     if (recent.length > 60) recent.shift();
 
-    // LOOP-AND-INCREMENT: mark this step done within the current window tier.
+    // MEMORY VALVE (OOM fix): the harness does heavy per-step transient work
+    // (10 student + 1 teacher HTTP calls with top-60 logprobs, JSON stringify of
+    // `latest` + history). V8's default GC often leaves heapTotal at a high-water
+    // mark that grows ~150-250MB/step until the box OOMs (observed 4-8GB crash).
+    // If launched with `--expose-gc`, force a full GC once heapUsed climbs past a
+    // threshold so the heap collapses back to the ~retained baseline instead of
+    // climbing monotonically. Guarded: no-op when global.gc is unavailable.
+    try {
+      if (typeof global.gc === "function" && process.memoryUsage().heapUsed > 1.4 * 1024 * 1024 * 1024) {
+        global.gc();
+      }
+    } catch { /* memory valve is best-effort */ }
     // "TRAIN TILL IT WORKS": a tier advances when the student CONVERGES on the
     // window's teacher top-k (overlap >= identity_tolerance) — graduate early —
     // OR after `max_loops_per_tier` loops (the escape hatch) so a genuinely

@@ -57,7 +57,18 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(ROOT, "..");
-const ETOKENS_PATH = path.join(REPO, "data", "Etokens.json");
+// RAM-CACHE: on this box we keep a ramdisk (/dev/shm) for a reason — the Etokens
+// store grows and is written every step, and a multi-hundred-MB JSON thrashing
+// the slow disk + V8 heap each step is a big part of the OOM/lag. When
+// PITHAGORAS_RAMCACHE is set (a directory), the hot working copy lives on the
+// ramdisk (ETOKENS_PATH = <ramcache>/Etokens.json) and is flushed to the real
+// data/Etokens.json on a cadence via flushEtokensToDisk(). The ramdisk copy is
+// authoritative for reads; the disk copy is the durable mirror.
+const RAMCACHE = process.env.PITHAGORAS_RAMCACHE ? path.resolve(process.env.PITHAGORAS_RAMCACHE) : null;
+const ETOKENS_PATH = RAMCACHE
+  ? path.join(RAMCACHE, "Etokens.json")
+  : path.join(REPO, "data", "Etokens.json");
+const ETOKENS_DISK_MIRROR = path.join(REPO, "data", "Etokens.json");
 
 // The reserved e-token id range (mirrors config moe.new_token_base/count).
 export const ETOKEN_BASE = () => Number(loadEtokConfig()?.moe?.new_token_base ?? 200000);
@@ -792,13 +803,30 @@ export function loadEtokens() {
   }
 }
 
-/** Persist Etokens.json to disk (data/Etokens.json). */
+/** Persist Etokens.json to the working location (ramdisk when RAMCACHE set). */
 export function saveEtokens() {
   if (!_Etokens) return;
   try {
     fs.mkdirSync(path.dirname(ETOKENS_PATH), { recursive: true });
     fs.writeFileSync(ETOKENS_PATH, JSON.stringify(_Etokens, null, 2));
-  } catch (e) { /* best-effort; RAM copy still usable */ }
+  } catch (e) { /* best-effort; in-memory copy still usable */ }
+}
+
+/**
+ * Flush the ramdisk Etokens working copy to the durable data/Etokens.json on
+ * the real disk. No-op when not running in ramcache mode. Called on a cadence
+ * and on graceful exit so the on-disk mirror is never stale for too long.
+ */
+export function flushEtokensToDisk() {
+  if (!RAMCACHE) return { flushed: false, reason: "no-ramcache" };
+  if (!_Etokens) return { flushed: false, reason: "empty" };
+  try {
+    fs.mkdirSync(path.dirname(ETOKENS_DISK_MIRROR), { recursive: true });
+    fs.writeFileSync(ETOKENS_DISK_MIRROR, JSON.stringify(_Etokens, null, 2));
+    return { flushed: true, bytes: JSON.stringify(_Etokens, null, 2).length };
+  } catch (e) {
+    return { flushed: false, error: String((e && e.message) || e) };
+  }
 }
 
 /** True if an etoken id is recorded in the store (recallable). */
