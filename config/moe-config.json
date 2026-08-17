@@ -927,9 +927,10 @@
     "max_tokens": 3000,
     "identity_tolerance": 0.95,
     "live_teacher": true,
+    "live_teacher_tokens": 128,
     "live_teacher_chars": 800,
     "live_teacher_gen_cap": 1000,
-    "note": "LOOP-AND-INCREMENT training: all experts + MTP share the SAME teacher top-k over a fixed window of the first N tokens (not continuous forward streaming). TRAIN TILL IT WORKS: a tier only advances once the student CONVERGES on the window's teacher top-k (student↔teacher top-k overlap >= identity_tolerance) — this forces the model to actually learn each window before growing N. max_loops_per_tier is the escape hatch (advance anyway after that many loops) so an unlearnable window can't deadlock the run. Then increment N: 8, 9, ... until max_tokens (2000). live_teacher=true: the TEACHER ACTUALLY GENERATES a LARGE reasoned chunk (live_teacher_gen_cap tokens, default 1000) ONCE with per-token top-k, STORES THE WHOLE THING to topk-curve.jsonl on disk, and the harness only EVALUATES the first N tokens of that stored chunk (stopping prematurely). live_teacher_chars=truncated prompt copy for the slow CPU teacher. live_teacher=false restores strict file-only (no teacher gens)."
+    "note": "LOOP-AND-INCREMENT training: all experts + MTP share the SAME teacher top-k over a fixed window of the first N tokens (not continuous forward streaming). TRAIN TILL IT WORKS: a tier only advances once the student CONVERGES on the window's teacher top-k (student↔teacher top-k overlap >= identity_tolerance) — this forces the model to actually learn each window before growing N. max_loops_per_tier is the escape hatch (advance anyway after that many loops) so an unlearnable window can't deadlock the run. Then increment N: 8, 9, ... until max_tokens (2000). live_teacher=true: the TEACHER ACTUALLY GENERATES a LARGE reasoned chunk (live_teacher_gen_cap tokens, default 1000) ONCE with per-token top-k, STORES THE WHOLE THING to topk-curve.jsonl on disk, and the harness only EVALUATES the first N tokens of that stored chunk (stopping prematurely). live_teacher_tokens = the truncated teacher prompt copy budget in TOKENS (user note: was chars, should be tokens — now it is; live_teacher_chars is kept for back-compat but treated as tokens too). live_teacher=false restores strict file-only (no teacher gens)."
   },
   "expert_policy": {
     "top_n_survive": 3,

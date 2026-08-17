@@ -1167,7 +1167,8 @@ async function run() {
   // teacher tokens (not continuous forward streaming). All experts + MTP share
   // that window's teacher top-k. After `rounds_per_tier` steps at tier N, N is
   // incremented (5 rounds at 8, 5 at 9, ...) until max_tokens (2000).
-  const win = windowSchedule();
+  const winInit = windowSchedule();
+  let win = winInit; // `win` is rebuilt on a "Cancel round + restart" so windowing params (start_tokens / rounds_per_tier / tokens_per_round_growth / max_loops_per_tier) take effect from the set config, not just at process startup.
   let winTierIdx = 0;        // index into win.tiers
   let winStepInTier = 0;     // steps completed within the current tier
   let winRefIds = [];        // fixed reference window (teacher token ids)
@@ -1226,10 +1227,14 @@ async function run() {
       recent.length = 0;
       step = 0;
       winTierIdx = 0; winStepInTier = 0;
+      // Rebuild the windowing tier schedule from the current (set) config so
+      // windowing params (start_tokens, rounds_per_tier, tokens_per_round_growth,
+      // max_loops_per_tier) take effect on restart, not just at process startup.
+      win = windowSchedule();
       winRefIds = []; winRefToks = []; winRefTopK = null; winRefTopKPerPos = null; winRefTopKSource = "teacher";
       lastFpId = null; lastConvergedStep = -1;
       const cfg = loadConfig() || {};
-      console.log(`  >> ROUND CANCELLED + RESTARTED with set parameters (round ${getMoeState()?.round ?? 1}, experts ${Object.keys(cfg.moe?.experts || {}).length}, layer-count ${cfg.layers?.count ?? 5})`);
+      console.log(`  >> ROUND CANCELLED + RESTARTED with set parameters (round ${getMoeState()?.round ?? 1}, experts ${Object.keys(cfg.moe?.experts || {}).length}, layer-count ${cfg.layers?.count ?? 5}, window start ${cfg.windowing?.start_tokens ?? 'n/a'})`);
     }
     // Pause: skip training steps but keep the UI (SSE/JSON) alive and reflect
     // the paused state so the browser stays connected.
@@ -1318,8 +1323,17 @@ async function run() {
         // the already-generated data (user: 'generate it while training on static
         // data and if the chunk increases just use the data').
         if (liveT) {
-          const chars = Math.max(64, Number(winCfg.live_teacher_chars ?? 800));
-          const teacherIn = String(shared ?? PROMPT ?? "").slice(0, chars) || PROMPT.slice(0, chars);
+          // "live_teacher_chars also should be tokens not chars" (user note).
+          // The knob is a TOKEN budget for the truncated teacher prompt copy. We
+          // convert to a char-slice using the REAL chars-per-token ratio of the
+          // actual prompt (sharedIds = its token ids, shared = its text), so it
+          // truncates to ~live_teacher_tokens tokens regardless of language.
+          const promptText = String(shared ?? PROMPT ?? "");
+          const tokBudget = Math.max(1, Number(winCfg.live_teacher_tokens ?? winCfg.live_teacher_chars ?? 128));
+          const promptTokenCount = (sharedIds && sharedIds.length) || 256;
+          const charsPerToken = promptText.length / Math.max(1, promptTokenCount);
+          const chars = Math.max(64, Math.min(promptText.length, Math.round(tokBudget * charsPerToken)));
+          const teacherIn = promptText.slice(0, chars) || promptText;
           const genCap = Math.min(4000, Math.max(baseLen, Number(winCfg.live_teacher_gen_cap ?? process.env.TEACHER_GEN_CAP ?? 1000)));
           // Kick off (once per prompt) the background generation — never block.
           teacherChunkBackground(teacherIn, genCap);
