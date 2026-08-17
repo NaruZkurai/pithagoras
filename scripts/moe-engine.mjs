@@ -203,10 +203,14 @@ export function maybeResetMoeState() {
   for (const nm of names) {
     if (surviveSet.has(nm)) continue; // top-n survive unchanged
     if (refreshSet.has(nm)) {
-      // Losing experts: re-seed from the previous window's data (or fresh).
-      const seeded = fromLast && lastValues[nm] != null
+      // Losing experts: re-seed from the previous window's data (or fresh). If
+      // winner_similarity > 0, blend toward the CURRENT top winners so a
+      // surpassed best expert decays gently toward the pack instead of
+      // collapsing to a fresh random seed (user: 'don't decay the best too much').
+      let seeded = fromLast && lastValues[nm] != null
         ? lastValues[nm] * (0.7 + 0.3 * noise01((+new Date()) + nm.length * 3))
         : 0.5 + 0.4 * noise01((+new Date()) + nm.length * 3);
+      seeded = blendTowardWinners(seeded, winnerSimilarity(), (+new Date()) + nm.length * 31);
       setExpertValue(nm, seeded);
       refreshed.push(nm);
       continue;
@@ -261,9 +265,12 @@ export function updateLosingExperts() {
   const lastValues = _moeState.lastRound?.expertValues || {};
   const fromLast = policy.reset_from_last_window !== false;
   for (const nm of losing) {
-    const seeded = fromLast && lastValues[nm] != null
+    let seeded = fromLast && lastValues[nm] != null
       ? lastValues[nm] * (0.7 + 0.3 * noise01((+new Date()) + nm.length * 5))
       : 0.5 + 0.4 * noise01((+new Date()) + nm.length * 5);
+    // Soft-attract the weakest toward the current top winners (similarity to
+    // upper nodes) so a surpassed best decays gently, not collapsed.
+    seeded = blendTowardWinners(seeded, winnerSimilarity(), (+new Date()) + nm.length * 37);
     setExpertValue(nm, seeded);
     _moeState.scores[nm] = 0; // reset the losing expert's score
   }
@@ -273,6 +280,42 @@ export function updateLosingExperts() {
 
 /** Number of experts currently tracked (used to clamp policy sizes). */
 function moeScoresSize() { return _moeState ? Object.keys(_moeState.expertValues).length : 0; }
+
+/**
+ * WINNER-SIMILARITY / SOFT-ATTRACTION (user question): when a losing expert is
+ * refreshed or decays, do we just harshly re-seed/fresh-random it (which can
+ * decay a previously-best expert that just got surpassed too much), or do we
+ * pull it toward the top WINNING experts so it stays "similar" to the upper
+ * nodes? This returns the blend target for a given expert:
+ *
+ *   new = winner_mean*sim + old_value*(1-sim)    (sim in [0,1])
+ *
+ * sim = config expert_policy.winner_similarity:
+ *   - 0 (default-ish, current behavior): keep the existing re-seed/random decay.
+ *   - >0: soft-attract toward the top winners' mean value (similarity to upper
+ *          nodes), so a surpassed best expert decays GENTLY toward the pack
+ *          instead of collapsing. Higher = more like the winners.
+ */
+function winnerMean(topN = 3) {
+  if (!_moeState) return null;
+  const names = Object.keys(_moeState.expertValues).filter(n => n !== "TEACHER");
+  if (!names.length) return null;
+  const ranked = names.slice().sort((a, b) => (_moeState.scores[b] || 0) - (_moeState.scores[a] || 0));
+  const top = ranked.slice(0, Math.max(1, topN));
+  const mean = top.reduce((a, n) => a + (Number(_moeState.expertValues[n]) || 0.5), 0) / top.length;
+  return { top, mean };
+}
+function winnerSimilarity() {
+  return Number(loadConfig()?.expert_policy?.winner_similarity ?? 0);
+}
+/** Blend `base` toward the winners' mean by `sim` in [0,1]. */
+function blendTowardWinners(base, sim, noiseSeed) {
+  if (!(sim > 0)) return base;
+  const w = winnerMean(3);
+  if (!w) return base;
+  const jitter = (noise01(noiseSeed) - 0.5) * 0.1; // tiny wobble so they don't become identical clones
+  return Math.min(0.9999, Math.max(0.0001, w.mean * sim + base * (1 - sim) + jitter));
+}
 
 /**
  * Accumulate each expert's score into the persistent `_moeState.scores` so all

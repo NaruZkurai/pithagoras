@@ -898,7 +898,8 @@
     "update_losing_experts": "auto",
     "losing_experts_update_every": 21,
     "reset_from_last_window": false,
-    "note": "at each round reset: top_n_survive experts keep their values. update_losing_experts = how many of the WORST (weakest) experts get updated; every losing_experts_update_every steps those losing experts are re-seeded from the previous window's data (reset_from_last_window=true) or fresh. All adjustable.",
+    "winner_similarity": 0.5,
+    "note": "at each round reset: top_n_survive experts keep their values. update_losing_experts = how many of the WORST (weakest) experts get updated; every losing_experts_update_every steps those losing experts are re-seeded. winner_similarity (0-1): when a losing/surpassed expert is refreshed, blend it toward the CURRENT top experts' mean value (similarity to upper nodes) so the best, when surpassed, does NOT decay too much — 0 = old harsh fresh-random decay, 1 = fully pulled to the winners (with tiny jitter to avoid clones). All adjustable.",
     "bottom_m_refresh": 2
   },
   "ui": {
