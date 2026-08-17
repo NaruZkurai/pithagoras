@@ -691,6 +691,15 @@ function renderExpertScores(d) {
   const sig = sigOf((esScores||[]).map(e=>[e.expert,e.score,e.active,e.rounds_survived]), d.total_score, last?.step, sb);
   memoRender("expertScores", sig, () => {
     if (!esScores.length) { el.innerHTML = '<div style="color:#8b949e">waiting for expert scores…</div>'; return; }
+    // Displayed rows = ACTIVE experts (the ones being evaluated now), sorted by
+    // score, PLUS the fixed TEACHER reference row. The summary Σ MUST match these
+    // displayed rows so the reporting is consistent (BROKEN REPORTING: the old
+    // Σ reduced over ALL esScores including hidden inactive experts AND then
+    // claimed "= total step-score", which never matched the visible rows).
+    const activeRows = esScores
+      .filter(e => e.active)
+      .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+    const displayedSum = activeRows.reduce((a, e) => a + (Number(e.score) || 0), 0);
     // TEACHER is pinned at the TOP of the expert column with its TRUE self-
     // overlap: the teacher always matches its OWN top-k, so it is the 100%
     // reference/ceiling. It can never be less than 100% — that's the definition
@@ -723,9 +732,7 @@ function renderExpertScores(d) {
       // Show ONLY the ACTIVE experts (the ones being evaluated/trained this
       // step) with their PER-STEP temp score — inactive/frozen base experts are
       // excluded so the list reflects what's actually being scored right now.
-      esScores
-        .filter(e => e.active)
-        .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
+      activeRows
         .map(e => {
       const c = expColor(e.expert);
       const pct = Math.max(2, Math.min(100, (e.score / (d.total_score || 1)) * 100));
@@ -747,9 +754,9 @@ function renderExpertScores(d) {
     </div>`;
     }).join("") +
   `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #30363d;display:flex;gap:8px;align-items:center">
-     <span style="font-size:11px;color:#8b949e">Σ experts</span>
-     <span style="font-size:15px;font-weight:700;color:#58a6ff">${esScores.reduce((a,e)=>a+e.score,0).toFixed(1)}</span>
-     <span style="font-size:11px;color:#8b949e">= total ${d.total_score ?? 0}</span>
+     <span style="font-size:11px;color:#8b949e">Σ displayed experts (incl. TEACHER)</span>
+     <span style="font-size:15px;font-weight:700;color:#58a6ff">${displayedSum.toFixed(1)}</span>
+     <span style="font-size:11px;color:#8b949e">· step total ${d.total_score ?? 0} (per-step points, separate)</span>
    </div>
    <div style="margin-top:6px;font-size:11px;color:#8b949e">
      step ${last.step}: top-k <b style="color:#58a6ff">+${sb.topk ?? 0}</b> (${sb.inK ?? 0}) · top-p <b style="color:#a371f7">+${sb.tpp ?? 0}</b> (${sb.inP ?? 0}) · teacher-emit <b style="color:#f778ba">+${sb.teacher_emit ?? 0}</b> (${sb.inEm ?? 0})
