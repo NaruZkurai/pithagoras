@@ -57,6 +57,37 @@ const TOKENS = path.join(LIVE, "tokens.jsonl"); // full per-step student-guess t
 const TOP_K_CURVE = path.join(LIVE, "topk-curve.jsonl");
 const TOP_K_TO_SAVE = Number(process.env.TOP_K_TO_SAVE || 40); // how many top tokens per line
 
+// The new tokens the student generated (compressed chunks + sentinel), kept in
+// their OWN JSON file so they survive restarts and are saved with each snapshot.
+const NEW_TOKENS_FILE = path.join(LIVE, "new-tokens.json");
+
+// Persist the in-memory newTokens list to its own JSON file (best-effort).
+// USER: "etoken only not original tokens" — store ONLY the etoken identities
+// (the new reserved token ids / labels), NOT the original token inputs that
+// were compressed.
+function saveNewTokens(list) {
+  try {
+    const payload = {
+      saved_at: Date.now(),
+      kind: "etokens_only", // per user: no original tokens, etokens only
+      count: (list || []).length,
+      etokens: (list || []).map((t) => ({
+        step: t.step,
+        etoken: t.new_token,            // the new reserved token id
+        label: t.new_token_label,       // "a1"
+        expert: t.new_token_expert,     // "ETEa1"
+        pair: t.new_token_pair,         // [orig-index, etoken-index]
+        orig_index: t.new_token_orig_index,
+        etoken_index: t.new_token_token_index,
+        created: !!t.created,           // 500x flag
+      })),
+    };
+    const tmp = NEW_TOKENS_FILE + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
+    fs.renameSync(tmp, NEW_TOKENS_FILE); // atomic
+  } catch (e) { /* best-effort */ }
+}
+
 // Append one step's teacher top-k curve to the dataset file (best-effort; never
 // crashes the step if the disk write fails).
 function saveTopKCurve({ step, promptCtx, teacherToken, teacherId, top }) {
@@ -820,6 +851,62 @@ function startServer() {
       return;
     }
 
+    // /reseed POST: one-time rebuild of output/live/topk-curve.jsonl from the
+    // CURRENT prompt (config training.prompt), so the file-only teacher window
+    // references the right teacher output after a prompt change. Uses a TRUNCATED
+    // prompt copy + modest logprobs because the CPU 27B teacher is slow on the
+    // full prompt. Forces the window to re-establish on the next tier. This is
+    // the UI "reseed" button.
+    if (url === "/reseed" && req.method === "POST") {
+      const doSeed = async () => {
+        const cfgP = String(loadConfig()?.training?.prompt ?? "").trim();
+        if (!cfgP) return { ok: false, error: "no training.prompt in config" };
+        const chars = Number(process.env.SEED_PROMPT_CHARS || 800);
+        const viewTopK = Math.max(1, Math.min(200, Number(process.env.VIEW_TOPK || 20)));
+        const nTok = Math.max(1, Number(process.env.SEED_TOKENS || 8));
+        const tEmit = emitFor("teacher");
+        const prompt = cfgP.slice(0, chars);
+        const body = JSON.stringify({
+          model: "x", prompt, max_tokens: nTok, temperature: Number(tEmit.temperature ?? 0.7),
+          top_p: Number(tEmit.top_p ?? 0.95), top_k: Number(tEmit.top_k ?? 30),
+          logprobs: viewTopK, echo: false, stream: false,
+        });
+        const r = await fetch(`${TEACHER_URL}/v1/completions`, {
+          method: "POST", headers: { "content-type": "application/json" }, body,
+          signal: AbortSignal.timeout(Number(process.env.SEED_TIMEOUT || 300_000)),
+        });
+        if (!r.ok) { let d=""; try{d=(await r.text()).slice(0,200);}catch{} return { ok:false, error:`teacher ${r.status}: ${d}` }; }
+        const dd = await r.json();
+        const content = dd?.choices?.[0]?.logprobs?.content || [];
+        if (!content.length) return { ok: false, error: "no logprobs.content returned" };
+        const rows = content.map((row, i) => {
+          const top = (row.top_logprobs || [])
+            .map((t) => ({ id: Number(t.id ?? 0), token: t.token, logprob: Number.isFinite(t.logprob) ? t.logprob : 0 }))
+            .sort((a, b) => b.logprob - a.logprob).slice(0, viewTopK);
+          return {
+            step: i + 1, ctx: prompt.slice(0, 400),
+            teacher_token: row.token != null ? String(row.token) : null,
+            teacher_id: Number(row.id ?? row.token_id ?? 0),
+            top_k: top, top_k_size: top.length, ts: Date.now() + i,
+          };
+        });
+        if (fs.existsSync(TOP_K_CURVE)) fs.copyFileSync(TOP_K_CURVE, TOP_K_CURVE + ".bak");
+        fs.writeFileSync(TOP_K_CURVE, rows.map((r2) => JSON.stringify(r2)).join("\n") + "\n");
+        // Force the window to re-establish from the fresh file next tier.
+        _teacherTopKFile = rows; _teacherTopKLoadedAt = 0;
+        winRefIds = []; winRefToks = []; winRefTopK = null; winRefTopKPerPos = [];
+        return { ok: true, rows: rows.length, tokens: rows.map((r3) => r3.teacher_token) };
+      };
+      doSeed().then((out) => {
+        res.writeHead(out.ok ? 200 : 400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+      }).catch((e) => {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }));
+      });
+      return;
+    }
+
     // /pause POST: pause/resume training (body {paused:true|false} or GET).
     if (url === "/pause") {
       if (req.method === "POST") {
@@ -954,6 +1041,7 @@ async function run() {
       shared = PROMPT;
       try { sharedIds = await tokenizeShared(PROMPT); } catch (e) { sharedIds = []; }
       teacherOutput.length = 0;
+      saveNewTokens(newTokens);  // persist before clearing (etokens only)
       newTokens.length = 0;      // clear the created new-token list on a new prompt
       layerNoiseState = null;
       // NOTE: the MoE expert/layer state is INTENTIONALLY NOT reset here — we
@@ -1344,7 +1432,7 @@ async function run() {
         created: is500x,             // true when this new token appears in top-k AND top-100
         ts: Date.now(),
       });
-      if (newTokens.length > 200) newTokens.shift(); // keep the list bounded
+      if (newTokens.length > 5000) newTokens.shift(); // keep the list bounded (large — UI shows the FULL list)
 
       // ---- NEW REWARDS: exponential teacher-curve + compression-ratio ----
       // (1) EXPONENTIAL teacher-curve: teacher is perfect top-k; the closer the
@@ -1802,6 +1890,10 @@ async function run() {
           const saved = saveModel(step, route, training, route.state);
           moe.last_snapshot = typeof saved === "string" ? saved : (saved?.manifest || `saved ${saved?.count ?? 0} expert diffs`);
           moe.checkpoint_count = typeof saved === "object" ? saved.count : undefined;
+          // Save the generated new tokens (etokens only, no original tokens) to
+          // their OWN JSON file alongside the snapshot so they persist.
+          saveNewTokens(newTokens);
+          moe.new_tokens_saved_to = NEW_TOKENS_FILE;
         }
       } catch (e) {
         moe = { error: String(e.message || e) };

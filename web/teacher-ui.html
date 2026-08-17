@@ -185,7 +185,11 @@
       <div style="margin-bottom:10px">
         <div class="label" style="font-size:11px;color:#8b949e;margin-bottom:4px">Set prompt (live — restarts generation)</div>
         <textarea id="cPrompt" rows="3" style="width:100%;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:8px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;"></textarea>
-        <button id="bPrompt" style="background:#8b5cf6;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;margin-top:6px">Set prompt</button>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+          <button id="bPrompt" style="background:#8b5cf6;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">Set prompt</button>
+          <button id="bReseed" style="background:#388bfd;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer" title="Ask the teacher once to regenerate topk-curve.jsonl from the current prompt (a slow ~10-30s call), so the window reference matches the prompt">Reseed teacher top-k</button>
+          <span id="reseedStatus" style="font-size:11px;color:#8b949e"></span>
+        </div>
       </div>
       <div class="stats" style="grid-template-columns:1fr 1fr; align-items:end;">
         <div class="stat"><div class="label">Base pts / top-k match</div><input id="cBase" type="number" step="1" value="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
@@ -806,7 +810,8 @@ setInterval(loadTokens, 2000);
 function renderNewTokens(d) {
   const sys = d.new_token_system || {};
   const list = d.new_tokens_list || [];
-  const newest = list.slice(-40).reverse();
+  // Show the FULL list of every new token generated (not just the last 40).
+  const newest = [...list].reverse();
   const cb = sys.code_baseline || {};
   const sig = sigOf(sys.how, sys.sentinel, sys.per_step, sys.create_rule, sys.code_baseline,
     newest.map(t=>[t.step,(t.input||[]).join(" "),t.new_token,t.created]));
@@ -815,9 +820,10 @@ function renderNewTokens(d) {
       `<div style="margin-bottom:4px"><b style="color:#58a6ff">how new tokens are created:</b></div>` +
       `<div>${String(sys.how || "compression of output tokens into a single new token whose value = sum of their ids")}</div>` +
       `<div style="margin-top:4px">sentinel <code>${sys.sentinel ?? "?"}</code> · input per new token <code>${sys.per_step ?? "?"}</code> · <code>${sys.create_rule || "new_token = sum(input)"}</code></div>` +
-      `<div style="margin-top:6px;font-size:11px;color:"#8b949e">code-DB baseline: ${cb.loaded
+      `<div style="margin-top:6px;font-size:11px;color:#8b949e">code-DB baseline: ${cb.loaded
         ? `<b style="color:#3fb950">loaded ✓</b> · ${cb.file_count} files · ${cb.symbols} symbols · ${cb.bigrams} bigrams · ${cb.chunk_hashes} chunk-hashes`
-        : `<b style="color:#d29922">not loaded</b> — run <code>scripts/seed-code-baseline.mjs</code>`}</div>`;
+        : `<b style="color:#d29922">not loaded</b> — run <code>scripts/seed-code-baseline.mjs</code>`}</div>` +
+      `<div style="margin-top:4px;font-size:11px;color:#8b949e">FULL list · <b>${list.length}</b> new tokens generated</div>`;
     const el = document.getElementById("newTokList");
     if (!list.length) { el.innerHTML = '<div style="color:#8b949e">no new tokens created yet</div>'; return; }
     el.innerHTML = newest.map(t =>
@@ -1029,6 +1035,23 @@ document.getElementById("bPrompt")?.addEventListener("click", async () => {
     const j = await r.json();
     document.getElementById("cfgStatus").textContent = j.ok ? "prompt set ✓" : "err ✗ " + (j.error || "");
   } catch (e) { document.getElementById("cfgStatus").textContent = "offline (prompt server :4199)"; }
+});
+
+// Reseed the teacher top-k curve: POST /reseed (rebuilds topk-curve.jsonl from
+// the current prompt via a one-time slow teacher call). Shows status while it
+// runs (can take ~10-30s).
+document.getElementById("bReseed")?.addEventListener("click", async () => {
+  const st = document.getElementById("reseedStatus");
+  st.textContent = "reseeding (one-time teacher call, ~10-30s)…";
+  st.style.color = "#d29922";
+  try {
+    const r = await fetch("http://127.0.0.1:4199/reseed", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    });
+    const j = await r.json();
+    if (j.ok) { st.textContent = `reseeded ✓ ${j.rows} rows: [${(j.tokens||[]).join(" ")}]`; st.style.color = "#3fb950"; }
+    else { st.textContent = "reseed err ✗ " + (j.error || ""); st.style.color = "#f85149"; }
+  } catch (e) { st.textContent = "offline (reseed server :4199)"; st.style.color = "#f85149"; }
 });
 
 // Pause/resume training: POST /pause and reflect the new state optimistically.
