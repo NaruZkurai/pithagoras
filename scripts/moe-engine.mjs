@@ -35,29 +35,60 @@ const CONFIG_PATH = path.join(REPO, "config", "moe-config.json");
 const SAVE_DIR = path.join(REPO, "config", "moe", "model", "save_dir");
 
 let _cfg = null;
+let _cfgRaw = null; // the on-disk config WITH the documentation `note` fields
 let _cfgStat = null; // { mtimeMs, size } of the last config we parsed
+
+/**
+ * THE TRAINER NEVER READS `note` FIELDS (user: "code doesn't do the notes; the
+ * final file to send to trainer doesn't use notes"). Strip every `note` /
+ * `*_note` key recursively so the trainer-facing config carries ZERO note bloat
+ * (the live config's notes added ~14.5% dead weight). Docs remain in the raw
+ * config (config/moe-config.json + the basdline reference file) for humans.
+ */
+export function stripConfigNotes(cfg) {
+  if (Array.isArray(cfg)) return cfg.map((x) => stripConfigNotes(x));
+  if (cfg && typeof cfg === "object") {
+    const out = {};
+    for (const k of Object.keys(cfg)) {
+      if (k === "note" || k.endsWith("_note")) continue; // drop documentation keys
+      out[k] = stripConfigNotes(cfg[k]);
+    }
+    return out;
+  }
+  return cfg;
+}
+
 export function loadConfig() {
   // Cache the parsed config by FILE mtime+size so we DON'T re-read + re-parse the
   // whole 85KB config (41KB shader prompt + ~100 expert configs) on EVERY step —
   // that was a major lag source. Live UI edits / JSON-editor writes change the
   // file's mtime, so they still apply immediately; we only re-parse on actual
-  // change. This preserves the live-edit contract while keeping the hot loop cheap.
+  // change. Returns the NOTE-STRIPPED (trainer-facing) config.
   try {
     const st = fs.statSync(CONFIG_PATH);
     if (_cfgStat && st.mtimeMs === _cfgStat.mtimeMs && st.size === _cfgStat.size) {
-      return _cfg; // unchanged since last parse -> use the cached copy
+      return _cfg; // unchanged since last parse -> use the cached note-stripped copy
     }
     const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-    _cfg = parsed;
+    _cfgRaw = parsed;
+    _cfg = stripConfigNotes(parsed); // trainer uses a note-free config
     _cfgStat = { mtimeMs: st.mtimeMs, size: st.size };
   } catch { /* keep last on transient read error */ }
   return _cfg;
 }
 
+/** The RAW on-disk config WITH the documentation `note` fields (for the JSON
+ *  editor / humans). Falls back to loadConfig() if never read yet. */
+export function loadConfigRaw() {
+  if (!_cfgRaw) loadConfig();
+  return _cfgRaw || _cfg;
+}
+
 export function saveConfig(c) {
-  _cfg = c;
+  _cfg = stripConfigNotes(c);
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2));
   try { const st = fs.statSync(CONFIG_PATH); _cfgStat = { mtimeMs: st.mtimeMs, size: st.size }; } catch {}
+  _cfgRaw = c;
 }
 
 /**

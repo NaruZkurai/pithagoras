@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, otokenSequenceReward, bumpMoeStep, rewireLayers, expertStructure, noteAttachedFitness, segmentSummary, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk, resetMoeForNewPrompt, getMoeState } from "./moe-engine.mjs";
+import { loadConfig, saveConfig, loadConfigRaw, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, otokenSequenceReward, bumpMoeStep, rewireLayers, expertStructure, noteAttachedFitness, segmentSummary, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk, resetMoeForNewPrompt, getMoeState } from "./moe-engine.mjs";
 // E-TOKEN COMPRESSION SYSTEM (the corrected "new token" feature). Provides the
 // recallable etoken(e1) function stored in data/Etokens.json, the e-tokenizer
 // (touple), the base build from the pre-tokenized token DB, and the
@@ -783,8 +783,11 @@ function startServer() {
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
     // /config GET: return the live MoE config (point values, formulas, experts).
+    // Returns the RAW config WITH its documentation `note` fields so the JSON
+    // editor / humans see them; the trainer itself consumes the note-STRIPPED
+    // config (loadConfig) and never reads notes.
     if (url === "/config" && req.method === "GET") {
-      const cfg = loadConfig() || {};
+      const cfg = (typeof loadConfigRaw === "function") ? (loadConfigRaw() || {}) : (loadConfig() || {});
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(cfg));
       return;
