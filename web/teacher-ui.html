@@ -249,6 +249,7 @@ const CURRENT_URL = "http://127.0.0.1:4199/";
 const TOKENS_URL = "http://127.0.0.1:4199/tokens";
 let es = null;
 let pollTimer = null;
+let _cfgJsonLoaded = false; // guards the Config-as-JSON pre-fill (declared at top so it's initialized before connect() runs — avoids TDZ)
 
 // Memoize panel rendering: only touch the DOM (innerHTML) when the content
 // actually CHANGED. This preserves text selection + scroll + cursor while the
@@ -274,6 +275,7 @@ function applyData(d) {
   renderExpertScores(d);
   renderSampling(d);
   renderPolicy(d);
+  cfgJsonLoadInto(); // pre-fill the Config-as-JSON editor on load (retries until the server responds)
   renderNewTokens(d);
   renderEtokens(d);
   renderTokens(d);
@@ -303,7 +305,9 @@ function connect() {
     } catch (e) { /* ignore partial */ }
   };
   pollFallback(); // immediate first paint, even before SSE connects
-  cfgJsonLoadInto(); // pre-fill the Config-as-JSON editor once from disk
+  // NOTE: cfgJsonLoadInto() is called from applyData() (async, after the script
+  // fully parses so CONFIG_URL is initialized) — calling it synchronously here
+  // would hit the const-declared-later TDZ ReferenceError.
 }
 connect();
 
@@ -964,14 +968,16 @@ async function postCfg(patch, note) {
 // ---- Config-as-JSON editor (bypasses the buggy individual controls) ----
 // Fills the textarea with the FULL config from disk, and lets the user Apply it
 // (live next step) or Cancel-round + restart fresh with these params.
-let _cfgJsonLoaded = false;
+// (_cfgJsonLoaded is declared at the top of the script so it's initialized
+//  before connect() runs -> no TDZ ReferenceError.)
 function cfgJsonLoadInto() {
+  if (_cfgJsonLoaded) return; // already pre-filled; don't clobber user edits or re-fetch every tick
   const ta = document.getElementById("cfgJson");
   if (!ta) return;
   fetch(CONFIG_URL)
     .then((r) => r.json())
     .then((cfg) => { ta.value = JSON.stringify(cfg, null, 2); _cfgJsonLoaded = true; })
-    .catch(() => { ta.placeholder = "could not load config (server offline)"; });
+    .catch(() => { ta.placeholder = "loading config… (server offline, retrying)"; });
 }
 document.getElementById("bCfgRefresh")?.addEventListener("click", () => {
   document.getElementById("cfgJsonStatus").textContent = "loading…";
