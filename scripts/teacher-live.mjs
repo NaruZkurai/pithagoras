@@ -1114,41 +1114,74 @@ async function run() {
         teacherOutput.length = 0;
       }
       if (!winRefTopK || winRefIds.length < (tier.tokens || 1)) {
-        // ---- TEACHER TOP-K FROM FILE ONLY (NO TEACHER GENS) ----
-        // USER DIRECTIVE: never call the teacher. Load the teacher's recorded
-        // top-k from output/live/topk-curve.jsonl and use it as the FIXED window
-        // reference. The student loops against this SAME teacher top-k until its
-        // own top-k "fits" (overlaps >= identity_tolerance), then the window is
-        // incremented — the loop-and-increment/"train till it works" design,
-        // without any slow teacher forward pass.
+        // ---- TEACHER WINDOW REFERENCE ----
         const baseLen = Math.max(1, (tier.tokens || 8));
+        const winCfg = loadConfig()?.windowing || {};
+        const liveT = winCfg.live_teacher !== false; // LIVE teacher mode (user: 'why isn't the teacher thinking')
+
+        // LIVE mode: the teacher ACTUALLY generates the window reference
+        // (thinks). Generate as if it had NO token limit — request a generous
+        // chunk (TEACHER_BATCH / a large cap) so it can freely reason, then we
+        // STOP PREMATURELY at the window length `n` (tier.tokens). One
+        // /v1/completions on a TRUNCATED prompt copy (the CPU 27B is too slow
+        // on the full prompt). The full generation is persisted to topk-curve
+        // so it survives for etokens + otoken scoring.
+        if (liveT) {
+          const chars = Math.max(64, Number(winCfg.live_teacher_chars ?? 800));
+          const teacherIn = String(shared ?? PROMPT ?? "").slice(0, chars) || PROMPT.slice(0, chars);
+          try {
+            // "generate as if it didn't have a limit": ask for a large generation
+            // (unbounded-ish), we take the first baseLen tokens (stop prematurely).
+            const genCap = Math.max(baseLen, Number(process.env.TEACHER_GEN_CAP || TEACHER_BATCH * 2 || 24));
+            const tRes = await profileRetry(TEACHER_URL, teacherIn, genCap, "teacher", 2, null);
+            if (tRes && tRes.length) {
+              // The FULL reason/generation the teacher produced (all tokens).
+              const fullToks = tRes.map((r) => (r.chosen?.token != null ? String(r.chosen.token) : String(r.chosen?.id ?? "")));
+              // Stop prematurely: the window reference = the FIRST n tokens.
+              const n = Math.min(baseLen, tRes.length);
+              winRefTopKPerPos = tRes.slice(0, n).map((r) => (r.top || []).map((x) => ({ id: x.id, token: x.token, logprob: Number.isFinite(x.logprob) ? x.logprob : 0 })));
+              winRefIds = tRes.slice(0, n).map((r) => Number(r.chosen?.id)).filter((v) => Number.isFinite(v));
+              winRefToks = tRes.slice(0, n).map((r) => (r.chosen?.token != null ? String(r.chosen.token) : String(r.chosen?.id ?? "")));
+              winRefTopK = (winRefTopKPerPos && winRefTopKPerPos[0]) ? winRefTopKPerPos[0] : null;
+              teacherOutput.length = 0;
+              teacherOutput.push(...winRefToks);
+              // Persist the FULL generated chunk (not just n) so the reasoning
+              // is available; also feed Etokens from the full generation.
+              tRes.forEach((r, i) => {
+                saveTopKCurve({ step: step + i, promptCtx: teacherIn, teacherToken: r.chosen?.token, teacherId: r.chosen?.id, top: r.top || [] });
+              });
+              console.log(`  >> [teacher-live] teacher reasoned ${fullToks.length} tokens (stopped at window n=${n}): ${winRefToks.join(" ")}`);
+            }
+          } catch (e) {
+            console.log(`  >> [teacher-live] failed (${(e && e.message) || e}); falling back to file`);
+          }
+          winRefTopKSource = "teacher";
+        }
+        // FILE-ONLY fallback (or strict file mode): load the teacher's recorded
+        // top-k from output/live/topk-curve.jsonl and use it as the reference.
         const rows = loadTeacherTopKRows();
-        if (rows.length) {
-          // Use the MOST RECENT recorded teacher top-k as the window anchor.
-          const last = rows[rows.length - 1];
-          const top = Array.isArray(last?.top_k) ? last.top_k : [];
-          if (top.length) {
-            winRefTopK = top.map((t) => ({ id: t.id, token: t.token, logprob: Number.isFinite(t.logprob) ? t.logprob : 0 }));
+        if (!liveT || winRefIds.length === 0) {
+          if (rows.length && winRefIds.length === 0) {
+            const last = rows[rows.length - 1];
+            const top = Array.isArray(last?.top_k) ? last.top_k : [];
+            if (top.length) {
+              winRefTopK = top.map((t) => ({ id: t.id, token: t.token, logprob: Number.isFinite(t.logprob) ? t.logprob : 0 }));
+            }
+            if (!winRefIds.length) {
+              const windowRows = rows.slice(-baseLen);
+              const ids = windowRows.map((r) => r.teacher_id).filter((v) => Number.isFinite(Number(v)));
+              const toks = windowRows.map((r) => r.teacher_token).filter((t) => t !== undefined);
+              winRefIds.push(...ids.slice(0, baseLen).map(Number));
+              winRefToks = toks.slice(0, baseLen);
+              winRefTopKPerPos = windowRows.slice(0, baseLen).map((r, i) => {
+                const rk = Array.isArray(r?.top_k) ? r.top_k : (winRefTopK || []);
+                return rk.map((t) => ({ id: t.id, token: t.token, logprob: Number.isFinite(t.logprob) ? t.logprob : 0 }));
+              });
+              teacherOutput.length = 0;
+              teacherOutput.push(...winRefToks);
+            }
           }
-          // Populate the reference window ids + TEXT tokens + PER-POSITION top-k
-          // from the file rows (the LAST baseLen rows = one per emitted token).
-          // This is what lets the Teacher-Output panel show the real emitted
-          // tokens AND the top-k per token emitted — no raw numeric fallbacks.
-          if (!winRefIds.length) {
-            const windowRows = rows.slice(-baseLen);
-            const ids = windowRows.map((r) => r.teacher_id).filter((v) => Number.isFinite(Number(v)));
-            const toks = windowRows.map((r) => r.teacher_token).filter((t) => t !== undefined);
-            winRefIds.push(...ids.slice(0, baseLen).map(Number));
-            winRefToks = toks.slice(0, baseLen);
-            // Per-position top-k lists (topk per token emitted), defaulting to
-            // the anchor top-k for rows that have none so every position shows one.
-            winRefTopKPerPos = windowRows.slice(0, baseLen).map((r, i) => {
-              const rk = Array.isArray(r?.top_k) ? r.top_k : (winRefTopK || []);
-              return rk.map((t) => ({ id: t.id, token: t.token, logprob: Number.isFinite(t.logprob) ? t.logprob : 0 }));
-            });
-            teacherOutput.length = 0;
-            teacherOutput.push(...winRefToks);
-          }
+          if (liveT) winRefTopKSource = "file"; // live failed -> file
         }
         // Ensure the window has at least one token id (guard) mirroring the old
         // fallback, and always ensure a non-empty teacher top-k reference.
@@ -1170,7 +1203,9 @@ async function run() {
           }
           liveEtokStats.last_teacher_etokens = etChunks.map((ec) => ec.id);
         }
-        winRefTopKSource = "file"; // surfaced in the payload
+        // Label the source: live-teacher (if it populated the window) else file.
+        if (liveT && winRefIds.length) winRefTopKSource = "teacher";
+        else winRefTopKSource = "file";
       }
       winSeq++;
       stepRec.window = { tier: curWindowTier().tokens, idx: winTierIdx + 1, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, topk_size: (winRefTopK || []).length };
