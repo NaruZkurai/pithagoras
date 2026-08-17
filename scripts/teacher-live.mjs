@@ -34,7 +34,7 @@ import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, 
 // recallable etoken(e1) function stored in data/Etokens.json, the e-tokenizer
 // (touple), the base build from the pre-tokenized token DB, and the
 // disqualification / repeat-train-top-k helpers used in the scoring loop.
-import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, hasEtoken, putEtoken, saveEtokens, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT, etokenTernaryOf, etokenTernaryBarrel, kvBarrel, kvCompressionAlgo, kvCompressionFlag, kvSpaceSaving, isEtokenId, etokenDeep, etokenHierarchyStats, hierarchicalEtokenize, isArrayIndicatorId, putArrayIndicator, arrayIndicatorOf, arrayIndicatorTrump, isBaseEtokenId, isParentEtokenId } from "./etokens.mjs";
+import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, hasEtoken, putEtoken, saveEtokens, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT, etokenTernaryOf, etokenTernaryBarrel, kvBarrel, kvCompressionAlgo, kvCompressionFlag, kvSpaceSaving, isEtokenId, etokenDeep, etokenHierarchyStats, hierarchicalEtokenize, isArrayIndicatorId, putArrayIndicator, arrayIndicatorOf, arrayIndicatorTrump, isBaseEtokenId, isParentEtokenId, superEtokenFromItems } from "./etokens.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -1970,19 +1970,58 @@ async function run() {
             const savedContent = savedChunk.map((_, p) => etokContent(savedChunk[p]));
             const ownContent = savedChunk.map((_, p) => etokContent(selfGuess(r.name)));
 
-            // DELEGATION: the expert can only confidently produce a PREFIX of
-            // the otoken sequence itself (it "thinks it can only get K etokens").
-            // Find the longest prefix whose own CONTENT matches the saved
-            // content, then DELEGATE the rest. The delegated fill is the
-            // ASSUMED-CORRECT SEQUENCE THE ETOKEN CONTAINS (the saved etoken's
-            // decompressed tuple) — the routed expert is routed to that as the
-            // assumed answer. If the COMBINED content matches perfectly, the
-            // TRAINED expert WINS (round end + first place).
-            let k = 0;
-            while (k < n && ownContent[k] !== "" && ownContent[k] === savedContent[k]) k++;
-            let delegated = false;
+            // PER-POSITION SELF/DELEGATE DECISION (user: 'if the model delegates
+            // the next token to a new expert using perfect tokens it should in
+            // theory score LESS than if it were to do itself, but after each
+            // token it can decide what to do next'):
+            //   - At each position, if the expert's OWN content == saved content
+            //     it did that token ITSELF (full credit).
+            //   - Otherwise it DELEGATES that token to the ASSUMED-CORRECT
+            //     sequence the etoken contains (the routed expert is routed to
+            //     it as the assumed answer). Delegation is a DISCOUNTED credit —
+            //     doing it yourself always beats handing it off.
+            //   - Decisions are PER-TOKEN, not just a leading prefix: an expert
+            //     can self-produce positions AFTER delegating earlier ones.
+            const dW = Number(otokCfg.delegate_weight ?? otokCfg.delegate_discount ?? 0.5); // delegated-token credit vs self
             const combinedSeq = ownContent.slice();
-            for (let p = k; p < n; p++) { combinedSeq[p] = savedContent[p]; delegated = true; }
+            const modes = new Array(n).fill("delegate");
+            let selfCount = 0, delegatedCount = 0;
+            for (let p = 0; p < n; p++) {
+              if (ownContent[p] !== "" && ownContent[p] === savedContent[p]) {
+                modes[p] = "self"; selfCount++;
+              } else {
+                combinedSeq[p] = savedContent[p]; // assumed-correct content
+                delegatedCount++;
+              }
+            }
+            // PER-TOKEN COMPRESS DECISION (user: 'it can decide if it wants to
+            // do the next token sequence OR if it would like to COMPRESS the
+            // output of the last token into a NEW etoken for storage /
+            // generation'). After each contiguous run of self-produced tokens,
+            // the expert COMPRESSES that run into a NEW nested (parent) etoken
+            // — this is how it 'builds more KV compression tokens over time
+            // with larger text outputs'. The parent's content = the saved etoken
+            // ids of the run it covered itself (a real nested 'contains etokens'
+            // compression node in the disjoint parent range).
+            const compressPoints = [];
+            let runStart = -1;
+            for (let p = 0; p <= n; p++) {
+              const isSelf = p < n && modes[p] === "self";
+              if (isSelf && runStart < 0) runStart = p;
+              if ((!isSelf || p === n) && runStart >= 0) {
+                if (p - runStart >= 2) compressPoints.push(runStart);
+                runStart = -1;
+              }
+            }
+            let compressed = compressPoints.length > 0;
+            for (const cp of compressPoints) {
+              let ce = cp; while (ce < n && modes[ce] === "self") ce++;
+              const runIds = savedChunk.slice(cp, ce).map(Number).filter((v) => Number.isFinite(v));
+              if (runIds.length >= 2) {
+                const par = superEtokenFromItems(runIds, { live: true, audit: `otok-compress@${r.name}@step${step}`, save: false });
+                if (par) liveEtokStats.e_tokenized++;
+              }
+            }
             const topKPerPos = savedChunk.map((_, p) => {
               const ref = (winRefTopKPerPos && winRefTopKPerPos[p]) || winRefTopK || [];
               return new Set(ref.map((x) => String(x.id)));
@@ -1991,40 +2030,56 @@ async function run() {
               savedChunk: savedContent, generatedSeq: combinedSeq, topKPerPos,
               degenerate: stepRec.student_collapsed === true,
             });
-            // If it delegated AND the combined result is perfect, the TRAINED
-            // expert wins (it took the risk and the hand-off paid off).
-            const winsPerfect = !!(rw && rw.perfect);
-            rw.delegated = delegated;
-            rw.own_etokens = k; // how many it produced itself before delegating
+            // 'DELEGATES SCORE LESS THAN SELF': scale the reward by how much of
+            // the sequence the expert did ITSELF. full self -> scale 1.0; all
+            // delegated -> scale delegate_weight (default 0.5, so delegating
+            // everything scores HALF of doing it yourself).
+            const selfFrac = n ? selfCount / n : 0;
+            const delegateScale = 1 - (1 - dW) * (delegatedCount / (n || 1));
+            let rewardScaled = Number(rw?.reward || 0) * delegateScale;
+            rw.reward = Number(rewardScaled.toFixed(2));
+            rw.modes = modes;
+            rw.delegated = delegatedCount > 0;
+            rw.own_etokens = selfCount;        // how many it did itself
+            rw.delegated_etokens = delegatedCount; // how many it handed off
+            rw.self_fraction = Number(selfFrac.toFixed(3));
+            rw.delegate_weight = dW;
+            rw.compress_decision = compressed; // it built a new kv-compression etoken this step
+            rw.compress_points = compressPoints.length;
 
             // ---- ARRAY-INDICATOR TRUMP CARD (the "funny math" promise) ----
             // "a token indicator to say that the following n tokens are stored
             // as a representation of an array" — the SAVED otoken sequence is
             // the array being promised. When MANY experts are TIED on the same
-            // reward (the common case here), the one that holds the CORRECT
-            // array-indicator (a promise kept within n tokens) is the winner:
-            // the "I'm not gonna die" card. We figure out which expert can
-            // represent the saved array compactly: those that produced the most
-            // of it THEMSELVES (highest own_etokens) keep the promise with the
-            // fewest hand-offs, so ties resolve in favor of the expert that
-            // needs the least delegation. We also record the array-indicator id
-            // of the saved array so the UI can show the promise.
+            // (discounted) reward, the one that holds the CORRECT array-
+            // indicator (a promise kept within n tokens) is the winner: the
+            // "I'm not gonna die" card. Ties after the delegate discount are
+            // rare (more self = strictly higher reward), but when they do occur
+            // (e.g. everyone delegated everything -> equal half-reward) the
+            // array-promise holder resolves it.
             const savedArray = savedChunk.map(Number).filter((v) => Number.isFinite(v));
             const ind = savedArray.length ? putArrayIndicator(savedArray, { save: false }) : null;
-            const rwNum = Number(rw?.reward) || 0;
             rw.array_indicator = ind ? Number(ind.id) : null;
 
-            if (winsPerfect && (otokCfg.round_end_on_perfect !== false)) {
-              const isTie = (otokenPerfectWinner && otokenPerfectWinner.delegated === delegated && otokenPerfectWinner.own_etokens === k);
-              // Trump: on a tie, the expert that keeps the array promise with
-              // the MOST of its own coverage (fewest delegated) wins.
-              if (!otokenPerfectWinner || k >= otokenPerfectWinner.own_etokens) {
+            if (rw?.perfect && (otokCfg.round_end_on_perfect !== false)) {
+              const prev = otokenPerfectWinner;
+              const prevK = prev ? (prev.own_etokens ?? 0) : -1;
+              // Win by HIGHEST DISCOUNTED REWARD (favours doing it yourself).
+              // On an exact tie, break with the array-indicator trump card.
+              const beats = !prev
+                || Number(rw.reward) > Number(prev.reward)
+                || (Math.abs(Number(rw.reward) - Number(prev.reward)) < 1e-9
+                    && (selfCount > prevK || (selfCount === prevK && prev.trump)));
+              if (beats) {
                 otokenPerfectWinner = {
                   expert: r.name, seq: savedChunk.slice(), tiebreakNext: rw.tiebreakNext || null,
-                  step, delegated, own_etokens: k,
-                  trump: isTie,             // used as the tie-breaking promise card
+                  step, delegated: delegatedCount > 0, own_etokens: selfCount,
+                  delegated_etokens: delegatedCount,
+                  trump: rw.array_indicator != null && !!prev && Number(rw.reward) === Number(prev.reward),
                   array_indicator: rw.array_indicator,
                   promised_values: ind ? ind.values.slice(0, 20) : [],
+                  compress_decision: compressed,
+                  compress_points: compressPoints.length,
                 };
               }
             }
@@ -2038,6 +2093,15 @@ async function run() {
               const es = expertScores.find((x) => x.expert === o.expert);
               if (es) { es.otoken_reward = Number(o.reward) || 0; es.otoken_perfect = !!o.perfect; es.score = Number((Number(es.score) + (Number(o.reward) || 0)).toFixed(4)); }
             }
+          }
+          // The per-token COMPRESS decisions created NEW nested (parent) etokens
+          // this step (each expert compressing its self-covered run). Persist
+          // them at the end of the block so the KV-compression anchors are
+          // durable ("build more kv compression tokens over time"). Only runs
+          // when an expert actually compressed (skip the common no-compress
+          // step that would just rewrite the file every loop).
+          if (otokenPerExpert && otokenPerExpert.some((o) => o && o.compress_decision)) {
+            saveEtokens();
           }
         }
         // Surface full detail: each expert's top-k value, active flag, size,

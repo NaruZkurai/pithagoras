@@ -1,0 +1,744 @@
+what is my issue with the shader and what kind of things would fix it knowing im on linux:
+`// ============================================================================
+//  Space 3D - Procedural Skybox Shader
+// ----------------------------------------------------------------------------
+//  A direct port of the WebGL "space-3d" generator
+//  (https://github.com/NaruZkurai/space-3d) to a Unity skybox material.
+//
+//  Everything is computed procedurally in the fragment shader (no baking):
+//    - Point stars      (hash-based spherical star field, ~100k star look)
+//    - Bright stars     (a few additive glow sprites)
+//    - Nebulae          (fBm domain-warped 4D classic Perlin noise)
+//    - Sun              (white-hot disk + colored flare)
+//    - Moon             (ray-traced textured sphere + soft edge + glow)
+//
+//  All parameters are exposed to the Material Inspector so the skybox can be
+//  tweaked live in Unity. The C# generator (SpaceSkyboxGenerator.cs) fills the
+//  values deterministically from a seed; feel free to override by hand.
+//
+//  Works in the Built-in Render Pipeline and URP (custom skybox pass, unlit).
+// ============================================================================
+
+Shader "Space3D/Space Skybox"
+{
+    Properties
+    {
+        [Header(Global)]
+        _Exposure            ("Exposure", Range(0, 4)) = 1.0
+        [HDR] _Background    ("Background Color", Color) = (0, 0, 0, 1)
+        _NebulaOctaves       ("Nebula Noise Octaves", Range(1, 6)) = 4
+        _Seed                ("Seed", Int) = 0
+
+        [Header(Point Stars)]
+        _PointStars_Enabled     ("Enabled", Float) = 1
+        _PointStars_Density     ("Density", Range(0, 1)) = 0.5
+        _PointStars_Brightness  ("Brightness", Range(0, 4)) = 1.0
+        _PointStars_Size        ("Size", Range(0, 3)) = 1.0
+        _PointStars_Cells       ("Grid Cells", Int) = 256
+        _PointStars_Rotation    ("Rotation (X/Y/Z deg)", Vector) = (0, 0, 0, 0)
+
+        [Header(Bright Stars)]
+        _Stars_Count        ("Star Count", Int) = 2
+        _Star_0_Position    ("Star 0 Position", Vector) = (0, 0, 1, 0)
+        _Star_0_Color       ("Star 0 Color", Color) = (1, 1, 1, 1)
+        _Star_0_Size        ("Star 0 Size", Float) = 0
+        _Star_0_Falloff     ("Star 0 Falloff", Float) = 1000000
+        _Star_1_Position    ("Star 1 Position", Vector) = (0.5, 0.3, 0.8, 0)
+        _Star_1_Color       ("Star 1 Color", Color) = (1, 1, 1, 1)
+        _Star_1_Size        ("Star 1 Size", Float) = 0
+        _Star_1_Falloff     ("Star 1 Falloff", Float) = 2000000
+        _Star_2_Position    ("Star 2 Position", Vector) = (-0.6, 0.4, 0.7, 0)
+        _Star_2_Color       ("Star 2 Color", Color) = (1, 1, 1, 1)
+        _Star_2_Size        ("Star 2 Size", Float) = 0
+        _Star_2_Falloff     ("Star 2 Falloff", Float) = 1000000
+        _Star_3_Position    ("Star 3 Position", Vector) = (0.3, -0.6, 0.7, 0)
+        _Star_3_Color       ("Star 3 Color", Color) = (1, 1, 1, 1)
+        _Star_3_Size        ("Star 3 Size", Float) = 0
+        _Star_3_Falloff     ("Star 3 Falloff", Float) = 1500000
+        _Star_4_Position    ("Star 4 Position", Vector) = (-0.3, -0.2, 0.9, 0)
+        _Star_4_Color       ("Star 4 Color", Color) = (1, 1, 1, 1)
+        _Star_4_Size        ("Star 4 Size", Float) = 0
+        _Star_4_Falloff     ("Star 4 Falloff", Float) = 2000000
+        _Star_5_Position    ("Star 5 Position", Vector) = (0.9, 0.2, 0.3, 0)
+        _Star_5_Color       ("Star 5 Color", Color) = (1, 1, 1, 1)
+        _Star_5_Size        ("Star 5 Size", Float) = 0
+        _Star_5_Falloff     ("Star 5 Falloff", Float) = 1200000
+        _Star_6_Position    ("Star 6 Position", Vector) = (0.1, 0.9, 0.3, 0)
+        _Star_6_Color       ("Star 6 Color", Color) = (1, 1, 1, 1)
+        _Star_6_Size        ("Star 6 Size", Float) = 0
+        _Star_6_Falloff     ("Star 6 Falloff", Float) = 1800000
+        _Star_7_Position    ("Star 7 Position", Vector) = (-0.8, -0.4, 0.4, 0)
+        _Star_7_Color       ("Star 7 Color", Color) = (1, 1, 1, 1)
+        _Star_7_Size        ("Star 7 Size", Float) = 0
+        _Star_7_Falloff     ("Star 7 Falloff", Float) = 1600000
+
+        [Header(Nebulae)]
+        _Nebula_Count       ("Nebula Count", Int) = 2
+        _Nebula_0_Color     ("Nebula 0 Color", Color) = (0.25, 0.55, 0.95, 1)
+        _Nebula_0_Scale     ("Nebula 0 Scale", Range(0, 1)) = 0.5
+        _Nebula_0_Intensity ("Nebula 0 Intensity", Range(0, 2)) = 1.0
+        _Nebula_0_Falloff   ("Nebula 0 Falloff", Range(0, 10)) = 4.0
+        _Nebula_0_Offset    ("Nebula 0 Offset", Vector) = (300, -200, 100, 0)
+        _Nebula_1_Color     ("Nebula 1 Color", Color) = (0.9, 0.35, 0.45, 1)
+        _Nebula_1_Scale     ("Nebula 1 Scale", Range(0, 1)) = 0.4
+        _Nebula_1_Intensity ("Nebula 1 Intensity", Range(0, 2)) = 1.0
+        _Nebula_1_Falloff   ("Nebula 1 Falloff", Range(0, 10)) = 5.0
+        _Nebula_1_Offset    ("Nebula 1 Offset", Vector) = (-400, 120, -300, 0)
+        _Nebula_2_Color     ("Nebula 2 Color", Color) = (0.5, 0.8, 0.6, 1)
+        _Nebula_2_Scale     ("Nebula 2 Scale", Range(0, 1)) = 0.35
+        _Nebula_2_Intensity ("Nebula 2 Intensity", Range(0, 2)) = 1.0
+        _Nebula_2_Falloff   ("Nebula 2 Falloff", Range(0, 10)) = 4.5
+        _Nebula_2_Offset    ("Nebula 2 Offset", Vector) = (500, 300, -100, 0)
+        _Nebula_3_Color     ("Nebula 3 Color", Color) = (0.85, 0.6, 0.2, 1)
+        _Nebula_3_Scale     ("Nebula 3 Scale", Range(0, 1)) = 0.3
+        _Nebula_3_Intensity ("Nebula 3 Intensity", Range(0, 2)) = 1.0
+        _Nebula_3_Falloff   ("Nebula 3 Falloff", Range(0, 10)) = 5.5
+        _Nebula_3_Offset    ("Nebula 3 Offset", Vector) = (-200, -500, 400, 0)
+
+        [Header(Sun)]
+        _Sun_Enabled        ("Enabled", Float) = 1
+        _Sun_Position       ("Position (direction)", Vector) = (0, 0.3, 1, 0)
+        [HDR] _Sun_Color        ("Star Color", Color) = (1, 0.95, 0.85, 1)
+        [HDR] _Sun_FlareColor   ("Flare Color", Color) = (1, 0.8, 0.5, 1)
+        _Sun_Size           ("Size", Range(0, 0.001)) = 0.0003
+        _Sun_Falloff        ("Flare Falloff", Range(1, 64)) = 16
+        _Sun_Brightness     ("Brightness", Range(0, 5)) = 1.0
+        _Sun_Flare          ("Flare Amount", Range(0, 3)) = 0.5
+
+        [Header(Moon)]
+        _Moon_Enabled       ("Enabled (needs a texture)", Float) = 0
+        [NoScaleOffset] _Moon_Texture ("Moon Texture (equirectangular)", 2D) = "" {}
+        _Moon_Position      ("Position (direction)", Vector) = (0.5, 0.2, 0.8, 0)
+        _Moon_Distance      ("Distance", Float) = 30
+        _Moon_Scale         ("Scale", Range(0.1, 8)) = 1.0
+        _Moon_Rotation      ("Rotation (quaternion xyzw)", Vector) = (0, 0, 0, 1)
+        _Moon_TidalLock     ("Tidal Lock (same face to camera)", Float) = 1
+        _Moon_Softness      ("Edge Softness", Range(0, 3)) = 0.3
+        _Moon_Flare         ("Glow Amount", Range(0, 3)) = 0.27
+        [HDR] _Moon_FlareColor ("Glow Color", Color) = (1, 1, 1, 1)
+        _Moon_Tint          ("Tint (follows sun)", Color) = (1, 1, 1, 1)
+        _Moon_TintAmount    ("Tint Amount", Range(0, 1)) = 0.3
+    }
+
+    SubShader
+    {
+        Tags { "Queue"="Background" "RenderType"="Background" "PreviewType"="Skybox" }
+        Cull Off
+        ZWrite Off
+        Fog { Mode Off }
+
+        Pass
+        {
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #pragma target 3.0
+
+            #include "UnityCG.cginc"
+
+            // ------------------------------------------------------------------
+            // Everything below this point is used only by the fragment shader.
+            // It is guarded with SHADER_STAGE_VERTEX so it is NOT compiled into
+            // the vertex program. The helper functions are also marked `static`
+            // so that dead-code elimination removes them (and their references to
+            // fragment-only uniforms like _PointStars_Cells) from the vertex
+            // program even if the stage macro is unavailable. This avoids the
+            // Vulkan/HLSLcc "undeclared identifier" errors that happen when the
+            // vertex variant keeps a dead global but strips its unused uniforms.
+            // ------------------------------------------------------------------
+            #ifndef SHADER_STAGE_VERTEX
+
+            // ------------------------------------------------------------------
+            // 4D Classic Perlin noise, ported from ashima/webgl-noise (MIT).
+            // https://github.com/ashima/webgl-noise
+            // ------------------------------------------------------------------
+            static float4 mod289(float4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            static float4 permute(float4 x) { return mod289(((x * 34.0) + 1.0) * x); }
+            static float4 taylorInvSqrt(float4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+            static float4 fade(float4 t) { return t * t * t * (t * (t * 6.0 - 15.0) + 10.0); }
+
+            static float cnoise(float4 P)
+            {
+                float4 Pi0 = floor(P);
+                float4 Pi1 = Pi0 + 1.0;
+                Pi0 = mod289(Pi0);
+                Pi1 = mod289(Pi1);
+                float4 Pf0 = frac(P);
+                float4 Pf1 = Pf0 - 1.0;
+                float4 ix = float4(Pi0.x, Pi1.x, Pi0.x, Pi1.x);
+                float4 iy = float4(Pi0.y, Pi0.y, Pi1.y, Pi1.y);
+                float4 iz0 = float4(Pi0.z, Pi0.z, Pi0.z, Pi0.z);
+                float4 iz1 = float4(Pi1.z, Pi1.z, Pi1.z, Pi1.z);
+                float4 iw0 = float4(Pi0.w, Pi0.w, Pi0.w, Pi0.w);
+                float4 iw1 = float4(Pi1.w, Pi1.w, Pi1.w, Pi1.w);
+
+                float4 ixy = permute(permute(ix) + iy);
+                float4 ixy0 = permute(ixy + iz0);
+                float4 ixy1 = permute(ixy + iz1);
+                float4 ixy00 = permute(ixy0 + iw0);
+                float4 ixy01 = permute(ixy0 + iw1);
+                float4 ixy10 = permute(ixy1 + iw0);
+                float4 ixy11 = permute(ixy1 + iw1);
+
+                float4 gx00 = ixy00 * (1.0 / 7.0);
+                float4 gy00 = floor(gx00) * (1.0 / 7.0);
+                float4 gz00 = floor(gy00) * (1.0 / 6.0);
+                gx00 = frac(gx00) - 0.5;
+                gy00 = frac(gy00) - 0.5;
+                gz00 = frac(gz00) - 0.5;
+                float4 gw00 = float4(0.75, 0.75, 0.75, 0.75) - abs(gx00) - abs(gy00) - abs(gz00);
+                float4 sw00 = step(gw00, float4(0, 0, 0, 0));
+                gx00 -= sw00 * (step(0.0, gx00) - 0.5);
+                gy00 -= sw00 * (step(0.0, gy00) - 0.5);
+
+                float4 gx01 = ixy01 * (1.0 / 7.0);
+                float4 gy01 = floor(gx01) * (1.0 / 7.0);
+                float4 gz01 = floor(gy01) * (1.0 / 6.0);
+                gx01 = frac(gx01) - 0.5;
+                gy01 = frac(gy01) - 0.5;
+                gz01 = frac(gz01) - 0.5;
+                float4 gw01 = float4(0.75, 0.75, 0.75, 0.75) - abs(gx01) - abs(gy01) - abs(gz01);
+                float4 sw01 = step(gw01, float4(0, 0, 0, 0));
+                gx01 -= sw01 * (step(0.0, gx01) - 0.5);
+                gy01 -= sw01 * (step(0.0, gy01) - 0.5);
+
+                float4 gx10 = ixy10 * (1.0 / 7.0);
+                float4 gy10 = floor(gx10) * (1.0 / 7.0);
+                float4 gz10 = floor(gy10) * (1.0 / 6.0);
+                gx10 = frac(gx10) - 0.5;
+                gy10 = frac(gy10) - 0.5;
+                gz10 = frac(gz10) - 0.5;
+                float4 gw10 = float4(0.75, 0.75, 0.75, 0.75) - abs(gx10) - abs(gy10) - abs(gz10);
+                float4 sw10 = step(gw10, float4(0, 0, 0, 0));
+                gx10 -= sw10 * (step(0.0, gx10) - 0.5);
+                gy10 -= sw10 * (step(0.0, gy10) - 0.5);
+
+                float4 gx11 = ixy11 * (1.0 / 7.0);
+                float4 gy11 = floor(gx11) * (1.0 / 7.0);
+                float4 gz11 = floor(gy11) * (1.0 / 6.0);
+                gx11 = frac(gx11) - 0.5;
+                gy11 = frac(gy11) - 0.5;
+                gz11 = frac(gz11) - 0.5;
+                float4 gw11 = float4(0.75, 0.75, 0.75, 0.75) - abs(gx11) - abs(gy11) - abs(gz11);
+                float4 sw11 = step(gw11, float4(0, 0, 0, 0));
+                gx11 -= sw11 * (step(0.0, gx11) - 0.5);
+                gy11 -= sw11 * (step(0.0, gy11) - 0.5);
+
+                float4 g0000 = float4(gx00.x, gy00.x, gz00.x, gw00.x);
+                float4 g1000 = float4(gx00.y, gy00.y, gz00.y, gw00.y);
+                float4 g0100 = float4(gx00.z, gy00.z, gz00.z, gw00.z);
+                float4 g1100 = float4(gx00.w, gy00.w, gz00.w, gw00.w);
+                float4 g0010 = float4(gx10.x, gy10.x, gz10.x, gw10.x);
+                float4 g1010 = float4(gx10.y, gy10.y, gz10.y, gw10.y);
+                float4 g0110 = float4(gx10.z, gy10.z, gz10.z, gw10.z);
+                float4 g1110 = float4(gx10.w, gy10.w, gz10.w, gw10.w);
+                float4 g0001 = float4(gx01.x, gy01.x, gz01.x, gw01.x);
+                float4 g1001 = float4(gx01.y, gy01.y, gz01.y, gw01.y);
+                float4 g0101 = float4(gx01.z, gy01.z, gz01.z, gw01.z);
+                float4 g1101 = float4(gx01.w, gy01.w, gz01.w, gw01.w);
+                float4 g0011 = float4(gx11.x, gy11.x, gz11.x, gw11.x);
+                float4 g1011 = float4(gx11.y, gy11.y, gz11.y, gw11.y);
+                float4 g0111 = float4(gx11.z, gy11.z, gz11.z, gw11.z);
+                float4 g1111 = float4(gx11.w, gy11.w, gz11.w, gw11.w);
+
+                float4 norm00 = taylorInvSqrt(float4(dot(g0000, g0000), dot(g0100, g0100), dot(g1000, g1000), dot(g1100, g1100)));
+                g0000 *= norm00.x;
+                g0100 *= norm00.y;
+                g1000 *= norm00.z;
+                g1100 *= norm00.w;
+
+                float4 norm01 = taylorInvSqrt(float4(dot(g0001, g0001), dot(g0101, g0101), dot(g1001, g1001), dot(g1101, g1101)));
+                g0001 *= norm01.x;
+                g0101 *= norm01.y;
+                g1001 *= norm01.z;
+                g1101 *= norm01.w;
+
+                float4 norm10 = taylorInvSqrt(float4(dot(g0010, g0010), dot(g0110, g0110), dot(g1010, g1010), dot(g1110, g1110)));
+                g0010 *= norm10.x;
+                g0110 *= norm10.y;
+                g1010 *= norm10.z;
+                g1110 *= norm10.w;
+
+                float4 norm11 = taylorInvSqrt(float4(dot(g0011, g0011), dot(g0111, g0111), dot(g1011, g1011), dot(g1111, g1111)));
+                g0011 *= norm11.x;
+                g0111 *= norm11.y;
+                g1011 *= norm11.z;
+                g1111 *= norm11.w;
+
+                float n0000 = dot(g0000, Pf0);
+                float n1000 = dot(g1000, float4(Pf1.x, Pf0.y, Pf0.z, Pf0.w));
+                float n0100 = dot(g0100, float4(Pf0.x, Pf1.y, Pf0.z, Pf0.w));
+                float n1100 = dot(g1100, float4(Pf1.x, Pf1.y, Pf0.z, Pf0.w));
+                float n0010 = dot(g0010, float4(Pf0.x, Pf0.y, Pf1.z, Pf0.w));
+                float n1010 = dot(g1010, float4(Pf1.x, Pf0.y, Pf1.z, Pf0.w));
+                float n0110 = dot(g0110, float4(Pf0.x, Pf1.y, Pf1.z, Pf0.w));
+                float n1110 = dot(g1110, float4(Pf1.x, Pf1.y, Pf1.z, Pf0.w));
+                float n0001 = dot(g0001, float4(Pf0.x, Pf0.y, Pf0.z, Pf1.w));
+                float n1001 = dot(g1001, float4(Pf1.x, Pf0.y, Pf0.z, Pf1.w));
+                float n0101 = dot(g0101, float4(Pf0.x, Pf1.y, Pf0.z, Pf1.w));
+                float n1101 = dot(g1101, float4(Pf1.x, Pf1.y, Pf0.z, Pf1.w));
+                float n0011 = dot(g0011, float4(Pf0.x, Pf0.y, Pf1.z, Pf1.w));
+                float n1011 = dot(g1011, float4(Pf1.x, Pf0.y, Pf1.z, Pf1.w));
+                float n0111 = dot(g0111, float4(Pf0.x, Pf1.y, Pf1.z, Pf1.w));
+                float n1111 = dot(g1111, Pf1);
+
+                float4 fade_xyzw = fade(Pf0);
+                float4 n_0w = lerp(float4(n0000, n1000, n0100, n1100), float4(n0001, n1001, n0101, n1101), fade_xyzw.w);
+                float4 n_1w = lerp(float4(n0010, n1010, n0110, n1110), float4(n0011, n1011, n0111, n1111), fade_xyzw.w);
+                float4 n_zw = lerp(n_0w, n_1w, fade_xyzw.z);
+                float2 n_yzw = lerp(n_zw.xy, n_zw.zw, fade_xyzw.y);
+                float n_xyzw = lerp(n_yzw.x, n_yzw.y, fade_xyzw.x);
+                return 2.2 * n_xyzw;
+            }
+
+            // ------------------------------------------------------------------
+            // Helpers
+            // ------------------------------------------------------------------
+            static float hash12(float2 p)
+            {
+                float3 p3 = frac(float3(p.xyx) * 0.1031);
+                p3 += dot(p3, p3.yzx + 33.33);
+                return frac((p3.x + p3.y) * p3.z);
+            }
+
+            static float2 hash22(float2 p)
+            {
+                float3 p3 = frac(float3(p.xyx) * float3(0.1031, 0.1030, 0.0973));
+                p3 += dot(p3, p3.yzx + 33.33);
+                return frac((p3.xx + p3.yz) * p3.zy);
+            }
+
+            // Rotate a vector by Euler degrees (applied X, then Y, then Z).
+            static float3 RotateDegrees(float3 v, float3 deg)
+            {
+                float a = radians(deg.x);
+                float c = cos(a), s = sin(a);
+                v = float3(v.x, c * v.y - s * v.z, s * v.y + c * v.z);
+                a = radians(deg.y);
+                c = cos(a); s = sin(a);
+                v = float3(c * v.x + s * v.z, v.y, -s * v.x + c * v.z);
+                a = radians(deg.z);
+                c = cos(a); s = sin(a);
+                v = float3(c * v.x - s * v.y, s * v.x + c * v.y, v.z);
+                return v;
+            }
+
+            // Rotate a vector by a unit quaternion (x, y, z, w).
+            static float3 RotateQuat(float4 q, float3 v)
+            {
+                float3 t = 2.0 * cross(q.xyz, v);
+                return v + q.w * t + cross(q.xyz, t);
+            }
+
+            // Hamilton product: compose two quaternions (apply b, then a).
+            static float4 QuatMul(float4 a, float4 b)
+            {
+                return float4(
+                    a.w * b.xyz + b.w * a.xyz + cross(a.xyz, b.xyz),
+                    a.w * b.w - dot(a.xyz, b.xyz));
+            }
+
+            // Shortest-arc quaternion rotating "from" onto "to" (unit vectors).
+            static float4 RotationBetweenVectors(float3 from, float3 to)
+            {
+                from = normalize(from);
+                to = normalize(to);
+                float d = dot(from, to);
+                if (d > 0.99999)
+                {
+                    return float4(0, 0, 0, 1); // already aligned
+                }
+                if (d < -0.99999)
+                {
+                    // Exactly opposite: 180° about any perpendicular axis.
+                    float3 axis = normalize(cross(from, abs(from.x) < 0.9 ? float3(1, 0, 0) : float3(0, 1, 0)));
+                    return float4(axis, 0.0);
+                }
+                float3 axis = normalize(cross(from, to));
+                float w = sqrt((1.0 + d) * 0.5);
+                float3 s = axis * sqrt(max(0.0, (1.0 - d) * 0.5));
+                return float4(s, w);
+            }
+
+            // ------------------------------------------------------------------
+            // Point stars: hash-based star field on the sphere (spherical grid,
+            // longitude wraps so there is no seam; cell chance scales with
+            // cos(lat) so star density stays uniform over the sky).
+            // ------------------------------------------------------------------
+            static float3 PointStarField(float3 dir)
+            {
+                float cells = max(1.0, _PointStars_Cells); //
+                float density = _PointStars_Density;
+                float brightness = _PointStars_Brightness;
+                float size = _PointStars_Size;
+                float seed = _Seed;
+
+                dir = RotateDegrees(dir, _PointStars_Rotation.xyz);
+
+                const float PI = 3.141592653589793;
+                float lon = atan2(dir.z, dir.x);
+                float lat = asin(clamp(dir.y, -1.0, 1.0));
+
+                float2 g = float2(lon / (2.0 * PI) + 0.5, lat / PI + 0.5) * cells;
+                float2 c = floor(g);
+
+                float cosLat = cos(lat);
+                float3 acc = float3(0, 0, 0);
+
+                for (int i = -1; i <= 1; i++)
+                {
+                    for (int j = -1; j <= 1; j++)
+                    {
+                        float2 cc = c + float2((float)i, (float)j);
+                        // Wrap longitude so the ±180° seam is seamless; latitude
+                        // cells outside the band can't host visible stars.
+                        float2 cw = float2(frac(cc.x / cells), cc.y / cells);
+                        float2 h = hash22(cw * cells + seed * 13.7);
+
+                        float chance = min(1.0, 0.4 * density * cosLat);
+                        if (h.x < chance)
+                        {
+                            float2 sp = cw + (h * 0.8 + 0.1) / cells;
+                            float slon = (sp.x - 0.5) * 2.0 * PI;
+                            float slat = (sp.y - 0.5) * PI;
+                            float3 starDir = float3(cos(slat) * cos(slon), sin(slat), cos(slat) * sin(slon));
+                            float d = 1.0 - dot(dir, starDir);
+                            // Most stars are dim (pow 4), a few are bright - same
+                            // brightness distribution as the original generator.
+                            float b = pow(hash12(cw * cells + seed * 3.7), 4.0);
+                            acc += b * exp(-d * 40000.0 * size) * brightness;
+                        }
+                    }
+                }
+                return acc;
+            }
+
+            // ------------------------------------------------------------------
+            // Bright stars: additive exponential glow sprites (star.glsl).
+            // ------------------------------------------------------------------
+            static float3 StarGlow(float3 dir, float3 pos, float3 color, float size, float falloff)
+            {
+                float d = 1.0 - clamp(dot(dir, normalize(pos)), 0.0, 1.0);
+                float i = exp(-max(d - size, 0.0) * falloff);
+                float o = clamp(i, 0.0, 1.0);
+                return (color + i) * o;
+            }
+
+            // ------------------------------------------------------------------
+            // Nebula: fBm domain-warped 4D Perlin noise (nebula.glsl).
+            // ------------------------------------------------------------------
+            static float Noise3(float3 p)
+            {
+                return 0.5 * cnoise(float4(p, 0.0)) + 0.5;
+            }
+
+            static float NebulaValue(float3 p)
+            {
+                int octaves = (int)_NebulaOctaves;
+                float scale = pow(2.0, (float)octaves);
+                float3 displace = float3(0, 0, 0);
+                for (int i = 0; i < 6; i++)
+                {
+                    if (i < octaves)
+                    {
+                        displace = float3(
+                            Noise3(p.xyz * scale + displace),
+                            Noise3(p.yzx * scale + displace),
+                            Noise3(p.zxy * scale + displace));
+                        scale *= 0.5;
+                    }
+                }
+                return Noise3(p * scale + displace);
+            }
+
+            // ------------------------------------------------------------------
+            // Sun: white-hot disk + colored flare (sun.glsl).
+            // ------------------------------------------------------------------
+            static float3 Sun(float3 dir, float3 pos, float3 color, float3 flareColor,
+                       float size, float falloff, float brightness, float flare)
+            {
+                float d = clamp(dot(dir, normalize(pos)), 0.0, 1.0);
+                float disk = smoothstep(1.0 - size * 32.0, 1.0 - size, d);
+                float fl = pow(d, falloff) * flare;
+                float3 starColor = lerp(color, float3(1, 1, 1), disk);
+                float3 c = lerp(flareColor, starColor, disk);
+                float a = (disk + fl) * brightness;
+                return c * a;
+            }
+
+            // ------------------------------------------------------------------
+            // Moon: ray-traced textured sphere (moon.glsl) + soft glow flare.
+            // ------------------------------------------------------------------
+            static float3 MoonFlare(float3 dir)
+            {
+                float flare = _Moon_Flare;
+                if (flare <= 0.001) return float3(0, 0, 0);
+                float dist = _Moon_Distance;
+                float moonRadius = sin(0.05 * _Moon_Scale) * dist;
+                float moonAng = asin(clamp(moonRadius / dist, 0.0, 1.0));
+                float falloff = log(0.15) / log(cos(2.0 * moonAng));
+                if (falloff < 1.0 || falloff > 1e6 || falloff != falloff) falloff = 1.0;
+                return Sun(dir, _Moon_Position.xyz, float3(1, 1, 1), _Moon_FlareColor.rgb,
+                           0.0001, falloff, 1.0, flare);
+            }
+
+            static float3 MoonSample(float3 dir, sampler2D tex)
+            {
+                float3 origin = _WorldSpaceCameraPos.xyz;
+                float3 centerDir = normalize(_Moon_Position.xyz);
+                float dist = _Moon_Distance;
+                float3 center = origin + centerDir * dist;
+                float r = sin(0.05 * _Moon_Scale) * dist;
+                if (r <= 0.0) return float3(0, 0, 0);
+
+                // Ray-sphere intersection.
+                float3 oc = origin - center;
+                float b = dot(oc, dir);
+                float c = dot(oc, oc) - r * r;
+                float h = b * b - c;
+                if (h <= 0.0) return float3(0, 0, 0);
+                float t = -b - sqrt(h);
+                if (t <= 0.0) return float3(0, 0, 0);
+                float3 P = origin + dir * t;              // hit point (world)
+                float3 n = (P - center) / r;              // world normal
+
+                // Map the world normal back through the moon's rotation to get
+                // local sphere coordinates, then to equirectangular UV.
+                //
+                // Tidal lock: rotate the moon so its texture center (+X local
+                // axis) always points at the camera (-centerDir), like the real
+                // moon keeping one face toward Earth. _Moon_Rotation then acts
+                // as a roll that spins the visible face.
+                float4 q = _Moon_Rotation;
+                float4 qTide = _Moon_TidalLock > 0.5
+                    ? RotationBetweenVectors(float3(1, 0, 0), -centerDir)
+                    : float4(0, 0, 0, 1);
+                float4 qEff = QuatMul(qTide, q);
+                float3 nl = RotateQuat(float4(-qEff.xyz, qEff.w), n);
+                const float PI = 3.141592653589793;
+                float u = 0.5 + atan2(nl.z, nl.x) / (2.0 * PI);
+                float v = 0.5 - asin(clamp(nl.y, -1.0, 1.0)) / PI;
+                u = 1.0 - u; // same u-mirror as the original mesh
+                float4 texCol = tex2D(tex, float2(u, v));
+
+                // Diffuse lighting from the viewer side (full-moon look).
+                float diff = max(dot(n, -centerDir), 0.0);
+                float shade = 0.5 + 0.5 * diff;
+                // Soft edge where N.V -> 0 (the limb).
+                float ndv = max(dot(n, -dir), 0.0);
+                float feather = _Moon_Softness * 0.25;
+                float edge = smoothstep(0.0, feather, ndv);
+                float3 tinted = lerp(texCol.rgb, _Moon_Tint.rgb, _Moon_TintAmount);
+                return tinted * shade * texCol.a * edge;
+            }
+
+            #endif // !SHADER_STAGE_VERTEX
+
+            // ------------------------------------------------------------------
+            // Shader properties
+            // ------------------------------------------------------------------
+            float _Exposure;
+            fixed4 _Background;
+            float _NebulaOctaves;
+            float _Seed;
+
+            float _PointStars_Enabled;
+            float _PointStars_Density;
+            float _PointStars_Brightness;
+            float _PointStars_Size;
+            float _PointStars_Cells;
+            float4 _PointStars_Rotation;
+
+            float _Stars_Count;
+            float4 _Star_0_Position; fixed4 _Star_0_Color; float _Star_0_Size; float _Star_0_Falloff;
+            float4 _Star_1_Position; fixed4 _Star_1_Color; float _Star_1_Size; float _Star_1_Falloff;
+            float4 _Star_2_Position; fixed4 _Star_2_Color; float _Star_2_Size; float _Star_2_Falloff;
+            float4 _Star_3_Position; fixed4 _Star_3_Color; float _Star_3_Size; float _Star_3_Falloff;
+            float4 _Star_4_Position; fixed4 _Star_4_Color; float _Star_4_Size; float _Star_4_Falloff;
+            float4 _Star_5_Position; fixed4 _Star_5_Color; float _Star_5_Size; float _Star_5_Falloff;
+            float4 _Star_6_Position; fixed4 _Star_6_Color; float _Star_6_Size; float _Star_6_Falloff;
+            float4 _Star_7_Position; fixed4 _Star_7_Color; float _Star_7_Size; float _Star_7_Falloff;
+
+            float _Nebula_Count;
+            fixed4 _Nebula_0_Color; float _Nebula_0_Scale; float _Nebula_0_Intensity; float _Nebula_0_Falloff; float4 _Nebula_0_Offset;
+            fixed4 _Nebula_1_Color; float _Nebula_1_Scale; float _Nebula_1_Intensity; float _Nebula_1_Falloff; float4 _Nebula_1_Offset;
+            fixed4 _Nebula_2_Color; float _Nebula_2_Scale; float _Nebula_2_Intensity; float _Nebula_2_Falloff; float4 _Nebula_2_Offset;
+            fixed4 _Nebula_3_Color; float _Nebula_3_Scale; float _Nebula_3_Intensity; float _Nebula_3_Falloff; float4 _Nebula_3_Offset;
+
+            float _Sun_Enabled;
+            float4 _Sun_Position;
+            fixed4 _Sun_Color;
+            fixed4 _Sun_FlareColor;
+            float _Sun_Size;
+            float _Sun_Falloff;
+            float _Sun_Brightness;
+            float _Sun_Flare;
+
+            float _Moon_Enabled;
+            sampler2D _Moon_Texture;
+            float4 _Moon_Position;
+            float _Moon_Distance;
+            float _Moon_Scale;
+            float4 _Moon_Rotation;
+            float _Moon_TidalLock;
+            float _Moon_Softness;
+            float _Moon_Flare;
+            fixed4 _Moon_FlareColor;
+            fixed4 _Moon_Tint;
+            float _Moon_TintAmount;
+
+            // ------------------------------------------------------------------
+            // Vertex / fragment
+            // ------------------------------------------------------------------
+            struct appdata_t
+            {
+                float4 vertex : POSITION;
+            };
+
+            struct v2f
+            {
+                float4 pos : SV_POSITION;
+                float3 worldPos : TEXCOORD0;
+            };
+
+            v2f vert(appdata_t v)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+
+                // On Vulkan, Unity/Hlslcc compiles the full (merged) program for the
+                // vertex stage and strips uniforms that are not referenced from the
+                // vertex entry point, while still compiling the dead fragment helper
+                // functions. That leaves references to stripped uniforms (e.g.
+                // _PointStars_Cells) unresolved -> "undeclared identifier" errors.
+                // Referencing every fragment-only uniform here (result discarded)
+                // forces Unity to keep them in the vertex constant buffer.
+                float _keepFrag =
+                    _Exposure + _Background.x +
+                    _NebulaOctaves + _Seed +
+                    _PointStars_Enabled + _PointStars_Density + _PointStars_Brightness +
+                    _PointStars_Size + _PointStars_Cells + _PointStars_Rotation.x +
+                    _Stars_Count +
+                    _Star_0_Position.x + _Star_0_Color.r + _Star_0_Size + _Star_0_Falloff +
+                    _Star_1_Position.x + _Star_1_Color.r + _Star_1_Size + _Star_1_Falloff +
+                    _Star_2_Position.x + _Star_2_Color.r + _Star_2_Size + _Star_2_Falloff +
+                    _Star_3_Position.x + _Star_3_Color.r + _Star_3_Size + _Star_3_Falloff +
+                    _Star_4_Position.x + _Star_4_Color.r + _Star_4_Size + _Star_4_Falloff +
+                    _Star_5_Position.x + _Star_5_Color.r + _Star_5_Size + _Star_5_Falloff +
+                    _Star_6_Position.x + _Star_6_Color.r + _Star_6_Size + _Star_6_Falloff +
+                    _Star_7_Position.x + _Star_7_Color.r + _Star_7_Size + _Star_7_Falloff +
+                    _Nebula_Count +
+                    _Nebula_0_Color.r + _Nebula_0_Scale + _Nebula_0_Intensity + _Nebula_0_Falloff + _Nebula_0_Offset.x +
+                    _Nebula_1_Color.r + _Nebula_1_Scale + _Nebula_1_Intensity + _Nebula_1_Falloff + _Nebula_1_Offset.x +
+                    _Nebula_2_Color.r + _Nebula_2_Scale + _Nebula_2_Intensity + _Nebula_2_Falloff + _Nebula_2_Offset.x +
+                    _Nebula_3_Color.r + _Nebula_3_Scale + _Nebula_3_Intensity + _Nebula_3_Falloff + _Nebula_3_Offset.x +
+                    _Sun_Enabled + _Sun_Position.x + _Sun_Color.r + _Sun_FlareColor.r +
+                    _Sun_Size + _Sun_Falloff + _Sun_Brightness + _Sun_Flare +
+                    _Moon_Enabled + _Moon_Position.x + _Moon_Distance + _Moon_Scale +
+                    _Moon_Rotation.x + _Moon_TidalLock + _Moon_Softness + _Moon_Flare +
+                    _Moon_FlareColor.r + _Moon_Tint.r + _Moon_TintAmount +
+                    tex2D(_Moon_Texture, float2(0.0, 0.0)).r;
+                o.worldPos += float3(_keepFrag, 0.0, 0.0) * 0.0;
+                return o;
+            }
+
+            #ifndef SHADER_STAGE_VERTEX
+            fixed4 frag(v2f i) : SV_Target
+            {
+                float3 dir = normalize(i.worldPos - _WorldSpaceCameraPos.xyz);
+                float3 col = _Background.rgb * _Background.a;
+
+                // ---- Point stars ----
+                if (_PointStars_Enabled > 0.5)
+                {
+                    col += PointStarField(dir);
+                }
+
+                // ---- Bright stars ----
+                if (0.0 < _Stars_Count) col += StarGlow(dir, _Star_0_Position.xyz, _Star_0_Color.rgb, _Star_0_Size, _Star_0_Falloff);
+                if (1 < _Stars_Count) col += StarGlow(dir, _Star_1_Position.xyz, _Star_1_Color.rgb, _Star_1_Size, _Star_1_Falloff);
+                if (2 < _Stars_Count) col += StarGlow(dir, _Star_2_Position.xyz, _Star_2_Color.rgb, _Star_2_Size, _Star_2_Falloff);
+                if (3 < _Stars_Count) col += StarGlow(dir, _Star_3_Position.xyz, _Star_3_Color.rgb, _Star_3_Size, _Star_3_Falloff);
+                if (4 < _Stars_Count) col += StarGlow(dir, _Star_4_Position.xyz, _Star_4_Color.rgb, _Star_4_Size, _Star_4_Falloff);
+                if (5 < _Stars_Count) col += StarGlow(dir, _Star_5_Position.xyz, _Star_5_Color.rgb, _Star_5_Size, _Star_5_Falloff);
+                if (6 < _Stars_Count) col += StarGlow(dir, _Star_6_Position.xyz, _Star_6_Color.rgb, _Star_6_Size, _Star_6_Falloff);
+                if (7 < _Stars_Count) col += StarGlow(dir, _Star_7_Position.xyz, _Star_7_Color.rgb, _Star_7_Size, _Star_7_Falloff);
+
+                // ---- Nebulae ----
+                if (0.0 < _Nebula_Count)
+                {
+                    float3 npos0 = normalize(dir) * _Nebula_0_Scale;
+                    float c0 = min(1.0, NebulaValue(npos0 + _Nebula_0_Offset.xyz) * _Nebula_0_Intensity);
+                    col += _Nebula_0_Color.rgb * pow(c0, _Nebula_0_Falloff);
+                }
+                if (1 < _Nebula_Count)
+                {
+                    float3 npos1 = normalize(dir) * _Nebula_1_Scale;
+                    float c1 = min(1.0, NebulaValue(npos1 + _Nebula_1_Offset.xyz) * _Nebula_1_Intensity);
+                    col += _Nebula_1_Color.rgb * pow(c1, _Nebula_1_Falloff);
+                }
+                if (2 < _Nebula_Count)
+                {
+                    float3 npos2 = normalize(dir) * _Nebula_2_Scale;
+                    float c2 = min(1.0, NebulaValue(npos2 + _Nebula_2_Offset.xyz) * _Nebula_2_Intensity);
+                    col += _Nebula_2_Color.rgb * pow(c2, _Nebula_2_Falloff);
+                }
+                if (3 < _Nebula_Count)
+                {
+                    float3 npos3 = normalize(dir) * _Nebula_3_Scale;
+                    float c3 = min(1.0, NebulaValue(npos3 + _Nebula_3_Offset.xyz) * _Nebula_3_Intensity);
+                    col += _Nebula_3_Color.rgb * pow(c3, _Nebula_3_Falloff);
+                }
+
+                // ---- Sun ----
+                if (_Sun_Enabled > 0.5)
+                {
+                    col += Sun(dir, _Sun_Position.xyz, _Sun_Color.rgb, _Sun_FlareColor.rgb,
+                               _Sun_Size, _Sun_Falloff, _Sun_Brightness, _Sun_Flare);
+                }
+
+                // ---- Moon (flare first, then the sphere) ----
+                if (_Moon_Enabled > 0.5)
+                {
+                    col += MoonFlare(dir);
+                    col += MoonSample(dir, _Moon_Texture);
+                }
+
+                col *= _Exposure;
+                return fixed4(col, 1.0);
+            }
+            #endif // !SHADER_STAGE_VERTEX
+            ENDHLSL
+        }
+    }
+    Fallback Off
+}
+`
+
+unity errors:
+`[Worker4] Shader error in 'Space3D/Space Skybox': 'max': no matching 2 parameter intrinsic function; Possible intrinsic functions are: max(float|half|double|min10float|min16float|int|uint|min12int|min16int|min16uint, float|half|double|min10float|min16float|int|uint|min12int|min16int|min16uint) at line 369 (on glcore)
+
+Compiling Subshader: 0, Pass: <Unnamed Pass 0>, Vertex program with <no keywords>
+Platform defines: SHADER_API_DESKTOP UNITY_ENABLE_DETAIL_NORMALMAP UNITY_ENABLE_REFLECTION_BUFFERS UNITY_LIGHTMAP_FULL_HDR UNITY_LIGHT_PROBE_PROXY_VOLUME UNITY_PBS_USE_BRDF1 UNITY_SPECCUBE_BLENDING UNITY_SPECCUBE_BOX_PROJECTION UNITY_USE_DITHER_MASK_FOR_ALPHABLENDED_SHADOWS
+Disabled keywords: SHADER_API_GLES30 UNITY_ASTC_NORMALMAP_ENCODING UNITY_COLORSPACE_GAMMA UNITY_FRAMEBUFFER_FETCH_AVAILABLE UNITY_HALF_PRECISION_FRAGMENT_SHADER_REGISTERS UNITY_HARDWARE_TIER1 UNITY_HARDWARE_TIER2 UNITY_HARDWARE_TIER3 UNITY_LIGHTMAP_DLDR_ENCODING UNITY_LIGHTMAP_RGBM_ENCODING UNITY_METAL_SHADOWS_USE_POINT_FILTERING UNITY_NO_DXT5nm UNITY_NO_FULL_STANDARD_SHADER UNITY_NO_SCREENSPACE_SHADOWS UNITY_PBS_USE_BRDF2 UNITY_PBS_USE_BRDF3 UNITY_PRETRANSFORM_TO_DISPLAY_ORIENTATION UNITY_UNIFIED_SHADER_PRECISION_MODEL UNITY_VIRTUAL_TEXTURING
+
+[Worker4] Shader error in 'Space3D/Space Skybox': undeclared identifier '_PointStars_Cells' at line 369 (on glcore)
+
+Compiling Subshader: 0, Pass: <Unnamed Pass 0>, Vertex program with <no keywords>
+Platform defines: SHADER_API_DESKTOP UNITY_ENABLE_DETAIL_NORMALMAP UNITY_ENABLE_REFLECTION_BUFFERS UNITY_LIGHTMAP_FULL_HDR UNITY_LIGHT_PROBE_PROXY_VOLUME UNITY_PBS_USE_BRDF1 UNITY_SPECCUBE_BLENDING UNITY_SPECCUBE_BOX_PROJECTION UNITY_USE_DITHER_MASK_FOR_ALPHABLENDED_SHADOWS
+Disabled keywords: SHADER_API_GLES30 UNITY_ASTC_NORMALMAP_ENCODING UNITY_COLORSPACE_GAMMA UNITY_FRAMEBUFFER_FETCH_AVAILABLE UNITY_HALF_PRECISION_FRAGMENT_SHADER_REGISTERS UNITY_HARDWARE_TIER1 UNITY_HARDWARE_TIER2 UNITY_HARDWARE_TIER3 UNITY_LIGHTMAP_DLDR_ENCODING UNITY_LIGHTMAP_RGBM_ENCODING UNITY_METAL_SHADOWS_USE_POINT_FILTERING UNITY_NO_DXT5nm UNITY_NO_FULL_STANDARD_SHADER UNITY_NO_SCREENSPACE_SHADOWS UNITY_PBS_USE_BRDF2 UNITY_PBS_USE_BRDF3 UNITY_PRETRANSFORM_TO_DISPLAY_ORIENTATION UNITY_UNIFIED_SHADER_PRECISION_MODEL UNITY_VIRTUAL_TEXTURING
+
+Shader error in 'Space3D/Space Skybox': 'max': no matching 2 parameter intrinsic function; Possible intrinsic functions are: max(float|half|double|min10float|min16float|int|uint|min12int|min16int|min16uint, float|half|double|min10float|min16float|int|uint|min12int|min16int|min16uint) at line 369 (on vulkan)
+
+Compiling Subshader: 0, Pass: <Unnamed Pass 0>, Vertex program with <no keywords>
+Platform defines: SHADER_API_DESKTOP UNITY_ENABLE_DETAIL_NORMALMAP UNITY_ENABLE_REFLECTION_BUFFERS UNITY_LIGHTMAP_FULL_HDR UNITY_LIGHT_PROBE_PROXY_VOLUME UNITY_PBS_USE_BRDF1 UNITY_SPECCUBE_BLENDING UNITY_SPECCUBE_BOX_PROJECTION UNITY_USE_DITHER_MASK_FOR_ALPHABLENDED_SHADOWS
+Disabled keywords: SHADER_API_GLES30 UNITY_ASTC_NORMALMAP_ENCODING UNITY_COLORSPACE_GAMMA UNITY_FRAMEBUFFER_FETCH_AVAILABLE UNITY_HALF_PRECISION_FRAGMENT_SHADER_REGISTERS UNITY_HARDWARE_TIER1 UNITY_HARDWARE_TIER2 UNITY_HARDWARE_TIER3 UNITY_LIGHTMAP_DLDR_ENCODING UNITY_LIGHTMAP_RGBM_ENCODING UNITY_METAL_SHADOWS_USE_POINT_FILTERING UNITY_NO_DXT5nm UNITY_NO_FULL_STANDARD_SHADER UNITY_NO_SCREENSPACE_SHADOWS UNITY_PBS_USE_BRDF2 UNITY_PBS_USE_BRDF3 UNITY_PRETRANSFORM_TO_DISPLAY_ORIENTATION UNITY_UNIFIED_SHADER_PRECISION_MODEL UNITY_VIRTUAL_TEXTURING
+
+Shader error in 'Space3D/Space Skybox': undeclared identifier '_PointStars_Cells' at line 369 (on vulkan)
+
+Compiling Subshader: 0, Pass: <Unnamed Pass 0>, Vertex program with <no keywords>
+Platform defines: SHADER_API_DESKTOP UNITY_ENABLE_DETAIL_NORMALMAP UNITY_ENABLE_REFLECTION_BUFFERS UNITY_LIGHTMAP_FULL_HDR UNITY_LIGHT_PROBE_PROXY_VOLUME UNITY_PBS_USE_BRDF1 UNITY_SPECCUBE_BLENDING UNITY_SPECCUBE_BOX_PROJECTION UNITY_USE_DITHER_MASK_FOR_ALPHABLENDED_SHADOWS
+Disabled keywords: SHADER_API_GLES30 UNITY_ASTC_NORMALMAP_ENCODING UNITY_COLORSPACE_GAMMA UNITY_FRAMEBUFFER_FETCH_AVAILABLE UNITY_HALF_PRECISION_FRAGMENT_SHADER_REGISTERS UNITY_HARDWARE_TIER1 UNITY_HARDWARE_TIER2 UNITY_HARDWARE_TIER3 UNITY_LIGHTMAP_DLDR_ENCODING UNITY_LIGHTMAP_RGBM_ENCODING UNITY_METAL_SHADOWS_USE_POINT_FILTERING UNITY_NO_DXT5nm UNITY_NO_FULL_STANDARD_SHADER UNITY_NO_SCREENSPACE_SHADOWS UNITY_PBS_USE_BRDF2 UNITY_PBS_USE_BRDF3 UNITY_PRETRANSFORM_TO_DISPLAY_ORIENTATION UNITY_UNIFIED_SHADER_PRECISION_MODEL UNITY_VIRTUAL_TEXTURING
+
+`

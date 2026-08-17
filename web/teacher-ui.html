@@ -660,12 +660,14 @@ function otokenPanelHtml(last) {
   const rows = per.map((p) => {
     const c = expColor(p.expert);
     const st = p.perfect ? `<span style="color:#3fb950;font-weight:700"> PERFECT ✓</span>` : "";
-    // Show delegation: how many etokens the expert produced itself vs delegated
-    // to a non-trained expert (user: 'if the expert thinks it can only get 2
-    // etokens it can send to a non-trained expert; if it scores perfect the
-    // expert wins').
+    // Delegation is PER-TOKEN now: how many the expert did ITSELF (full credit)
+    // vs handed off to the assumed-correct content (discounted, user: 'delegate
+    // should score less than doing it itself').
     const dl = p.delegated
-      ? `<span style="color:#d29922;font-size:10px"> · delegated after ${p.own_etokens ?? 0} own etokens</span>`
+      ? `<span style="color:#d29922;font-size:10px"> · did ${p.own_etokens ?? 0} itself · delegated ${p.delegated_etokens ?? 0} (×${p.delegate_weight ?? 0.5})</span>`
+      : `<span style="color:#3fb950;font-size:10px"> · did ${p.own_etokens ?? p.n ?? 0} itself ✓</span>`;
+    const cp = p.compress_decision
+      ? ` · <span style="color:#58a6ff;font-size:10px">📦 compressed ${p.compress_points ?? 0} new etoken(s)</span>`
       : "";
     const ai = p.array_indicator
       ? ` · <span style="color:#d29922;font-size:10px">🃏 array-promise</span>`
@@ -673,12 +675,12 @@ function otokenPanelHtml(last) {
     return `<div class="token-row" style="font-size:11px">
       <span class="chip" style="background:${c}">${p.expert}</span>
       <span class="tok" style="color:${c}">+${Number(p.reward || 0).toFixed(1)}</span>
-      <span style="color:#8b949e;font-size:10px">gen ${p.generatedCount ?? 0}/${p.n ?? "?"} · topk-only ${p.topkOnlyCount ?? 0} · mult ×${Number(p.multiplier || 0).toFixed(2)}</span>${dl}${ai}${st}
+      <span style="color:#8b949e;font-size:10px">gen ${p.generatedCount ?? 0}/${p.n ?? "?"} · topk-only ${p.topkOnlyCount ?? 0} · self ${(p.self_fraction ?? 0)*100|0}%</span>${dl}${cp}${ai}${st}
     </div>`;
   }).join("");
   return `<div style="margin:6px 0;padding:6px;border:1px solid #a371f7;border-radius:8px;font-size:11px;color:#d2a8ff">
-    <b>otoken sequence (harsh)</b> · ${per.length} trained experts vs saved teacher chunk
-    ${winner ? `<div style="color:#3fb950;font-weight:700;margin-top:3px">FIRST PERFECT @ step ${winner.step}: ${winner.expert} — ROUND END, placed first${winner.delegated ? ` (delegated after ${winner.own_etokens ?? 0} own etokens ✓)` : ""}${winner.tiebreakNext ? " · next-otoken ✓ tiebreak" : ""}${winner.trump ? " · 🃏 ARRAY-INDICATOR trump (tie won, promise kept)" : ""}${winner.array_indicator ? ` · array[${(winner.promised_values||[]).join(",")}]` : ""}</div>` : ""}
+    <b>otoken sequence (harsh · per-token delegate/compress)</b> · ${per.length} trained experts vs saved teacher chunk
+    ${winner ? `<div style="color:#3fb950;font-weight:700;margin-top:3px">FIRST PERFECT @ step ${winner.step}: ${winner.expert} — ROUND END, placed first${winner.delegated ? ` (did ${winner.own_etokens ?? 0} itself · delegated ${winner.delegated_etokens ?? 0} ×${winner.delegate_weight ?? 0.5})` : ` (all self ✓)`}${winner.tiebreakNext ? " · next-otoken ✓ tiebreak" : ""}${winner.trump ? " · 🃏 ARRAY-INDICATOR trump (tie won, promise kept)" : ""}${winner.array_indicator ? ` · array[${(winner.promised_values||[]).join(",")}]` : ""}${winner.compress_decision ? ` · 📦 compressed ${winner.compress_points ?? 0} new etoken(s)` : ""}</div>` : ""}
     ${rows || '<div style="color:#8b949e">no per-expert otoken data yet</div>'}
   </div>`;
 }
