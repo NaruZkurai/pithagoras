@@ -117,6 +117,9 @@
         <input id="gStep" type="number" min="0" style="width:80px">
         <input id="gRange" type="range" min="0" max="0" value="0" style="flex:1">
         <label style="font-size:11px;color:#8b949e">last <span id="gMax">0</span></label>
+        <label style="display:flex;gap:5px;align-items:center;font-size:11px;color:#3fb950;cursor:pointer" title="Follow the latest step automatically">
+          <input id="gAuto" type="checkbox" checked> auto
+        </label>
       </div>
       <div id="guessHistory" class="guess-history"><div style="color:#8b949e">loading full token ledger…</div></div>
     </div>
@@ -669,6 +672,7 @@ function renderExpertScores(d) {
 
 let tokenLedger = [];
 let curGuess = -1;
+function gAutoOn() { const el = document.getElementById("gAuto"); return el ? el.checked : true; }
 async function loadTokens() {
   try {
     const r = await fetch(TOKENS_URL);
@@ -678,7 +682,9 @@ async function loadTokens() {
     document.getElementById("gMax").textContent = max;
     document.getElementById("gRange").max = max;
     document.getElementById("gStep").max = max;
-    if (curGuess < 0) { curGuess = max; document.getElementById("gRange").value = max; document.getElementById("gStep").value = max; }
+    // AUTO checkmark: when enabled, follow the LATEST step (just like it shows
+    // the last step's results live); when off, keep the user's pinned step.
+    if (curGuess < 0 || gAutoOn()) { curGuess = max; document.getElementById("gRange").value = max; document.getElementById("gStep").value = max; }
     renderGuess(curGuess);
   } catch (e) { /* stream not ready */ }
 }
@@ -715,12 +721,22 @@ function renderGuess(step) {
 }
 
 document.getElementById("gRange")?.addEventListener("input", () => {
+  // Manual scrub: turn OFF auto-follow so it stays pinned to the chosen step.
+  const auto = document.getElementById("gAuto"); if (auto) auto.checked = false;
   const v = Number(document.getElementById("gRange").value);
   curGuess = v; document.getElementById("gStep").value = v; renderGuess(v);
 });
 document.getElementById("gStep")?.addEventListener("change", () => {
+  const auto = document.getElementById("gAuto"); if (auto) auto.checked = false;
   const v = Number(document.getElementById("gStep").value);
   curGuess = v; document.getElementById("gRange").value = v; renderGuess(v);
+});
+document.getElementById("gAuto")?.addEventListener("change", () => {
+  // Re-checking auto jumps straight to the latest step.
+  if (document.getElementById("gAuto").checked) {
+    const max = Number(document.getElementById("gMax").textContent || 0);
+    curGuess = max; document.getElementById("gRange").value = max; document.getElementById("gStep").value = max; renderGuess(max);
+  }
 });
 setInterval(loadTokens, 2000);
 
