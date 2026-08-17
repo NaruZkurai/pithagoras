@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, bumpMoeStep, rewireLayers, expertStructure, noteAttachedFitness, segmentSummary, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk } from "./moe-engine.mjs";
+import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, otokenSequenceReward, bumpMoeStep, rewireLayers, expertStructure, noteAttachedFitness, segmentSummary, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk } from "./moe-engine.mjs";
 // E-TOKEN COMPRESSION SYSTEM (the corrected "new token" feature). Provides the
 // recallable etoken(e1) function stored in data/Etokens.json, the e-tokenizer
 // (touple), the base build from the pre-tokenized token DB, and the
@@ -1683,6 +1683,57 @@ async function run() {
           }
           return { expert: r.name, active: r.active, value: Number(r.value).toFixed(4), token, etoken: null, decompressed: [] };
         });
+
+        // ---- O-TOKEN SEQUENCE REWARD (HARSher environment, user design) ----
+        // Score each NEW-3B expert against the SAVED TEACHER CHUNK: the otoken
+        // (etoken) sequence the teacher produced and saved to disk to train on.
+        // Enabled via scoring.otoken_sequence.enabled. No free "anything in
+        // top-k" bonus: an expert earns more for GENERATING the saved otoken
+        // than for merely having it in its top-k, the base multiplier scales
+        // with how many otokens it reproduced perfectly (1/100 ≈ nothing,
+        // 99/100 + top-k match ≈ super close to perfect), and the FIRST PERFECT
+        // response ends the round and is placed first (tiebroken by next otoken).
+        let otokenPerExpert = null;
+        let otokenPerfectWinner = null;
+        const otokCfg = loadConfig()?.scoring?.otoken_sequence || {};
+        if (otokCfg.enabled) {
+          const savedEtoks = Array.isArray(liveEtokStats?.last_teacher_etokens) ? liveEtokStats.last_teacher_etokens : [];
+          const n = otokCfg.teacher_chunk_length > 0 ? Number(otokCfg.teacher_chunk_length) : savedEtoks.length;
+          const savedChunk = savedEtoks.slice(0, n || savedEtoks.length).map(String);
+          const rtRows = route.rows || [];
+          otokenPerExpert = rtRows.map((r, i) => {
+            if (!(isNewNetwork(r.name) || isCompressorExpert(r.name))) return null; // only the new-3B experts
+            if (!savedChunk.length) return null;
+            // The expert's GENERATED otoken sequence = its per-position etoken
+            // guesses (what the new-3B expert is producing across its positions).
+            const ownPos = [];
+            for (let p = 0; p < n; p++) {
+              const g = perExpertGuesses.find((gg) => gg.expert === r.name);
+              ownPos[p] = g && g.etoken != null ? String(g.etoken) : "";
+            }
+            const topKPerPos = savedChunk.map((_, p) => {
+              const ref = (winRefTopKPerPos && winRefTopKPerPos[p]) || winRefTopK || [];
+              return new Set(ref.map((x) => String(x.id)));
+            });
+            const rw = otokenSequenceReward({
+              savedChunk, generatedSeq: ownPos, topKPerPos,
+              degenerate: stepRec.student_collapsed === true,
+            });
+            if (rw && rw.perfect && (otokCfg.round_end_on_perfect !== false)) {
+              otokenPerfectWinner = { expert: r.name, seq: savedChunk.slice(), tiebreakNext: rw.tiebreakNext || null, step };
+            }
+            return { expert: r.name, ...rw };
+          }).filter(Boolean);
+          // Add the otoken sequence reward into each expert's score (harsher
+          // environment): the reward becomes part of that expert's earned points
+          // shown in "Score by expert" and accumulated below.
+          if (expertScores && otokenPerExpert && otokenPerExpert.length) {
+            for (const o of otokenPerExpert) {
+              const es = expertScores.find((x) => x.expert === o.expert);
+              if (es) { es.otoken_reward = Number(o.reward) || 0; es.otoken_perfect = !!o.perfect; es.score = Number((Number(es.score) + (Number(o.reward) || 0)).toFixed(4)); }
+            }
+          }
+        }
         // Surface full detail: each expert's top-k value, active flag, size,
         // layers used, num experts, per-layer training deltas, and the new
         // tokens (compressed + student new tokens this step).
@@ -1695,6 +1746,11 @@ async function run() {
           expert_topk: route.rows.map((r) => ({ expert: r.name, value: Number(r.value).toFixed(4), active: r.active, role: r.role, mutation: r.mutation, topk_weight: r.topk_weight })),
           expert_scores: expertScores,
           expert_guesses: perExpertGuesses,
+          otoken_sequence: {
+            enabled: !!otokCfg.enabled,
+            per_expert: otokenPerExpert || [],
+            perfect_winner: otokenPerfectWinner,
+          },
           active: route.rows.filter((r) => r.active).map((r) => r.name),
           layers_used: training.layers,
           layers_total: route.layer_count,
@@ -1826,15 +1882,27 @@ async function run() {
       // Track the best overlap seen THIS tier so the UI can show whether the
       // student is converging on the window (0.0 = still collapsed / no match).
       bestWinOverlap = Math.max(bestWinOverlap, overlap);
-      const graduated = overlap >= tol;
+      // O-TOKEN PERFECT ROUND-END (harsher env): the FIRST expert to perfectly
+      // reproduce the saved teacher otoken chunk ends the round immediately and
+      // is placed FIRST (rounded to an immediate tier advance = immediate round
+      // end). On a tie the next otoken is compared (longest prefix wins).
+      const perfectWin = stepRec.moe?.otoken_sequence?.perfect_winner || null;
+      const perfectGraduated = !!perfectWin;
+      const graduated = (overlap >= tol) || perfectGraduated;
       stepRec.window = {
         ...(stepRec.window || {}),
         overlap, graduated, best_overlap: bestWinOverlap, tol, max_loops: tier?.rounds,
+        perfect_winner: perfectWin,
       };
-      if (graduated) lastConvergedStep = step;
+      if (graduated || perfectGraduated) lastConvergedStep = step;
+      if (perfectWin) {
+        console.log(`  >> [otoken] FIRST PERFECT response @ step ${step}: expert ${perfectWin.expert} matched the saved teacher otoken chunk — ROUND END, placed first`);
+      }
       const hitCap = tier && winStepInTier >= tier.rounds && !graduated;
       if (tier && (hitCap || graduated)) {
-        if (graduated) {
+        if (perfectGraduated) {
+          console.log(`  >> window tier ${tier.tokens}: (harsher-env) otoken-perfect expert placed first — advance`);
+        } else if (graduated) {
           console.log(`  >> window tier ${tier.tokens}: student matched teacher top-k (${overlap.toFixed(3)} >= ${tol}) — converging, advance`);
         } else {
           console.log(`  >> window tier ${tier.tokens}: NOT converged (best ${bestWinOverlap.toFixed(3)} < ${tol}) after ${tier.rounds} loops — escape-hatch advance`);
@@ -1866,6 +1934,9 @@ async function run() {
       pause_every_n_steps: Number(loadConfig()?.training?.pause_every_n_steps ?? 0),
       windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000, max_loops_per_tier: win.maxLoopsPerTier, overlap: stepRec.window?.overlap ?? 0, best_overlap: bestWinOverlap, tol: win.identityTolerance, graduated: !!(stepRec.window?.graduated), last_converged_step: lastConvergedStep, allow_new_token_output: !!loadConfig()?.moe?.allow_new_token_output, skip_teacher_when_poor: !!loadConfig()?.moe?.skip_teacher_when_poor, self_update_when_poor: !!loadConfig()?.moe?.self_update_when_poor, skipped_teacher_poor: !!stepRec._skipped_teacher_poor, topk_source: winRefTopKSource } : undefined,
       expert_steering: { enabled: Number(loadConfig()?.moe?.expert_steering ?? 0) > 0, factor: Number(loadConfig()?.moe?.expert_steering ?? 0), max_bias: Number(loadConfig()?.moe?.steering_max_bias ?? 2.0), top_n: Number(loadConfig()?.moe?.steering_top_n ?? 20), last_bias_tokens: steerBias ? Object.keys(steerBias).length : 0 },
+      // O-TOKEN SEQUENCE (harsher env, opt-in): per-expert score vs the saved
+      // teacher otoken chunk; first perfect response ends the round + places first.
+      otoken_sequence: stepRec.moe?.otoken_sequence || { enabled: false, per_expert: [], perfect_winner: null },
       // GRANULAR 3B STRUCTURE: multiple 3B segments trained in parallel, only the
       // best attached; neuron sizes per expert/layer EVOLVE (NOT preset) via
       // rewiring. Surfaced every step so the user can inspect segment count,

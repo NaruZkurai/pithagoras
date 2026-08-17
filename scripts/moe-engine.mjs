@@ -959,6 +959,119 @@ export function compressionReward({ emittedTokens, perTokenEmitted, textLengthGe
 }
 
 /**
+ * O-TOKEN SEQUENCE REWARD — HARSHER ENVIRONMENT (user design).
+ * Score an expert against a SAVED TEACHER CHUNK: the sequence of `n` otokens
+ * (etokens) the teacher produced and saved to disk to train on. NO free
+ * "anything in the top-k" bonus — the expert must reproduce the SAVED otoken
+ * sequence.
+ *
+ * Per position i in the saved chunk (length n):
+ *   - GENERATED match (the expert's GENERATED otoken at i == saved otoken at i):
+ *       +generated_match_pts   (> more points than merely being in the top-k)
+ *   - TOP-K-ONLY match (saved otoken is in the expert's top-k at i, but the
+ *       expert did NOT generate it):
+ *       +topk_only_pts         (right direction, but not generated → fewer pts)
+ *   - no match: 0.
+ *
+ * COMPLETENESS MULTIPLIER — "more perfect otokens == bigger base multiplier" and
+ * "missing % of otokens in score == score / missing%":
+ *   perfect      = # positions with a GENERATED match
+ *   n            = teacher_chunk_length (saved chunk length)
+ *   missing      = n - perfect
+ *   multiplier   = perfect>0 ? perfect / max(minDenom, missing) : 0
+ *                 (perfect=n → perfect/missing explodes → clamped to perfect_mult;
+ *                  perfect=1 of n=100 → 1/99 ≈ 0.01 → tiny value;
+ *                  99 of 100 → 99/1 = 99 → super close to perfect, really good)
+ *
+ * PERFECT PROMPT ROUND-END + TIEBREAK:
+ *   A response is PERFECT when the expert generated the ENTIRE saved otoken
+ *   sequence (perfect === n, sequence match). The first perfect response ends
+ *   the round immediately and is placed FIRST. On a tie (multiple perfect),
+ *   compare the NEXT otoken (the position after the saved chunk): whichever
+ *   expert's next otoken is also a perfect match wins, and so on (longest
+ *   completed prefix wins).
+ *
+ * Returns { reward, perfect, perfectPositions, missingPct, multiplier,
+ *           savedChunk, generatedSeq, topkOnlyCount, generatedCount, n }.
+ */
+export function otokenSequenceReward({
+  savedChunk,           // the teacher's saved otoken sequence (length n)
+  generatedSeq,         // the expert's GENERATED otoken sequence (length >= n ideally)
+  topKPerPos,           // array per position of the expert's top-k token id Sets
+  degenerate,
+}) {
+  const cfg = loadConfig()?.scoring?.otoken_sequence || {};
+  const genPts = Number(cfg.generated_match_pts ?? 40);
+  const topkPts = Number(cfg.topk_only_pts ?? 10);
+  const perfectMult = Number(cfg.perfect_mult ?? 1.5);
+  const missingPenalty = Number(cfg.missing_penalty ?? 3);
+  const minDenom = 1 / Math.max(1, missingPenalty); // floor so perfect/missing doesn't blow past perfect_mult
+  const n = Array.isArray(savedChunk) ? savedChunk.length : 0;
+  const base = { reward: 0, perfect: false, perfectPositions: 0, missingPct: 0, multiplier: 0,
+    savedChunk: savedChunk || [], generatedSeq: generatedSeq || [], topkOnlyCount: 0,
+    generatedCount: 0, n, degenerate: degenerate === true };
+
+  if (n <= 0) return base;
+  // DEGENERATE GUARD: a collapsed expert can't earn sequence points.
+  if (degenerate === true) return base;
+
+  let perfect = 0;
+  let topkOnly = 0;
+  let raw = 0;
+  for (let i = 0; i < n; i++) {
+    const saved = String(savedChunk[i] ?? "");
+    const gen = String((generatedSeq || [])[i] ?? "");
+    if (gen === saved && gen !== "") {
+      raw += genPts; perfect++;
+    } else {
+      const tk = (topKPerPos && topKPerPos[i]) ? (topKPerPos[i] instanceof Set ? topKPerPos[i] : new Set((topKPerPos[i] || []).map(String))) : null;
+      if (tk && saved !== "" && tk.has(saved)) { raw += topkPts; topkOnly++; }
+    }
+  }
+
+  const missing = Math.max(0, n - perfect);
+  // 'score / missing%' — more missing → smaller multiplier; 1/100 tiny, 99/100 huge.
+  // "more perfect otokens == bigger base multiplier". If 0 generated but the
+  // saved otokens were in the top-k, that's "in the right direction" → small
+  // positive credit (not a full generated match, but a lower multiplier).
+  let multiplier = 0;
+  if (perfect > 0) {
+    multiplier = missing <= 0
+      ? perfectMult * n                        // full sequence => big (ceiling)
+      : Math.min(perfectMult * n, perfect / Math.max(minDenom, missing));
+  } else if (topkOnly > 0) {
+    // Failure but RIGHT DIRECTION: otokens were in the top-k, never generated.
+    // Give a low multiplier (per user: 'score multiplier is lower because the
+    // total saved tokens was a failure but it's in the right direction').
+    multiplier = (topkOnly / n) * missingPenalty * (missing === n ? 1 : 1); // <= 3x, tiny vs a generated match
+  }
+  const perfectFlag = perfect === n;             // whole sequence match (perfect response)
+  let reward = raw * multiplier;
+
+  // FIRST PERFECT = round end + placed first. On a tie, compare the NEXT token:
+  // whoever's next otoken ALSO matches wins (longest completed prefix).
+  let tiebreakNext = null;
+  if (perfectFlag && cfg.tiebreak_next_token !== false) {
+    const nextSaved = String((savedChunk[n] ?? ""));
+    const nextGen = String((generatedSeq || [])[n] ?? "");
+    tiebreakNext = { saved: nextSaved, generated: nextGen, perfect: nextGen === nextSaved && nextSaved !== "" };
+    if (tiebreakNext.perfect) reward *= perfectMult; // extra for extending farther
+  }
+
+  return {
+    ...base,
+    reward: Math.max(0, reward),
+    perfect: perfectFlag,
+    perfectPositions: perfect,
+    missingPct: n ? missing / n : 0,
+    multiplier,
+    topkOnlyCount: topkOnly,
+    generatedCount: perfect,
+    tiebreakNext,
+  };
+}
+
+/**
  * SAVE THE TRAINING STATE as PER-EXPERT checkpoint DIFFS (small, per-expert).
  *
  * We do NOT dump the whole 4B model — that stays in the base GGUF. We only save,

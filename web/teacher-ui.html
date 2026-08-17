@@ -612,11 +612,32 @@ function renderTeacher(d) {
   });
 }
 
+// O-TOKEN SEQUENCE panel (harsher env): per-expert score vs the saved teacher
+// otoken chunk, plus the first-perfect winner (round end + placed first).
+function otokenPanelHtml(last) {
+  const o = last?.moe?.otoken_sequence || {};
+  const per = o.per_expert || [];
+  const winner = o.perfect_winner;
+  const rows = per.map((p) => {
+    const c = expColor(p.expert);
+    const st = p.perfect ? `<span style="color:#3fb950;font-weight:700"> PERFECT ✓</span>` : "";
+    return `<div class="token-row" style="font-size:11px">
+      <span class="chip" style="background:${c}">${p.expert}</span>
+      <span class="tok" style="color:${c}">+${Number(p.reward || 0).toFixed(1)}</span>
+      <span style="color:#8b949e;font-size:10px">gen ${p.generatedCount ?? 0}/${p.n ?? "?"} · topk-only ${p.topkOnlyCount ?? 0} · mult ×${Number(p.multiplier || 0).toFixed(2)}</span>${st}
+    </div>`;
+  }).join("");
+  return `<div style="margin:6px 0;padding:6px;border:1px solid #a371f7;border-radius:8px;font-size:11px;color:#d2a8ff">
+    <b>otoken sequence (harsh)</b> · ${per.length} experts vs saved teacher chunk
+    ${winner ? `<div style="color:#3fb950;font-weight:700;margin-top:3px">FIRST PERFECT @ step ${winner.step}: ${winner.expert} — ROUND END, placed first${winner.tiebreakNext ? " (next-otoken ✓ tiebreak)" : ""}</div>` : ""}
+    ${rows || '<div style="color:#8b949e">no per-expert otoken data yet</div>'}
+  </div>`;
+}
+
 function renderExpertScores(d) {
   const el = document.getElementById("expertScores");
   const recent = d.recent || [];
-  const last = recent[recent.length - 1];
-  const esScores = (last?.moe?.expert_scores) || [];
+  const last = recent[recent.length - 1];  const esScores = (last?.moe?.expert_scores) || [];
   const sb = last?.score_breakdown || {};
   const sig = sigOf((esScores||[]).map(e=>[e.expert,e.score,e.active]), d.total_score, last?.step, sb);
   memoRender("expertScores", sig, () => {
@@ -646,14 +667,21 @@ function renderExpertScores(d) {
     </div>`;
 
     el.innerHTML = teacherRow +
+      // O-TOKEN SEQUENCE (harsher env): per-expert score vs the saved teacher
+      // otoken chunk. Only rendered when enabled.
+      ((last?.moe?.otoken_sequence?.enabled)
+        ? otokenPanelHtml(last) : "") +
       esScores.map(e => {
       const c = expColor(e.expert);
       const pct = Math.max(2, Math.min(100, (e.score / (d.total_score || 1)) * 100));
+      // Tag a perfect otoken-sequence winner.
+      const otokLine = (e.otoken_perfect || (last?.moe?.otoken_sequence?.perfect_winner?.expert === e.expert))
+        ? `<span style="color:#3fb950;font-size:10px"> · PERFECT ✓</span>` : "";
       return `<div class="token-row">
       <span class="chip" style="background:${c}">${e.expert}${e.active ? " ★" : ""}</span>
       <div class="token-bar" style="background:${c};width:${pct * 1.6}px"></div>
       <div class="token-val" style="color:${c};width:auto">+${e.score}</div>
-      <div style="font-size:10px;color:#8b949e;flex:1">${e.mutation || e.role || ""}</div>
+      <div style="font-size:10px;color:#8b949e;flex:1">${e.mutation || e.role || ""}${otokLine}</div>
     </div>`;
     }).join("") +
   `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #30363d;display:flex;gap:8px;align-items:center">

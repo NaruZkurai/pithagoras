@@ -841,6 +841,18 @@
       "reconstruct_min_overlap": 0.5,
       "note": "USER DESIGN: (PHASE 1) the NEW networks (all mutation + MTP experts beyond the 5 base ones) are trained to FAVOR compressed tokens \u2014 each new network that emits a compressed/new token (in newTokenSet) earns new_net_compression_weight per position, so the added networks become token-COMPRESSORS. (PHASE 2) the new compressed experts must then reproduce the SAME SHAPE as if they weren't attached: when a new network is active, its position's top-k must match the BASE (un-attached, E1-E5) experts' top-k at that position (reconstruct_min_overlap) \u2014 scoring reconstruct_weight times the base-overlap. Setting phase=2 gates reconstruction scoring on; phase=1 gates the compression-favor on. Both reward only NEW networks (role mutation/mtp_head), never the base experts."
     },
+    "otoken_sequence": {
+      "enabled": true,
+      "teacher_chunk_length": 0,
+      "generated_match_pts": 40,
+      "topk_only_pts": 10,
+      "perfect_mult": 1.5,
+      "missing_penalty": 3,
+      "perfect_min_overlap": 1.0,
+      "round_end_on_perfect": true,
+      "tiebreak_next_token": true,
+      "note": "HARSHER ENVIRONMENT (user): score experts against a SAVED TEACHER CHUNK (the etoken/otoken sequence the teacher produced, of teacher_chunk_length traces). No free 'anything in top-k' bonus. An expert earns generated_match_pts when its FIRST saved otoken == the otoken it GENERATED (more points than just top-k). A top-k-only match earns topk_only_pts (right direction but not generated). Completeness multiplier: 'more perfect otokens = bigger base multiplier' and 'missing % of otokens in score = score / missing%' \u2014 so 1/100 saved gives little, 99/100 saved with a top-k match is super close to perfect. First PERFECT response (whole otoken sequence match) = immediate round end, placed first; on a tie the NEXT otoken is compared (longest completed prefix wins)."
+    },
     "compare": {
       "mode": "topk_first",
       "identical_settings": false,
