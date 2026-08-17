@@ -660,15 +660,22 @@ function otokenPanelHtml(last) {
   const rows = per.map((p) => {
     const c = expColor(p.expert);
     const st = p.perfect ? `<span style="color:#3fb950;font-weight:700"> PERFECT ✓</span>` : "";
+    // Show delegation: how many etokens the expert produced itself vs delegated
+    // to a non-trained expert (user: 'if the expert thinks it can only get 2
+    // etokens it can send to a non-trained expert; if it scores perfect the
+    // expert wins').
+    const dl = p.delegated
+      ? `<span style="color:#d29922;font-size:10px"> · delegated after ${p.own_etokens ?? 0} own etokens</span>`
+      : "";
     return `<div class="token-row" style="font-size:11px">
       <span class="chip" style="background:${c}">${p.expert}</span>
       <span class="tok" style="color:${c}">+${Number(p.reward || 0).toFixed(1)}</span>
-      <span style="color:#8b949e;font-size:10px">gen ${p.generatedCount ?? 0}/${p.n ?? "?"} · topk-only ${p.topkOnlyCount ?? 0} · mult ×${Number(p.multiplier || 0).toFixed(2)}</span>${st}
+      <span style="color:#8b949e;font-size:10px">gen ${p.generatedCount ?? 0}/${p.n ?? "?"} · topk-only ${p.topkOnlyCount ?? 0} · mult ×${Number(p.multiplier || 0).toFixed(2)}</span>${dl}${st}
     </div>`;
   }).join("");
   return `<div style="margin:6px 0;padding:6px;border:1px solid #a371f7;border-radius:8px;font-size:11px;color:#d2a8ff">
-    <b>otoken sequence (harsh)</b> · ${per.length} experts vs saved teacher chunk
-    ${winner ? `<div style="color:#3fb950;font-weight:700;margin-top:3px">FIRST PERFECT @ step ${winner.step}: ${winner.expert} — ROUND END, placed first${winner.tiebreakNext ? " (next-otoken ✓ tiebreak)" : ""}</div>` : ""}
+    <b>otoken sequence (harsh)</b> · ${per.length} trained experts vs saved teacher chunk
+    ${winner ? `<div style="color:#3fb950;font-weight:700;margin-top:3px">FIRST PERFECT @ step ${winner.step}: ${winner.expert} — ROUND END, placed first${winner.delegated ? ` (delegated after ${winner.own_etokens ?? 0} own etokens ✓)` : ""}${winner.tiebreakNext ? " · next-otoken ✓ tiebreak" : ""}</div>` : ""}
     ${rows || '<div style="color:#8b949e">no per-expert otoken data yet</div>'}
   </div>`;
 }

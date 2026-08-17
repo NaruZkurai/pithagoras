@@ -1882,30 +1882,64 @@ async function run() {
           const n = otokCfg.teacher_chunk_length > 0 ? Number(otokCfg.teacher_chunk_length) : savedEtoks.length;
           const savedChunk = savedEtoks.slice(0, n || savedEtoks.length).map(String);
           const rtRows = route.rows || [];
+          // DELEGATION (user): an expert that thinks it can only get a FEW
+          // etokens itself can SEND the rest to be filled with the assumed-
+          // correct sequence the saved etokens CONTAIN; if the combined result
+          // scores PERFECT, the (trained) expert wins.
+          const selfGuess = (name) => {
+            const g = perExpertGuesses.find((gg) => gg.expert === name);
+            return g && g.etoken != null ? String(g.etoken) : "";
+          };
           otokenPerExpert = rtRows.map((r, i) => {
             // Only score/show the experts being TRAINED (active new-3B addon
             // experts), not every routed row — user: 'we only want to score /
-            // show trained experts', not 97 routed experts vs the chunk.
+            // show trained experts'.
             if (!(isNewNetwork(r.name) || isCompressorExpert(r.name))) return null;
             if (!r.active) return null;
             if (!savedChunk.length) return null;
-            // The expert's GENERATED otoken sequence = its per-position etoken
-            // guesses (what the new-3B expert is producing across its positions).
-            const ownPos = [];
-            for (let p = 0; p < n; p++) {
-              const g = perExpertGuesses.find((gg) => gg.expert === r.name);
-              ownPos[p] = g && g.etoken != null ? String(g.etoken) : "";
-            }
+
+            // Compare in DECOMPRESSED-CONTENT SPACE — "the assumed-correct
+            // sequence the etoken contains". Both the saved chunk and each
+            // expert's guess are etoken ids; what matters is the content the
+            // etoken encodes (etoken(eId) -> original token tuple). So:
+            //   savedContent[p] = decompressed tuple of saved etoken id at p
+            //   ownContent[p]   = decompressed tuple of the expert's guess id
+            const etokContent = (idStr) => {
+              const id = Number(idStr);
+              const decomp = Number.isFinite(id) ? etoken(id) : null;
+              return (decomp && decomp.length ? decomp.join(",") : "");
+            };
+            const savedContent = savedChunk.map((_, p) => etokContent(savedChunk[p]));
+            const ownContent = savedChunk.map((_, p) => etokContent(selfGuess(r.name)));
+
+            // DELEGATION: the expert can only confidently produce a PREFIX of
+            // the otoken sequence itself (it "thinks it can only get K etokens").
+            // Find the longest prefix whose own CONTENT matches the saved
+            // content, then DELEGATE the rest. The delegated fill is the
+            // ASSUMED-CORRECT SEQUENCE THE ETOKEN CONTAINS (the saved etoken's
+            // decompressed tuple) — the routed expert is routed to that as the
+            // assumed answer. If the COMBINED content matches perfectly, the
+            // TRAINED expert WINS (round end + first place).
+            let k = 0;
+            while (k < n && ownContent[k] !== "" && ownContent[k] === savedContent[k]) k++;
+            let delegated = false;
+            const combinedSeq = ownContent.slice();
+            for (let p = k; p < n; p++) { combinedSeq[p] = savedContent[p]; delegated = true; }
             const topKPerPos = savedChunk.map((_, p) => {
               const ref = (winRefTopKPerPos && winRefTopKPerPos[p]) || winRefTopK || [];
               return new Set(ref.map((x) => String(x.id)));
             });
             const rw = otokenSequenceReward({
-              savedChunk, generatedSeq: ownPos, topKPerPos,
+              savedChunk: savedContent, generatedSeq: combinedSeq, topKPerPos,
               degenerate: stepRec.student_collapsed === true,
             });
-            if (rw && rw.perfect && (otokCfg.round_end_on_perfect !== false)) {
-              otokenPerfectWinner = { expert: r.name, seq: savedChunk.slice(), tiebreakNext: rw.tiebreakNext || null, step };
+            // If it delegated AND the combined result is perfect, the TRAINED
+            // expert wins (it took the risk and the hand-off paid off).
+            const winsPerfect = !!(rw && rw.perfect);
+            rw.delegated = delegated;
+            rw.own_etokens = k; // how many it produced itself before delegating
+            if (winsPerfect && (otokCfg.round_end_on_perfect !== false)) {
+              otokenPerfectWinner = { expert: r.name, seq: savedChunk.slice(), tiebreakNext: rw.tiebreakNext || null, step, delegated, own_etokens: k };
             }
             return { expert: r.name, ...rw };
           }).filter(Boolean);
