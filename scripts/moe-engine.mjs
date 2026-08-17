@@ -86,6 +86,20 @@ export function noise01(seed) {
  */
 let _moeState = null;
 export function initMoeState(expertNames = ["E1","E2","E3","E4","E5"], layerCount = 5) {
+  const struct = expertStructure();
+  const nSegs = Math.max(1, struct.n_segments_3b ?? 3);
+  const segLayerCount = layerCount;
+  // SEED the same base layer sizes for each candidate 3B segment, but each gets
+  // its own independent copy so rewiring one never touches another. The FIRST
+  // segment is the attached (best) one — it stays FROZEN (never rewired).
+  const baseSizes = Array.from({ length: segLayerCount }, (_, i) => Math.round(100 + noise01(i + 31) * 400));
+  const segments = Array.from({ length: nSegs }, (_, si) => ({
+    id: si,
+    attached: si === 0,
+    fitness: 0,
+    layerSizes: baseSizes.slice(),
+    lastRewire: null,
+  }));
   _moeState = {
     expertValues: Object.fromEntries(expertNames.map((n, i) => [n, 0.5 + 0.4 * noise01(i + 7)])),
     // accum: UNBOUNDED per-expert parity accumulator. expertValues = sigmoid(accum)
@@ -95,7 +109,8 @@ export function initMoeState(expertNames = ["E1","E2","E3","E4","E5"], layerCoun
       const v = 0.5 + 0.4 * noise01(i + 7);
       return [n, Math.log(v / (1 - v))]; // logit(v)
     })),
-    layerSizes: Array.from({ length: layerCount }, (_, i) => Math.round(100 + noise01(i + 31) * 400)),
+    layerSizes: baseSizes.slice(), // == attached (best) segment sizes, FROZEN from rewiring
+    segments,                      // ALL candidate 3B segments (best + losers)
     noiseDeltas: Array.from({ length: layerCount }, () => 0), // bounded per-layer noise deltas
     topP: {},       // per-expert top-p summary (persisted)
     kl: {},         // per-expert KL (persisted)
@@ -308,6 +323,163 @@ export function bumpMoeStep() {
   if (!_moeState) initMoeState();
   _moeState.step += 1;
   return _moeState.step;
+}
+
+/**
+ * LAYER REWIRING — RANK-SCALED ACROSS 3B SEGMENTS (user):
+ * "best contains no change ever but (n(st)place - 1 * +5%) floor 0 neurons changed"
+ * "layer change for less performing models increases based on position."
+ *
+ * We train MULTIPLE 3B segments (n_segments_3b) in parallel; only the BEST is
+ * attached. Rules:
+ *   - The ATTACHED (best) segment NEVER changes — it gets NO rewiring ever.
+ *   - The LOSERS each get a neuron-change fraction scaled by their RANK among
+ *     losers: loser at 1-based rank `place` mutates `(place - 1) * 5%` of its
+ *     total neurons (floor 0 for the top loser: closest to best, barely nudged;
+ *     the WORST loser gets the most aggressive mutation to try to catch up).
+ *   - "add or delete neurons for layers (moving them to others)": each mutation
+ *     MOVES a neuron from a donor layer to a receiver layer (add+delete).
+ *
+ * Returns summary { rewired, from, to, movedPerSeg } or null if no rewire due.
+ */
+export function rewireLayers() {
+  if (!_moeState) return null;
+  const es = loadConfig()?.moe?.expert_structure || {};
+  const every = Math.max(1, Number(es.rewire_every ?? 10));
+  if (!_moeState.layerSizes || !_moeState.layerSizes.length) return null;
+  // Only rewire on a rewire_every boundary (not step 0).
+  if (_moeState.step === 0 || _moeState.step % every !== 0) return null;
+
+  // Ensure a segments array exists (backward-compat if state predates the field).
+  if (!Array.isArray(_moeState.segments) || !_moeState.segments.length) {
+    _moeState.segments = [{
+      id: 0, attached: true, fitness: 0, layerSizes: _moeState.layerSizes.slice(), lastRewire: null,
+    }];
+  }
+
+  const all = _moeState.segments;
+  // Rank ALL segments by fitness DESCENDING; #0 rank = best = the attached one
+  // (we keep the attached flag wherever the highest-fitness segment sits).
+  const ranked = all.slice().sort((a, b) => (Number(b.fitness) || 0) - (Number(a.fitness) || 0));
+  // Promote the winner to attached; demote the old attached to a loser. This
+  // realizes "only attaching the best one" — best becomes the served model,
+  // losers get mutation to improve.
+  const best = ranked[0];
+  if (best) {
+    for (const s of all) s.attached = (s === best);
+    // The served model's layer sizes mirror the new best segment so the rest of
+    // the engine (training / grow / export) keeps operating on the BEST segment.
+    if (best.layerSizes && best.layerSizes.length) _moeState.layerSizes = best.layerSizes.slice();
+  }
+
+  const summary = { rewired: false, from: [], to: [], movedPerSeg: [] };
+  const loserRank = []; // 1-based place per loser
+  let place = 1;
+  for (const s of ranked) {
+    if (s.attached) { loserRank.push({ seg: s, place: 0 }); continue; } // best: never changes
+    loserRank.push({ seg: s, place: place++ });
+  }
+
+  for (const { seg, place: p } of loserRank) {
+    if (p <= 0) continue; // attached best → NO change ever
+    const sizes = seg.layerSizes && seg.layerSizes.length ? seg.layerSizes : _moeState.layerSizes;
+    if (!sizes || sizes.length < 2) continue;
+    const layerCount = sizes.length;
+    const total = sizes.reduce((a, v) => a + v, 0);
+    if (total <= 0) continue;
+    // (place - 1) * +5%  → top loser (place 1) = 0%, then 5%, 10%, ... floor 0.
+    const frac = Math.max(0, (p - 1) * 0.05);
+    if (frac <= 0) { seg.lastRewire = { place: p, frac: 0, moved: 0 }; continue; }
+    const toMove = Math.max(1, Math.round(total * Math.min(0.5, frac)));
+    const from = [], to = [];
+    let moved = 0;
+    for (let m = 0; m < toMove && layerCount > 1; m++) {
+      const donor = Math.floor(noise01((+new Date()) + p * 1009 + m * 101) * layerCount);
+      let receiver = Math.floor(noise01((+new Date()) + p * 421 + m * 307 + 13) * layerCount);
+      if (receiver === donor) receiver = (receiver + 1) % layerCount;
+      if (sizes[donor] <= 1) continue; // floor 1: don't zero a layer
+      sizes[donor] -= 1;
+      sizes[receiver] += 1;
+      from.push(donor); to.push(receiver); moved++;
+    }
+    seg.lastRewire = { place: p, frac, moved };
+    if (moved) {
+      summary.rewired = true;
+      summary.from = summary.from.concat(from);
+      summary.to = summary.to.concat(to);
+      summary.movedPerSeg.push({ seg: seg.id, place: p, frac, moved, from, to });
+    }
+  }
+  if (summary.rewired) {
+    const bySeg = summary.movedPerSeg.map((m) => `seg${m.seg}[p${m.place}]×${(m.frac * 100).toFixed(0)}%→${m.moved}`).join(" ");
+    console.log(`  >> rewire layers (every ${every}): BEST frozen; losers by rank ${bySeg}`);
+  }
+  return summary;
+}
+
+/**
+ * Record the ATTACHED (best) segment's fitness for the current step, and decay
+ * the losers' fitness slightly (so an under-performing loser keeps falling in
+ * rank and thus keeps mutating aggressively). The user's rule: the BEST NEVER
+ * changes; the WORST loser mutates the most (by rank). Feeding the attached
+ * segment's real score each step is what lets rewireLayers pick the winner.
+ */
+export function noteAttachedFitness(score, label) {
+  if (!_moeState) initMoeState();
+  if (!Array.isArray(_moeState.segments) || !_moeState.segments.length) {
+    _moeState.segments = [{ id: 0, attached: true, fitness: 0, lastRewire: null, layerSizes: _moeState.layerSizes.slice() }];
+  }
+  const n = Number(score) || 0;
+  for (const s of _moeState.segments) {
+    if (s.attached) {
+      // Exponentially-smoothed EMA so the "best" is stable (doesn't thrash).
+      s.fitness = s.fitness === 0 ? n : s.fitness * 0.85 + n * 0.15;
+      s.label = label;
+    } else {
+      // Decayed so a lagging loser keeps a low rank → more aggressive rewiring.
+      s.fitness = (Number(s.fitness) || 0) * 0.98;
+    }
+  }
+  return _moeState.segments;
+}
+
+/**
+ * Per-segment status for UI/payload: id, attached?, fitness, total neurons,
+ * last rewire fraction/moved. Lets the user see that the BEST is frozen and the
+ * worse losers are being mutated harder by position.
+ */
+export function segmentSummary() {
+  if (!_moeState) initMoeState();
+  const segs = (Array.isArray(_moeState.segments) ? _moeState.segments : []).map((s) => ({
+    id: s.id,
+    attached: !!s.attached,
+    fitness: Number(s.fitness) || 0,
+    total_neurons: (s.layerSizes || []).reduce((a, v) => a + (Number(v) || 0), 0) || ((_moeState.layerSizes || []).reduce((a, v) => a + (Number(v) || 0), 0) || 0),
+    layers: (s.layerSizes || _moeState.layerSizes || []).slice(0, 12),
+    last_rewire: s.lastRewire || null,
+  }));
+  // Sort: attached best first, then losers by fitness desc (so rank is visible).
+  segs.sort((a, b) => (b.attached - a.attached) || (Number(b.fitness) - Number(a.fitness)));
+  // Annotate the 1-based loss-place for each loser.
+  let place = 0;
+  for (const s of segs) { if (s.attached) s.place = 0; else s.place = ++place; }
+  return segs;
+}
+
+/**
+ * THE NEW-3B SEGMENT STRUCTURE (user-corrected): we train MULTIPLE 3B segments
+ * in parallel (each a candidate addon) and only ATTACH THE BEST ONE. We do NOT
+ * preset the neuron count per expert — sizes SEED small and evolve via rewireLayers.
+ * Exposes { n_segments_3b, n_experts_per_segment, attach_best_only, layers_per_expert }.
+ */
+export function expertStructure() {
+  const es = loadConfig()?.moe?.expert_structure || {};
+  return {
+    n_segments_3b: Math.max(1, Number(es.n_segments_3b ?? 3)),
+    n_experts_per_segment: Math.max(1, Number(es.n_experts_per_segment ?? 25)),
+    attach_best_only: es.attach_best_only !== false,
+    layers_per_expert: Math.max(1, Number(es.layers_per_expert ?? 4)),
+  };
 }
 
 /**

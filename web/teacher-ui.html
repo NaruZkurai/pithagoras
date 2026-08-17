@@ -69,6 +69,7 @@
         <div class="stat"><div class="label">Layers</div><div id="sLayers" class="value good">0</div></div>
         <div class="stat"><div class="label">500× gens</div><div id="s500" class="value good">0</div></div>
       </div>
+      <div id="sStruct" style="font-size:11px;color:#8b949e;margin-top:8px;line-height:1.5"></div>
     </div>
     <div class="card">
       <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between">Score over time (training) · per expert
@@ -451,6 +452,25 @@ function renderStats(d) {
   document.getElementById("sExperts").textContent = d.num_experts ?? 0;
   document.getElementById("sLayers").textContent = d.layers_total ?? 0;
   document.getElementById("s500").textContent = d["500x_generations"] ?? 0;
+  const st_ = document.getElementById("sStruct");
+  const es_ = d.expert_structure;
+  if (st_) {
+    if (es_) {
+      const rw_ = d.last_rewire;
+      let rwLine = "";
+      if (rw_) {
+        const bySeg = (rw_.per_seg || []).map((m) => `seg${m.seg} (p${m.place}):×${(m.frac*100).toFixed(0)}%→${m.moved} neurons`).join(" · ");
+        rwLine = `<br>last rewire @ step ${rw_.step}: BEST frozen · losers: <span style="color:#3fb950">${bySeg || "no change"}</span>`;
+      } else {
+        rwLine = `<br>BEST frozen (0 change ever); losers rewire by rank (place-1)×5% — next rewire pending`;
+      }
+      st_.innerHTML =
+        `<b>3B structure</b>: ${es_.n_segments_3b} segment(s) · ${es_.n_experts_per_segment} experts/seg · ${es_.layers_per_expert} layers · attach <b>best only</b> (${es_.attach_best_only ? "yes" : "no"})` +
+        rwLine;
+    } else {
+      st_.innerHTML = '<b>3B structure</b>: not wired';
+    }
+  }
   document.getElementById("models").textContent =
     `teacher ${d.teacher} → student ${d.student} · view ${d.view_top_k} emit tK${d.emit?.teacher?.top_k ?? "?"}/tP${d.emit?.teacher?.top_p ?? "?"} sK${d.emit?.student?.top_k ?? "?"}/sP${d.emit?.student?.top_p ?? "?"} · step ${d.student_step_tokens} · ${d.paused ? "PAUSED" : "training"}`;
   setPausedUI(d.paused);

@@ -59,6 +59,15 @@
       "E100",
       "E99"
     ],
+    "expert_structure": {
+      "n_segments_3b": 3,
+      "n_experts_per_segment": 25,
+      "attach_best_only": true,
+      "layers_per_expert": 4,
+      "rewire_every": 10,
+      "rewire_rate": 0.05,
+      "note": "GRANULAR 3B STRUCTURE (user-corrected): MULTIPLE 3B segments trained in parallel (n_segments_3b=3), only the BEST is attached. We do NOT preset neurons/expert — sizes SEED small and EVOLVE via rewiring. REWIRING IS RANK-SCALED (user): the attached BEST segment NEVER changes ('best contains no change ever'); LOSERS mutate by rank 'layer change for less performing models increases based on position': loser at 1-based rank `place` changes (place-1)*5% of its neurons (floor 0 at the top loser, worst loser mutates most aggressively). rewire_every=steps between rewires; rewire_rate=base fraction (per-place step is +5%)."
+    },
     "experts": {
       "E1": {
         "role": "base",

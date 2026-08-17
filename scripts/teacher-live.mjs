@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, bumpMoeStep, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk } from "./moe-engine.mjs";
+import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, bumpMoeStep, rewireLayers, expertStructure, noteAttachedFitness, segmentSummary, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk } from "./moe-engine.mjs";
 // E-TOKEN COMPRESSION SYSTEM (the corrected "new token" feature). Provides the
 // recallable etoken(e1) function stored in data/Etokens.json, the e-tokenizer
 // (touple), the base build from the pre-tokenized token DB, and the
@@ -949,6 +949,26 @@ async function run() {
     }
     step++;
     bumpMoeStep(); // advance the MoE round/step counter ONCE per harness step
+    // ---- LOOP-AND-INCREMENT: advance the window tier when the current tier's
+    //      rounds are done, then (re)build the fixed teacher reference window. ---
+    let stepRec = { step, ts: Date.now() };
+    // EVOLVE the new-3B SEGMENTS' structure (user): MULTIPLE 3B segments train
+    // in parallel; the ATTACHED BEST segment NEVER changes; LOSERS rewire by
+    // rank — loser at 1-based place `p` changes (p-1)*5% of its neurons (floor 0
+    // at the top loser; worst loser mutates most aggressively). Neurons per
+    // expert are NOT preset — they SEED small and evolve via this rewiring.
+    try {
+      const rw = (typeof rewireLayers === "function") ? rewireLayers() : null;
+      if (rw && rw.rewired) {
+        stepRec.rewired = (rw.moved ?? 0);
+        stepRec.rewire_from = rw.from;
+        stepRec.rewire_to = rw.to;
+        stepRec.rewire_per_seg = rw.movedPerSeg;
+      }
+      // Surface the current 3B segment structure (multiple 3B segments in parallel,
+      // only the best is attached; neuron sizes evolve via rank-scaled rewiring).
+      if (typeof expertStructure === "function") { stepRec.expert_structure = expertStructure(); }
+    } catch (e) { /* structure/rewire is best-effort; never crash the run */ }
     // AUTO-PAUSE at intervals: if training.pause_every_n_steps > 0, pause the
     // harness every N steps so the user can inspect between bursts. On each
     // pause we ALSO re-seed the prompt to the base PROMPT (default input) so a
@@ -964,9 +984,6 @@ async function run() {
       console.log(`  >> auto-pause at step ${step} (every ${pauseEvery}); prompt re-seeded to base`);
       await new Promise((r) => setTimeout(r, 200));
     }
-    // ---- LOOP-AND-INCREMENT: advance the window tier when the current tier's
-    //      rounds are done, then (re)build the fixed teacher reference window. ---
-    let stepRec = { step, ts: Date.now() };
     if (win && win.enabled) {
       const tier = curWindowTier();
       if (tier && winStepInTier >= tier.rounds) {
@@ -1770,6 +1787,21 @@ async function run() {
       stepRec.step_points = sp;
     }
 
+    // RECORD the ATTACHED (best) segment's fitness so the next rewire can rank
+    // segments (best frozen; worse losers rewire harder). Fitness = the step's
+    // total compressed-aware score + a big boost when the compressed token
+    // matched (curve_compressed_match). This drives which segment wins "best".
+    try {
+      const sb = stepRec.score_breakdown || {};
+      const fit = (Number(stepRec.step_points) || 0)
+        + (Number(sb.curve_overlap) || 0) * 50
+        + (sb.curve_compressed_match ? 200 : 0);
+      if (typeof noteAttachedFitness === "function") {
+        noteAttachedFitness(fit, `step ${step}`);
+        stepRec.segments = (typeof segmentSummary === "function") ? segmentSummary() : null;
+      }
+    } catch (e) { /* fitness recording is best-effort */ }
+
     recent.push(stepRec);
     if (recent.length > 60) recent.shift();
 
@@ -1825,6 +1857,13 @@ async function run() {
       pause_every_n_steps: Number(loadConfig()?.training?.pause_every_n_steps ?? 0),
       windowing: win && win.enabled ? { enabled: true, tier: winTierIdx + 1, tokens: curWindowTier()?.tokens ?? 0, of: win.tiers.length, step_in_tier: winStepInTier + 1, loops: winSeq, max_tokens: loadConfig()?.windowing?.max_tokens ?? 2000, max_loops_per_tier: win.maxLoopsPerTier, overlap: stepRec.window?.overlap ?? 0, best_overlap: bestWinOverlap, tol: win.identityTolerance, graduated: !!(stepRec.window?.graduated), last_converged_step: lastConvergedStep, allow_new_token_output: !!loadConfig()?.moe?.allow_new_token_output, skip_teacher_when_poor: !!loadConfig()?.moe?.skip_teacher_when_poor, self_update_when_poor: !!loadConfig()?.moe?.self_update_when_poor, skipped_teacher_poor: !!stepRec._skipped_teacher_poor, topk_source: winRefTopKSource } : undefined,
       expert_steering: { enabled: Number(loadConfig()?.moe?.expert_steering ?? 0) > 0, factor: Number(loadConfig()?.moe?.expert_steering ?? 0), max_bias: Number(loadConfig()?.moe?.steering_max_bias ?? 2.0), top_n: Number(loadConfig()?.moe?.steering_top_n ?? 20), last_bias_tokens: steerBias ? Object.keys(steerBias).length : 0 },
+      // GRANULAR 3B STRUCTURE: multiple 3B segments trained in parallel, only the
+      // best attached; neuron sizes per expert/layer EVOLVE (NOT preset) via
+      // rewiring. Surfaced every step so the user can inspect segment count,
+      // experts per segment, and the last rewire movement.
+      expert_structure: (typeof expertStructure === "function" ? expertStructure() : null),
+      segments: (typeof segmentSummary === "function" ? segmentSummary() : null),
+      last_rewire: stepRec?.rewired ? { moved: stepRec.rewired, from: stepRec.rewire_from, to: stepRec.rewire_to, per_seg: stepRec.rewire_per_seg, step } : null,
       two_phase: { enabled: !!loadConfig()?.scoring?.two_phase?.enabled, phase: Number(loadConfig()?.scoring?.two_phase?.phase ?? 1), new_net_compression_weight: Number(loadConfig()?.scoring?.two_phase?.new_net_compression_weight ?? 40), reconstruct_weight: Number(loadConfig()?.scoring?.two_phase?.reconstruct_weight ?? 120), reconstruct_min_overlap: Number(loadConfig()?.scoring?.two_phase?.reconstruct_min_overlap ?? 0.5), note: "Phase1=new nets FAVOR compressed tokens; Phase2=new compressed experts reproduce base shape; MTP aids compressed tokens" },
       // PER-EXPERT scored/training detail (surfaced so the UI shows EVERY expert
       // getting a value/delta, not just the active top-k). Pulls from the moe
