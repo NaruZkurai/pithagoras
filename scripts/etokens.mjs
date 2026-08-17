@@ -63,6 +63,27 @@ const ETOKENS_PATH = path.join(REPO, "data", "Etokens.json");
 export const ETOKEN_BASE = () => Number(loadEtokConfig()?.moe?.new_token_base ?? 200000);
 export const ETOKEN_COUNT = () => Math.max(1, Number(loadEtokConfig()?.moe?.new_token_count ?? 512));
 
+// HIERARCHICAL PARENT id space — DISJOINT from the base e-token range (and from
+// the student's vocab). Parent e-tokens (the nested "etoken that contains
+// etokens + raw" nodes) content-address here so a parent can NEVER collide with
+// one of its own child/base ids (which would create a self-referential cycle —
+// the memory-rot dangling-ref bug). The harness steers base etoken ids within
+// [base, base+count), but parents are STORE-INTERNAL compression ids (they never
+// need to be emitted by the student), so this large disjoint range is free.
+export const PARENT_BASE = () => Number(loadEtokConfig()?.etokens?.hierarchical?.parent_base ?? (ETOKEN_BASE() + ETOKEN_COUNT()));
+export const PARENT_COUNT = () => Math.max(1024, Number(loadEtokConfig()?.etokens?.hierarchical?.parent_count ?? 1_000_000));
+
+// ARRAY-INDICATOR id space — a third DISJOINT range. An ARRAY INDICATOR is a
+// compact "promise" token that declares: "the following n tokens are stored as
+// a representation of THIS array" (the interior values, without the structural
+// `[ ] , , ,` tokens — "we aren't bound by the rules of the current ecosystem
+// or the previous tokens in formula to positions, all contain sequence as a
+// prefix"). In training it is the LAST-STEP TRUMP CARD: when an expert is tied
+// (or about to die on a tie), emitting the correct ARRAY-INDICATOR (a promise
+// kept within n tokens) wins it — the "I'm not gonna die" card.
+export const IND_BASE = () => Number(loadEtokConfig()?.etokens?.array_indicator?.base ?? (PARENT_BASE() + PARENT_COUNT()));
+export const IND_COUNT = () => Math.max(1024, Number(loadEtokConfig()?.etokens?.array_indicator?.count ?? 1_000_000));
+
 let _Etokens = null; // in-memory store: { version, base, tokens, stats }
 
 let _etokConfig = null;
@@ -333,6 +354,401 @@ export function etokenize(ids, chunkSize = 4) {
   return out;
 }
 
+/* ==========================================================================
+ * HIERARCHICAL / NESTED E-TOKENS  (the user's "etoken that contains etokens
+ * + non etokens" — recursive context compression)
+ *
+ * An e-token's CONTENT can be a SEQUENCE OF ITEMS, where each item is either
+ * a RAW token id or ANOTHER e-token id (in the reserved range). That lets a
+ * repeated block of e-tokens collapse into ONE parent e-token id:
+ *
+ *     etoken(A) = [t1, t2, t3]
+ *     etoken(B) = [t4, t5]
+ *     etoken(C) = [A, B, t6]        <- C CONTAINS etokens (A,B) + a raw token
+ *
+ *     etoken(C) flattens -> [t1,t2,t3, t4,t5, t6]      (fully decoded, lossless)
+ *
+ * This is RECURSIVE ("much more compression"): a long repetitive prompt (the
+ * 41k shader) can be stored as a TREE of e-token ids instead of the flat token
+ * stream, so the KV / context footprint shrinks super-linearly when sequences
+ * repeat. And because each e-token is a RECALLABLE, content-addressed anchor
+ * (a "stronghold for memory rot"), repeated regions become durable IDs that
+ * survive context pruning — the raw tokens can be dropped but the meaning is
+ * pinned by the e-token, so forgetful conversations are much harder.
+ *
+ * BACKWARD COMPAT: `tokens[eId]` ALWAYS holds the FLATTENED (fully-expanded)
+ * raw-token tuple, so every existing consumer (etoken(), scoring, delegation,
+ * KV, ternary) keeps working unchanged. The nested structure lives in the new
+ * `content[eId]` map; `etoken(eId)` flattens it recursively.
+ * -------------------------------------------------------------------------- */
+
+/** True if `id` is a BASE e-token id (lives in the reserved e-token range). */
+export function isBaseEtokenId(id) {
+  const n = Number(id);
+  return Number.isFinite(n) && n >= ETOKEN_BASE() && n < ETOKEN_BASE() + ETOKEN_COUNT();
+}
+
+/** True if `id` is a HIERARCHICAL PARENT e-token id (the disjoint store range). */
+export function isParentEtokenId(id) {
+  const n = Number(id);
+  return Number.isFinite(n) && n >= PARENT_BASE() && n < PARENT_BASE() + PARENT_COUNT();
+}
+
+/** True if `id` is an ARRAY-INDICATOR id (the compact array-promise range). */
+export function isArrayIndicatorId(id) {
+  const n = Number(id);
+  return Number.isFinite(n) && n >= IND_BASE() && n < IND_BASE() + IND_COUNT();
+}
+
+/** True if `id` is ANY e-token id (base, hierarchical parent, or array-indicator). */
+export function isEtokenId(id) {
+  return isBaseEtokenId(id) || isParentEtokenId(id) || isArrayIndicatorId(id);
+}
+
+/**
+ * Content-address a HIERARCHICAL PARENT id from its FLATTENED raw-token tuple.
+ * Maps into the DISJOINT parent range [PARENT_BASE(), PARENT_BASE()+count) so
+ * a parent can never collide with a base/child etoken id (no self-reference
+ * cycles) while remaining deterministic: the same flat tuple ALWAYS yields the
+ * same parent id (recallable + content-addressed, a "stronghold for memory
+ * rot"). Returns { id, index, label }.
+ */
+export function parentEtokenIdFor(flatIds) {
+  const tuple = effectiveTuple(flatIds);
+  const rawSum = tuple.reduce((a, v) => a + v, 0);
+  const index = Math.abs(Math.trunc(rawSum)) % PARENT_COUNT();
+  const id = PARENT_BASE() + index;
+  return { id, index, label: `p${index + 1}` };
+}
+
+/* --------------------------------------------------------------------------
+ * ARRAY-INDICATOR ("funny math": the compact array-promise / trump card)
+ *
+ * A token indicator that DECLARES: "the following n tokens are stored as a
+ * representation of THIS ARRAY". Instead of emitting the structural token
+ * spread of `[1,2,3,4,5,6,7,8,9,0]` (the brackets, commas, and each value as
+ * separate tokens — "n tokens"), we emit ONE array-indicator id whose CONTENT
+ * is the integer VALUES `[1,2,3,4,5,6,7,8,9,0]` directly:
+ *
+ *     arrayIndicatorFor([1,2,3,4,5,6,7,8,9,0]) -> id "q1234"
+ *     etoken(q1234)   -> [1,2,3,4,5,6,7,8,9,0]     (a PROMISE KEPT within n)
+ *     etokenDeep(q)   -> [1,2,3,4,5,6,7,8,9,0]     (the interior array values)
+ *
+ * "we aren't bound by the rules of the current ecosystem or the previous
+ * tokens in formula to positions; all contain sequence as a prefix" — the
+ * values do NOT have to be a position-prefix of anything; we store the bare
+ * array. In TRAINING this is the LAST-STEP TRUMP CARD: when many experts are
+ * TIED (or an expert is about to die on a tie), one that emits the CORRECT
+ * array-indicator (a promise it will keep within n tokens) WINS — the
+ * "I'm not gonna die" card.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Content-address an ARRAY-INDICATOR id from an array of integer values. Maps
+ * into the DISJOINT indicator range so it can never collide with a base/parent
+ * id, and is deterministic (same values -> same id). Returns { id, values,
+ * index, label }.
+ */
+export function arrayIndicatorIdFor(values) {
+  const arr = (values || []).map(Number).filter((v) => Number.isFinite(v));
+  const rawSum = arr.reduce((a, v) => a + v, 0) + arr.length * 0x9e3779b9; // salt by length so [1,2] != [1,2,3-part]
+  const index = Math.abs(Math.trunc(rawSum)) % IND_COUNT();
+  const id = IND_BASE() + index;
+  return { id, index, label: `q${index + 1}`, values: arr };
+}
+
+/**
+ * Record + return an ARRAY-INDICATOR etoken: content = the array VALUES (the
+ * interior numbers, without structural `[ ] ,` tokens — "funny math"). It is a
+ * promise kept within n tokens: etoken(id) returns the full array. Deterministic
+ * (same array -> same indicator), so repeated arrays collapse to one id.
+ * Returns { id, values, content, isNew }.
+ */
+export function putArrayIndicator(values, { live = true, audit = null, save = true } = {}) {
+  if (!_Etokens) initEtokens();
+  const arr = (values || []).map(Number).filter((v) => Number.isFinite(v));
+  if (!arr.length) return null;
+  const { id } = arrayIndicatorIdFor(arr);
+  const key = String(id);
+  const existing = _Etokens.content ? _Etokens.content[key] : undefined;
+  const isNew = existing === undefined && _Etokens.tokens[key] === undefined;
+  if (!_Etokens.content) _Etokens.content = {};
+  // Prefer keeping the LONGEST/most-detailed content for a colliding id.
+  if (existing === undefined || arr.length >= (existing || []).length) {
+    _Etokens.content[key] = arr.slice();
+    _Etokens.tokens[key] = arr.slice();
+    setEtokenTernary(key, etokenTernary(arr).vector);
+  }
+  if (isNew) {
+    if (live) _Etokens.stats.live_added = (_Etokens.stats.live_added || 0) + 1;
+    else _Etokens.stats.base_etokens = (_Etokens.stats.base_etokens || 0) + 1;
+    _Etokens.stats.total = (_Etokens.stats.total || 0) + 1;
+    if (audit) {
+      _Etokens.history.push({ ts: Date.now(), id: key, content: arr, live, audit });
+      if (_Etokens.history.length > 200) _Etokens.history.shift();
+    }
+  }
+  _Etokens.stats.updated_at = new Date().toISOString();
+  if (save !== false) saveEtokens();
+  return { id: key, values: arr, content: arr.slice(), isNew };
+}
+
+/** The array VALUES promised by an array-indicator id (or null if not one). */
+export function arrayIndicatorOf(eId) {
+  if (!isArrayIndicatorId(eId) || !_Etokens) return null;
+  const c = _Etokens.content ? _Etokens.content[String(eId)] : null;
+  if (Array.isArray(c)) return c.slice();
+  const t = _Etokens.tokens[String(eId)];
+  return Array.isArray(t) ? t.slice() : null;
+}
+
+/**
+ * The TRUMP-CARD scoring helper. When many experts are TIED on the otoken
+ * sequence, the expert that emitted an ARRAY-INDICATOR whose PROMISED array
+ * (decompressed values) matches the SAVED target sequence WINS — "a promise
+ * kept within n tokens" / the "I'm not gonna die" card.
+ *
+ *   savedValues        : the target array to match (e.g. the saved otoken
+ *                        content, or the tie-break next-otoken tuple).
+ *   candidateIndId     : the array-indicator id an expert emitted (or null).
+ *   tieThreshold       : how close the rewards must be to count as a tie.
+ *   expertReward       : the expert's current reward.
+ *   bestOtherReward    : the best OTHER expert reward (the one it ties/beats).
+ * Returns { isTrump, matched, values, promiseKept } — isTrump when the
+ * candidate is a correct array-indicator that ties-or-beats the best and its
+ * promised array equals savedValues (the promise is KEPT).
+ */
+export function arrayIndicatorTrump({ savedValues, candidateIndId, expertReward = 0, bestOtherReward = 0, tieThreshold = 0.5 } = {}) {
+  if (candidateIndId == null || !isArrayIndicatorId(candidateIndId)) {
+    return { isTrump: false, matched: false, promiseKept: false, values: [] };
+  }
+  const promised = arrayIndicatorOf(candidateIndId);
+  const saved = (savedValues || []).map(Number);
+  const matched = !!promised && promised.length === saved.length
+    && promised.every((v, i) => v === saved[i]);
+  const withinTie = Math.abs(Number(expertReward) - Number(bestOtherReward)) <= Math.max(1e-9, Number(tieThreshold));
+  return {
+    isTrump: matched && withinTie,
+    matched,
+    promiseKept: matched,
+    values: promised || [],
+  };
+}
+
+
+/**
+ * Recursively flatten a list of CONTENT ITEMS into a fully-expanded raw-token
+ * tuple. Each item is a number: either a RAW token id (non-etoken) or a NESTED
+ * e-token id (in the reserved range) that is itself expanded. Cycle-guarded so
+ * a corrupt store can never hang the decoder. Returns a flat array of raw ids.
+ */
+export function flattenItems(items, seen = new Set()) {
+  const out = [];
+  for (const item of items || []) {
+    const v = Number(item);
+    if (!Number.isFinite(v)) continue;
+    if (isEtokenId(v)) {
+      if (seen.has(v)) continue; // cycle guard — never re-enter the same id
+      const key = String(v);
+      const sub = (_Etokens && _Etokens.content && Array.isArray(_Etokens.content[key]))
+        ? _Etokens.content[key]
+        : ((_Etokens && Array.isArray(_Etokens.tokens[key])) ? _Etokens.tokens[key] : null);
+      if (Array.isArray(sub) && sub.length) {
+        seen.add(v);
+        out.push(...flattenItems(sub, seen));
+        seen.delete(v);
+      }
+    } else {
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+/**
+ * `etoken(eId)` -> the FULLY-DECODED raw-token tuple (recursively expanded if
+ * the e-token contains nested e-tokens). Backward compatible: if the store has
+ * no `content` for this id (flat/legacy e-token), returns the stored tuple.
+ */
+export function etoken(eId) { // overrides the flat-only version below
+  if (!_Etokens) return null;
+  const key = String(eId);
+  if (_Etokens.content && Array.isArray(_Etokens.content[key])) {
+    return flattenItems(_Etokens.content[key]);
+  }
+  const t = _Etokens.tokens[key];
+  return Array.isArray(t) ? t.slice() : null;
+}
+
+/**
+ * `etokenDeep(eId)` -> the NESTED content structure (the item list of raw-token
+ * ids and nested e-token ids), for recursive inspection. Returns null if the
+ * e-token has no nested structure (it is a flat/legacy e-token).
+ */
+export function etokenDeep(eId) {
+  if (!_Etokens || !_Etokens.content) return null;
+  const key = String(eId);
+  if (Array.isArray(_Etokens.content[key])) return _Etokens.content[key].slice();
+  return null;
+}
+
+/**
+ * Content-address a PARENT e-token from a list of content ITEMS. The parent's
+ * id is a pure function of the FLATTENED effective tuple, so the SAME decoded
+ * content ALWAYS maps to the SAME parent id (deterministic, recallable). Stores
+ * the nested `content` (raw + e-token refs) AND the flattened `tokens` tuple so
+ * etoken() stays lossless. Returns { id, content, flat, isNew }.
+ */
+export function superEtokenFromItems(items, { live = true, audit = null, save = true } = {}) {
+  if (!_Etokens) initEtokens();
+  const flat = flattenItems(items);
+  if (!flat.length) return null;
+  // Keep the ORIGINAL item list (raw + nested e-token refs) exactly for
+  // recursive structure; flatten only for the deterministic id + flat table.
+  // CRITICAL: parents content-address in the DISJOINT parent range, so a parent
+  // id can NEVER equal one of its own child/base ids (no self-reference cycle).
+  const { id, label, index } = parentEtokenIdFor(flat);
+  const key = String(id);
+  const eff = effectiveTuple(flat);
+  const existingContent = _Etokens.content ? _Etokens.content[key] : undefined;
+  const isNew = existingContent === undefined && _Etokens.tokens[key] === undefined;
+  const itemArr = (items || []).map(Number).filter((v) => Number.isFinite(v));
+  if (!_Etokens.content) _Etokens.content = {};
+  // Record BOTH the nested structure and the flattened tuple. If the id already
+  // existed (collision on the flattened sum) we keep the richer nested form.
+  if (existingContent === undefined || itemArr.length >= (existingContent || []).length) {
+    _Etokens.content[key] = itemArr;
+    _Etokens.tokens[key] = eff;
+    setEtokenTernary(key, etokenTernary(eff).vector);
+  }
+  if (isNew) {
+    if (live) _Etokens.stats.live_added = (_Etokens.stats.live_added || 0) + 1;
+    else _Etokens.stats.base_etokens = (_Etokens.stats.base_etokens || 0) + 1;
+    _Etokens.stats.total = (_Etokens.stats.total || 0) + 1;
+    if (audit) {
+      _Etokens.history.push({ ts: Date.now(), id: key, content: itemArr, flat: eff, live, audit });
+      if (_Etokens.history.length > 200) _Etokens.history.shift();
+    }
+  }
+  _Etokens.stats.updated_at = new Date().toISOString();
+  if (save !== false) saveEtokens();
+  return { id: key, content: itemArr, flat: eff, label, index, isNew };
+}
+
+/**
+ * Find the most frequent CONTIGUOUS SUBSEQUENCE (bigram or trigram, or any
+ * sweep length) of length>=2 among an item list. Returns the highest-count
+ * subsequence with count >= minRepeat (a repeat is what makes a parent e-token
+ * worth creating), or null if none. `len` lets callers sweep length.
+ */
+function mostFrequentSubseq(items, len, minRepeat = 2) {
+  const counts = new Map();
+  for (let i = 0; i + len <= items.length; i++) {
+    const key = JSON.stringify(items.slice(i, i + len));
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  let bestKey = null, bestCount = 0;
+  for (const [k, c] of counts) {
+    if (c >= minRepeat && c > bestCount) { bestKey = k; bestCount = c; }
+  }
+  return bestKey ? { subseq: JSON.parse(bestKey), count: bestCount } : null;
+}
+
+/**
+ * GREEDY RECURSIVE E-TOKEN PACKING ("hierarchical etokenize"). 
+ *   Level 0: base e-tokens from `etokenize(ids)` (content = raw chunk tuple).
+ *   Then repeatedly find the most-repeated contiguous subsequence of e-token/
+ *   raw items, fuse it into a PARENT e-token (content = that subsequence), and
+ *   replace every occurrence. Repeating this NESTS parents inside parents
+ *   ("etoken that contains etokens"), which is what gives "much more
+ *   compression" on repetitive prompts.
+ *
+ * Returns { created, base, items }: `created` = list of {id, content, flat,
+ * level} to putEtoken; `base` = the level-0 base e-tokens; `items` = the final
+ * packed top-level item list (parent ids + leftover raw).
+ */
+export function hierarchicalEtokenize(ids, opts = {}) {
+  const chunkSize = Math.max(1, Math.floor(Number(opts.chunkSize ?? 4)) || 4);
+  const maxDepth = Math.max(1, Math.floor(Number(opts.maxDepth ?? 3)) || 3);
+  const minRepeat = Math.max(2, Math.floor(Number(opts.minRepeat ?? 2)) || 2);
+  const maxFuses = Math.max(1, Math.floor(Number(opts.maxFuses ?? 64)) || 64);
+  const sweepLen = Math.max(2, Math.floor(Number(opts.sweepLen ?? 3)) || 3); // try up to this length
+  const arr = (ids || []).filter((v) => Number.isFinite(Number(v)));
+  if (arr.length < 2) return { created: [], base: [], items: arr.slice() };
+
+  // LEVEL 0 — base e-tokens (each content = its raw chunk tuple).
+  const base = etokenize(arr, chunkSize);
+  let items = base.map((b) => b.id).slice(); // top-level item list = base e-token ids
+  const created = [];
+  const depthOf = new Map(); // etokenId -> depth
+  base.forEach((b) => depthOf.set(String(b.id), 1));
+
+  let fuses = 0;
+  for (let depth = 2; depth <= maxDepth && fuses < maxFuses; depth++) {
+    let fusedThisPass = false;
+    for (let len = Math.min(sweepLen, items.length); len >= 2 && !fusedThisPass; len--) {
+      const hit = mostFrequentSubseq(items, len, minRepeat);
+      if (!hit) continue;
+      // Create a parent e-token whose CONTENT = the repeated subsequence
+      // (which may itself contain nested e-token ids -> recursion).
+      const par = superEtokenFromItems(hit.subseq, { live: true, audit: `hier@depth${depth}`, save: false });
+      if (!par) continue;
+      created.push({ id: par.id, content: par.content, flat: par.flat, level: depth });
+      depthOf.set(par.id, depth);
+      // Replace every occurrence of the subsequence with the parent id.
+      const nxt = [];
+      const sl = hit.subseq.length;
+      const sig = hit.subseq.map(String).join(",");
+      for (let i = 0; i < items.length; ) {
+        const seg = items.slice(i, i + sl).map(String).join(",");
+        if (seg === sig) { nxt.push(Number(par.id)); i += sl; }
+        else { nxt.push(items[i]); i += 1; }
+      }
+      items = nxt;
+      fusedThisPass = true;
+      fuses++;
+      if (fuses >= maxFuses) break;
+    }
+    if (!fusedThisPass) break; // no reducible repeats left at this depth
+  }
+  return { created, base, items };
+}
+
+/** Hierarchy metrics over the store (for the UI / /etokens endpoint). */
+export function etokenHierarchyStats() {
+  let nestedCount = 0, maxDepth = 0, sumFlat = 0, sumContent = 0;
+  const content = _Etokens?.content || {};
+  for (const k of Object.keys(content)) {
+    const items = content[k];
+    if (!Array.isArray(items) || !items.length) continue;
+    const hasNested = items.some((it) => isEtokenId(it));
+    if (hasNested) nestedCount++;
+    sumContent += items.length;
+    // depth = 1 + max nested depth.
+    const deep = (id, seen) => {
+      if (seen.has(id)) return 1;
+      seen.add(id);
+      const c = content[String(id)];
+      let d = 1;
+      if (Array.isArray(c)) {
+        for (const it of c) if (isEtokenId(it)) d = Math.max(d, 1 + deep(it, seen));
+      }
+      seen.delete(id);
+      return d;
+    };
+    maxDepth = Math.max(maxDepth, deep(Number(k), new Set()));
+  }
+  const flatTok = _Etokens?.tokens || {};
+  for (const k of Object.keys(flatTok)) if (Array.isArray(flatTok[k])) sumFlat += flatTok[k].length;
+  return {
+    nested_count: nestedCount,
+    max_etoken_depth: maxDepth,
+    tree_count: Object.keys(content).length,
+    total_content_items: sumContent,
+    total_flat_tokens: sumFlat,
+  };
+}
+
 /* --------------------------------------------------------------------------
  * Etokens.json STORE (the recallable-function table)
  * ------------------------------------------------------------------------ */
@@ -345,12 +761,13 @@ export function etokenize(ids, chunkSize = 4) {
 function defaultStore() {
   return {
     format: "pithagoras-etokens",
-    version: 2,
+    version: 3,           // v3 adds `content` (hierarchical/nested e-tokens)
     base: false,          // true once built from the pre-tokenized token DB
     etoken_base: ETOKEN_BASE(),
     etoken_count: ETOKEN_COUNT(),
-    tokens: {},           // { "<etokenId>": [origIds...] }  -- etoken(e) decompresses here
-    ternary: {},          // { "<etokenId>": [-1|0|+1,...] }  -- the e-token's TRUE-TERNARY value
+    tokens: {},           // { "<etokenId>": [origIds...] }  -- FLATTENED tuple, etoken(e) decompresses here
+    content: {},          // { "<etokenId>": [item...] }       -- NESTED structure (raw ids + e-token refs)
+    ternary: {},          // { "<etokenId>": [-1|0|+1,...] }    -- the e-token's TRUE-TERNARY value
     stats: {
       built_from: null,   // e.g. "data/project-tokens.json + data/augment/**"
       base_etokens: 0,
@@ -384,13 +801,6 @@ export function saveEtokens() {
   } catch (e) { /* best-effort; RAM copy still usable */ }
 }
 
-/** Recalled tuple for an etoken id: `etoken(e1)` -> [orig tokens...] | null. */
-export function etoken(eId) {
-  if (!_Etokens) return null;
-  const t = _Etokens.tokens[String(eId)];
-  return Array.isArray(t) ? t.slice() : null;
-}
-
 /** True if an etoken id is recorded in the store (recallable). */
 export function hasEtoken(eId) {
   return !!(etoken(eId));
@@ -403,7 +813,7 @@ export function hasEtoken(eId) {
  * saveEtokens() at the end — otherwise writing a growing file on every row of
  * a multi-million-token DB is far too slow). Returns { id, tuple, isNew }.
  */
-export function putEtoken({ id, tuple, live = true, audit = null, save = true }) {
+export function putEtoken({ id, tuple, live = true, audit = null, save = true, content = null }) {
   if (!_Etokens) initEtokens();
   const key = String(id);
   const eff = effectiveTuple(tuple);
@@ -412,6 +822,16 @@ export function putEtoken({ id, tuple, live = true, audit = null, save = true })
   // Keep the ORIGINAL tuple exactly (not the deduped one) so decompression is
   // lossless; the effective/dedup form is used only for the deterministic hash.
   _Etokens.tokens[key] = Array.isArray(tuple) ? tuple.map(Number) : eff;
+  // If a NESTED structure is provided (the e-token CONTAINS e-tokens + raw
+  // tokens), record it so etoken() can flatten it recursively. Otherwise a
+  // flat e-token has no `content` entry (its tuple IS the content).
+  if (content != null) {
+    const itemArr = (Array.isArray(content) ? content : []).map(Number).filter((v) => Number.isFinite(v));
+    if (itemArr.length) {
+      if (!_Etokens.content) _Etokens.content = {};
+      _Etokens.content[key] = itemArr;
+    }
+  }
   // Store the TRUE-TERNARY value of the etoken too, so the expert can store +
   // reliably use the e-token as a value in ternary space.
   setEtokenTernary(key, etokenTernary(tuple).vector);
@@ -436,7 +856,11 @@ export function putEtoken({ id, tuple, live = true, audit = null, save = true })
 export function initEtokens() {
   const loaded = loadEtokens();
   if (loaded) {
+    // Legacy v1/v2 stores have no `content` map — ensure it exists (empty) so
+    // the hierarchical path doesn't choke on old data.
+    if (loaded.content === undefined) loaded.content = {};
     _Etokens = loaded;
+    if (Number(loaded.version) < 3) loaded.version = 3;
     return _Etokens;
   }
   _Etokens = defaultStore();

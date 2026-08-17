@@ -34,7 +34,7 @@ import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, 
 // recallable etoken(e1) function stored in data/Etokens.json, the e-tokenizer
 // (touple), the base build from the pre-tokenized token DB, and the
 // disqualification / repeat-train-top-k helpers used in the scoring loop.
-import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, hasEtoken, putEtoken, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT, etokenTernaryOf, etokenTernaryBarrel, kvBarrel, kvCompressionAlgo, kvCompressionFlag, kvSpaceSaving } from "./etokens.mjs";
+import { initEtokens, getEtokens, buildBaseEtokens, etokenize, etoken, hasEtoken, putEtoken, saveEtokens, originalTokensOf, evalDisqualification, repeatTrainEtokenTopK, ETOKEN_BASE, ETOKEN_COUNT, etokenTernaryOf, etokenTernaryBarrel, kvBarrel, kvCompressionAlgo, kvCompressionFlag, kvSpaceSaving, isEtokenId, etokenDeep, etokenHierarchyStats, hierarchicalEtokenize, isArrayIndicatorId, putArrayIndicator, arrayIndicatorOf, arrayIndicatorTrump, isBaseEtokenId, isParentEtokenId } from "./etokens.mjs";
 
 /** Deep-merge `patch` over `base` (objects merged recursively; scalars replaced). */
 function deepMerge(base, patch) {
@@ -661,6 +661,68 @@ let liveEtokStats = {
   built_total: 0, created: 0, steered: 0, in_topk: 0, disqualified: 0, e_tokenized: 0,
 };
 
+/**
+ * Feed a teacher token-id run into the e-token system (base etokenize + the
+ * HIERARCHICAL packing pass). First we e-tokenize the run into base e-tokens as
+ * before (each chunk -> one e-token, putEtoken). Then, because the USER wants
+ * "an etoken that contains etokens + non etokens" for "MUCH more compression"
+ * on repeated sequences, we run the greedy recursive packer over the SAME run:
+ * it finds repeated contiguous sequences of e-token/raw items and fuses them
+ * into PARENT e-tokens whose content is [etoken, etoken, ..., raw] — recursively
+ * nested. The parents are stored with their nested `content` (and flattened
+ * `tokens`), so etoken() still returns the fully-decoded flat tuple (lossless)
+ * while the KV/context can hold just the compact parent ids ("a stronghold for
+ * memory rot" — durable anchors that survive context pruning).
+ *
+ * Returns { baseEids, superEids } for liveEtokStats.last_teacher_etokens.
+ */
+function feedEtokensRun(ids, { step, audit, etBlockTuning = null } = {}) {
+  const chunkSize = Number(loadConfig()?.etokens?.chunk_size ?? loadConfig()?.model?.chunk_size ?? 4);
+  const liveUpdate = loadConfig()?.etokens?.live_update !== false;
+  const baseEids = [];
+  if (!ids.length || !liveUpdate) return { baseEids, superEids: [] };
+  // Level 0 — base e-tokens (flat tuple).
+  for (const ec of etokenize(ids, chunkSize)) {
+    const r = putEtoken({ id: ec.id, tuple: ec.chunk, live: true, audit: `${audit}@step${step}`, save: true });
+    if (r.isNew) liveEtokStats.created++;
+    liveEtokStats.e_tokenized++;
+    baseEids.push(ec.id);
+  }
+  // HIERARCHICAL pass — fuse repeated subsequences into nested parent e-tokens.
+  // Bounded + only fires when repeats actually exist (minRepeat>=2), so it is
+  // cheap on unique token runs.
+  const hierCfg = loadConfig()?.etokens?.hierarchical || {};
+  const superEids = [];
+  if (hierCfg.enabled !== false && ids.length >= 4) {
+    const packed = hierarchicalEtokenize(ids, {
+      chunkSize,
+      maxDepth: Math.max(1, Number(hierCfg.max_depth ?? 3)),
+      minRepeat: Math.max(2, Number(hierCfg.min_repeat ?? 2)),
+      maxFuses: Math.max(1, Number(hierCfg.max_fuses ?? 96)),
+      sweepLen: Math.max(2, Number(hierCfg.sweep_len ?? 3)),
+    });
+    // The packer already stored the parents (superEtokenFromItems -> save:false).
+    // Count any that were genuinely new / surfaced for the UI.
+    for (const c of packed.created) {
+      superEids.push(Number(c.id));
+      liveEtokStats.e_tokenized++;
+    }
+    liveEtokStats.last_hier = {
+      parents: packed.created.length,
+      top_level_items: packed.items.length,
+      could_compress: packed.created.length > 0,
+      max_depth: etokenHierarchyStats().max_etoken_depth,
+    };
+    // PERSIST: the parents were built with save:false so the packer stays fast,
+    // but the memory-rot anchor REQUIRES the nested definitions to be durable
+    // ("stored once, globally, so an id always resolves"). Flush them here. The
+    // array-indicator promised arrays are similarly persisted on the same write.
+    saveEtokens();
+  }
+  return { baseEids, superEids };
+}
+
+
 // HISTORY rotation cap: appendFileSync to a multi-GB history.jsonl every step
 // blocks the Node event loop (the HTTP UI on :4199 stops responding), and the
 // file grows unboundedly (observed 32GB). Rotate + cap so it never outgrows
@@ -814,7 +876,7 @@ function startServer() {
     // /etokens GET: return the Etokens.json recall-table summary (and, with
     // ?full=1, the table itself). This exposes the recallable function table
     // (etoken(e1) -> original token tuple) to the UI for inspection.
-    if (url === "/etokens" && req.method === "GET") {
+    if (url.startsWith("/etokens") && !url.startsWith("/etokens/") && req.method === "GET") {
       try {
         const q = new URL(url, "http://x").searchParams;
         const full = q.get("full") === "1";
@@ -825,9 +887,16 @@ function startServer() {
           etoken_count: ETOKEN_COUNT(),
           stats: store?.stats || {},
           total: store ? (store.stats?.total ?? 0) : 0,
-          how: "etoken(e1) -> original token tuple, stored in data/Etokens.json; recallable + deterministic.",
+          how: "etoken(e1) -> original token tuple, stored in data/Etokens.json; recallable + deterministic. Hierarchical: an e-token's content may be a list of raw tokens AND nested e-token ids (recursively expanded by etoken()) — 'an etoken that contains etokens + non etokens' for MUCH more compression on repeated sequences (a stronghold for memory rot).",
+          hierarchy: etokenHierarchyStats(),
         };
-        if (full && store) base.tokens = store.tokens;
+        if (full && store) {
+          // FLAT view: etoken id -> flattened raw-token tuple (lossless).
+          base.tokens = store.tokens;
+          // NESTED view: etoken id -> its content items (raw ids + nested e-token
+          // refs), so the UI can show the recursive tree structure.
+          base.content = store.content || {};
+        }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(base));
       } catch (e) {
@@ -1234,14 +1303,11 @@ async function run() {
         if (!winRefTopKPerPos.length) winRefTopKPerPos = winRefToks.map(() => winRefTopK);
         // E-tokenize the file-derived teacher chunk (same tokens + top-k data
         // already recorded) — Etokens.json stays fed with NO teacher generation.
+        // Includes the HIERARCHICAL packing pass (repeated sequences -> nested
+        // parent e-tokens) per the user's "etoken that contains etokens + raw".
         if (winRefIds.length && loadConfig()?.etokens?.live_update !== false) {
-          const etChunks = etokenize(winRefIds.slice(0, baseLen), Number(loadConfig()?.etokens?.chunk_size ?? loadConfig()?.model?.chunk_size ?? 4));
-          for (const ec of etChunks) {
-            const r = putEtoken({ id: ec.id, tuple: ec.chunk, live: true, audit: `teacher-file@step${step}` });
-            if (r.isNew) liveEtokStats.created++;
-            liveEtokStats.e_tokenized++;
-          }
-          liveEtokStats.last_teacher_etokens = etChunks.map((ec) => ec.id);
+          const fed = feedEtokensRun(winRefIds.slice(0, baseLen), { step, audit: "teacher-file" });
+          liveEtokStats.last_teacher_etokens = fed.baseEids;
         }
         // Label the source: live-teacher (if it populated the window) else file.
         if (liveT && winRefIds.length) winRefTopKSource = "teacher";
@@ -1284,15 +1350,12 @@ async function run() {
           );
           // Feed the SAME window chunk through the e-tokenizer (Etokens.json
           // update) — the "token generated chunk of the teacher" the e-tokenizer
-          // consumes, driven by the same tokens + top-k above.
+          // consumes, driven by the same tokens + top-k above. Also runs the
+          // HIERARCHICAL packing pass so repeated window regions become nested
+          // parent e-tokens (the user's "etoken that contains etokens + raw").
           if (winRefIds.length && loadConfig()?.etokens?.live_update !== false) {
-            const etChunks = etokenize(winRefIds, Number(loadConfig()?.etokens?.chunk_size ?? loadConfig()?.model?.chunk_size ?? 4));
-            for (const ec of etChunks) {
-              const r = putEtoken({ id: ec.id, tuple: ec.chunk, live: true, audit: `teacher-window@step${step}` });
-              if (r.isNew) liveEtokStats.created++;
-              liveEtokStats.e_tokenized++;
-            }
-            liveEtokStats.last_teacher_etokens = etChunks.map((ec) => ec.id);
+            const fed = feedEtokensRun(winRefIds, { step, audit: "teacher-window" });
+            liveEtokStats.last_teacher_etokens = fed.baseEids;
           }
         }
       } else {
@@ -1319,17 +1382,12 @@ async function run() {
         //  that the model then uses and updates based on the token generated
         //  chunk of the teacher." The teacher's emitted token-id chunk is
         //  e-tokenized (coupled into unique new tokens, effective repeats
-        //  deduped) and its etokens MERGED back into Etokens.json live.
+        //  deduped) and its etokens MERGED back into Etokens.json live. A
+        //  HIERARCHICAL pass then fuses repeated sub-sequences into nested
+        //  parent e-tokens ("an etoken that contains etokens + non etokens").
         if (teacherAdvanceIds.length && loadConfig()?.etokens?.live_update !== false) {
-          const etChunks = etokenize(teacherAdvanceIds, Number(loadConfig()?.etokens?.chunk_size ?? loadConfig()?.model?.chunk_size ?? 4));
-          let createdStep = 0;
-          for (const ec of etChunks) {
-            const r = putEtoken({ id: ec.id, tuple: ec.chunk, live: true, audit: `teacher-chunk@step${step}` });
-            if (r.isNew) createdStep++;
-            liveEtokStats.e_tokenized++;
-          }
-          liveEtokStats.created += createdStep;
-          liveEtokStats.last_teacher_etokens = etChunks.map((ec) => ec.id);
+          const fed = feedEtokensRun(teacherAdvanceIds, { step, audit: "teacher-chunk" });
+          liveEtokStats.last_teacher_etokens = fed.baseEids;
         }
       } else {
         // Keep scoring the SAME window top-k (already captured above).
@@ -1938,8 +1996,37 @@ async function run() {
             const winsPerfect = !!(rw && rw.perfect);
             rw.delegated = delegated;
             rw.own_etokens = k; // how many it produced itself before delegating
+
+            // ---- ARRAY-INDICATOR TRUMP CARD (the "funny math" promise) ----
+            // "a token indicator to say that the following n tokens are stored
+            // as a representation of an array" — the SAVED otoken sequence is
+            // the array being promised. When MANY experts are TIED on the same
+            // reward (the common case here), the one that holds the CORRECT
+            // array-indicator (a promise kept within n tokens) is the winner:
+            // the "I'm not gonna die" card. We figure out which expert can
+            // represent the saved array compactly: those that produced the most
+            // of it THEMSELVES (highest own_etokens) keep the promise with the
+            // fewest hand-offs, so ties resolve in favor of the expert that
+            // needs the least delegation. We also record the array-indicator id
+            // of the saved array so the UI can show the promise.
+            const savedArray = savedChunk.map(Number).filter((v) => Number.isFinite(v));
+            const ind = savedArray.length ? putArrayIndicator(savedArray, { save: false }) : null;
+            const rwNum = Number(rw?.reward) || 0;
+            rw.array_indicator = ind ? Number(ind.id) : null;
+
             if (winsPerfect && (otokCfg.round_end_on_perfect !== false)) {
-              otokenPerfectWinner = { expert: r.name, seq: savedChunk.slice(), tiebreakNext: rw.tiebreakNext || null, step, delegated, own_etokens: k };
+              const isTie = (otokenPerfectWinner && otokenPerfectWinner.delegated === delegated && otokenPerfectWinner.own_etokens === k);
+              // Trump: on a tie, the expert that keeps the array promise with
+              // the MOST of its own coverage (fewest delegated) wins.
+              if (!otokenPerfectWinner || k >= otokenPerfectWinner.own_etokens) {
+                otokenPerfectWinner = {
+                  expert: r.name, seq: savedChunk.slice(), tiebreakNext: rw.tiebreakNext || null,
+                  step, delegated, own_etokens: k,
+                  trump: isTie,             // used as the tie-breaking promise card
+                  array_indicator: rw.array_indicator,
+                  promised_values: ind ? ind.values.slice(0, 20) : [],
+                };
+              }
             }
             return { expert: r.name, ...rw };
           }).filter(Boolean);
@@ -2232,7 +2319,13 @@ async function run() {
           live_added: getEtokens().stats?.live_added ?? 0,
           built_from: getEtokens().stats?.built_from ?? null,
           has_ternary: !!(getEtokens()?.ternary && Object.keys(getEtokens().ternary).length),
+          // HIERARCHICAL (nested e-token) + ARRAY-INDICATOR summary.
+          hierarchy: etokenHierarchyStats(),
         } : null,
+        // HIERARCHICAL packing status for the last teacher run (parents created,
+        // whether repeats existed, max nesting depth) — the user's "etoken that
+        // contains etokens + non etokens must be in the data savings".
+        last_hier: liveEtokStats.last_hier || null,
         last_teacher_etokens: liveEtokStats.last_teacher_etokens || [],
         // The current etoken's TRUE-TERNARY / 1-BIT KV value: the leading value
         // (1 = compressed, -1/0 = not) branches the compression algorithm for

@@ -667,15 +667,18 @@ function otokenPanelHtml(last) {
     const dl = p.delegated
       ? `<span style="color:#d29922;font-size:10px"> · delegated after ${p.own_etokens ?? 0} own etokens</span>`
       : "";
+    const ai = p.array_indicator
+      ? ` · <span style="color:#d29922;font-size:10px">🃏 array-promise</span>`
+      : "";
     return `<div class="token-row" style="font-size:11px">
       <span class="chip" style="background:${c}">${p.expert}</span>
       <span class="tok" style="color:${c}">+${Number(p.reward || 0).toFixed(1)}</span>
-      <span style="color:#8b949e;font-size:10px">gen ${p.generatedCount ?? 0}/${p.n ?? "?"} · topk-only ${p.topkOnlyCount ?? 0} · mult ×${Number(p.multiplier || 0).toFixed(2)}</span>${dl}${st}
+      <span style="color:#8b949e;font-size:10px">gen ${p.generatedCount ?? 0}/${p.n ?? "?"} · topk-only ${p.topkOnlyCount ?? 0} · mult ×${Number(p.multiplier || 0).toFixed(2)}</span>${dl}${ai}${st}
     </div>`;
   }).join("");
   return `<div style="margin:6px 0;padding:6px;border:1px solid #a371f7;border-radius:8px;font-size:11px;color:#d2a8ff">
     <b>otoken sequence (harsh)</b> · ${per.length} trained experts vs saved teacher chunk
-    ${winner ? `<div style="color:#3fb950;font-weight:700;margin-top:3px">FIRST PERFECT @ step ${winner.step}: ${winner.expert} — ROUND END, placed first${winner.delegated ? ` (delegated after ${winner.own_etokens ?? 0} own etokens ✓)` : ""}${winner.tiebreakNext ? " · next-otoken ✓ tiebreak" : ""}</div>` : ""}
+    ${winner ? `<div style="color:#3fb950;font-weight:700;margin-top:3px">FIRST PERFECT @ step ${winner.step}: ${winner.expert} — ROUND END, placed first${winner.delegated ? ` (delegated after ${winner.own_etokens ?? 0} own etokens ✓)` : ""}${winner.tiebreakNext ? " · next-otoken ✓ tiebreak" : ""}${winner.trump ? " · 🃏 ARRAY-INDICATOR trump (tie won, promise kept)" : ""}${winner.array_indicator ? ` · array[${(winner.promised_values||[]).join(",")}]` : ""}</div>` : ""}
     ${rows || '<div style="color:#8b949e">no per-expert otoken data yet</div>'}
   </div>`;
 }
@@ -854,6 +857,7 @@ function renderEtokens(d) {
   const ct = es.current_ternary;
   const sig = sigOf(es.how, es.train_scope, es.base, es.count, es.live_stats,
     store.total, store.base_etokens, store.live_added,
+    es.last_hier, store.hierarchy,
     ct && [ct.etoken, ct.tuple, ct.kv_flag, ct.kv_savings, ct.ternary]);
   memoRender("etokens", sig, () => {
     const sysEl = document.getElementById("etokSystem");
@@ -864,6 +868,15 @@ function renderEtokens(d) {
       `<div style="font-size:11px">${String(es.how || "")}</div>` +
       `<div style="margin-top:4px">reserved range <code>[${es.base ?? "?"}, ${es.base ?? "?"}+${es.count ?? "?"})</code> · train scope <b style="color:#3fb950">${String(es.train_scope ?? "new_3b_only")}</b></div>` +
       `<div style="margin-top:4px;font-size:11px">store: <b>${store.total ?? 0}</b> etokens (base <b>${store.base_etokens ?? 0}</b> · live-added <b>${store.live_added ?? 0}</b>)</div>` +
+      (()=>{
+        const h = store.hierarchy || {};
+        const lh = es.last_hier;
+        const hi = (h.nested_count ? `nested e-tokens <b style="color:#a371f7">${h.nested_count}</b>` : "no nesting yet") +
+                   (h.max_etoken_depth ? ` · max depth <b style="color:#a371f7">${h.max_etoken_depth}</b>` : "") +
+                   (h.total_content_items ? ` · ${h.total_content_items} content items↔${h.total_flat_tokens} flat tokens` : "");
+        const pack = lh ? ` · last pack: <b>${lh.parents ?? 0} parents</b>${lh.could_compress ? " (✓ repeated seq fused)" : " (no repeats)"}` : "";
+        return `<div style="margin-top:3px;font-size:10px;color:#d2a8ff">🧬 HIERARCHICAL: ${hi}${pack}</div>`;
+      })() +
       `<div style="margin-top:4px;font-size:11px;color:#8b949e">live this run: created <b style="color:#3fb950">${stats.created ?? 0}</b> · e-tokenized <b>${stats.e_tokenized ?? 0}</b> · in top-k <b style="color:#3fb950">${stats.in_topk ?? 0}</b> · disqualified <b style="color:#f85149">${stats.disqualified ?? 0}</b></div>`;
     if (!ct) { detEl.innerHTML = '<div style="color:#8b949e">no current teacher e-token yet</div>'; return; }
     const sav = ct.kv_savings || {};
