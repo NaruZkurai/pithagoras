@@ -35,16 +35,30 @@ const CONFIG_PATH = path.join(REPO, "config", "moe-config.json");
 const SAVE_DIR = path.join(REPO, "config", "moe", "model", "save_dir");
 
 let _cfg = null;
+let _cfgStat = null; // { mtimeMs, size } of the last config we parsed
 export function loadConfig() {
-  // Always read from disk so live UI edits to config/moe-config.json apply
-  // immediately (no stale cache across steps).
+  // Cache the parsed config by FILE mtime+size so we DON'T re-read + re-parse the
+  // whole 85KB config (41KB shader prompt + ~100 expert configs) on EVERY step —
+  // that was a major lag source. Live UI edits / JSON-editor writes change the
+  // file's mtime, so they still apply immediately; we only re-parse on actual
+  // change. This preserves the live-edit contract while keeping the hot loop cheap.
   try {
-    _cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    const st = fs.statSync(CONFIG_PATH);
+    if (_cfgStat && st.mtimeMs === _cfgStat.mtimeMs && st.size === _cfgStat.size) {
+      return _cfg; // unchanged since last parse -> use the cached copy
+    }
+    const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    _cfg = parsed;
+    _cfgStat = { mtimeMs: st.mtimeMs, size: st.size };
   } catch { /* keep last on transient read error */ }
   return _cfg;
 }
 
-export function saveConfig(c) { _cfg = c; fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2)); }
+export function saveConfig(c) {
+  _cfg = c;
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2));
+  try { const st = fs.statSync(CONFIG_PATH); _cfgStat = { mtimeMs: st.mtimeMs, size: st.size }; } catch {}
+}
 
 /**
  * Resolve where to write MoE checkpoints. On Linux the user allows INFINITE
