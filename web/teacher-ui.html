@@ -858,6 +858,7 @@ function renderEtokens(d) {
   const sig = sigOf(es.how, es.train_scope, es.base, es.count, es.live_stats,
     store.total, store.base_etokens, store.live_added,
     es.last_hier, store.hierarchy,
+    stats.last_raw_tokens, stats.last_etoken_tokens,
     ct && [ct.etoken, ct.tuple, ct.kv_flag, ct.kv_savings, ct.ternary]);
   memoRender("etokens", sig, () => {
     const sysEl = document.getElementById("etokSystem");
@@ -877,7 +878,10 @@ function renderEtokens(d) {
         const pack = lh ? ` · last pack: <b>${lh.parents ?? 0} parents</b>${lh.could_compress ? " (✓ repeated seq fused)" : " (no repeats)"}` : "";
         return `<div style="margin-top:3px;font-size:10px;color:#d2a8ff">🧬 HIERARCHICAL: ${hi}${pack}</div>`;
       })() +
-      `<div style="margin-top:4px;font-size:11px;color:#8b949e">live this run: created <b style="color:#3fb950">${stats.created ?? 0}</b> · e-tokenized <b>${stats.e_tokenized ?? 0}</b> · in top-k <b style="color:#3fb950">${stats.in_topk ?? 0}</b> · disqualified <b style="color:#f85149">${stats.disqualified ?? 0}</b></div>`;
+      `<div style="margin-top:4px;font-size:11px;color:#8b949e">live this run: created <b style="color:#3fb950">${stats.created ?? 0}</b> · e-tokenized <b>${stats.e_tokenized ?? 0}</b> · in top-k <b style="color:#3fb950">${stats.in_topk ?? 0}</b> · disqualified <b style="color:#f85149">${stats.disqualified ?? 0}</b></div>` +
+      `<div style="margin-top:2px;font-size:11px;color:#8b949e">total tokens to compare this phase: <b style="color:#e6edf3">${stats.last_raw_tokens ?? 0}</b> raw → <b style="color:#a371f7">${stats.last_etoken_tokens ?? 0}</b> etokens` +
+      (stats.last_raw_tokens > 1 ? ` <span style="color:#3fb950">(×${((stats.last_raw_tokens/Math.max(1,stats.last_etoken_tokens))).toFixed(1)} compression)</span>` : "") +
+      `</div>`;
     if (!ct) { detEl.innerHTML = '<div style="color:#8b949e">no current teacher e-token yet</div>'; return; }
     const sav = ct.kv_savings || {};
     detEl.innerHTML =

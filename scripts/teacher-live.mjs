@@ -659,6 +659,7 @@ let latest = null; // latest current.json content to serve to the UI
 // payload so the UI can show the etoken system's live behaviour).
 let liveEtokStats = {
   built_total: 0, created: 0, steered: 0, in_topk: 0, disqualified: 0, e_tokenized: 0,
+  last_raw_tokens: 0, last_etoken_tokens: 0, // total token length to compare this phase
 };
 
 /**
@@ -680,7 +681,7 @@ function feedEtokensRun(ids, { step, audit, etBlockTuning = null } = {}) {
   const chunkSize = Number(loadConfig()?.etokens?.chunk_size ?? loadConfig()?.model?.chunk_size ?? 4);
   const liveUpdate = loadConfig()?.etokens?.live_update !== false;
   const baseEids = [];
-  if (!ids.length || !liveUpdate) return { baseEids, superEids: [] };
+  if (!ids.length || !liveUpdate) { liveEtokStats.last_raw_tokens = 0; liveEtokStats.last_etoken_tokens = 0; return { baseEids, superEids: [] }; }
   // Level 0 — base e-tokens (flat tuple).
   for (const ec of etokenize(ids, chunkSize)) {
     const r = putEtoken({ id: ec.id, tuple: ec.chunk, live: true, audit: `${audit}@step${step}`, save: true });
@@ -688,6 +689,12 @@ function feedEtokensRun(ids, { step, audit, etBlockTuning = null } = {}) {
     liveEtokStats.e_tokenized++;
     baseEids.push(ec.id);
   }
+  // TOTAL-LENGTH-OF-TOKENS TO COMPARE AT THIS PHASE (user): show how many RAW
+  // tokens this phase's teacher output is vs how many ETOKENS it compresses to
+  // (the otoken seq length evaluated), so you can see the compression being
+  // applied to the "total length of tokens to compare".
+  liveEtokStats.last_raw_tokens = (ids || []).length;          // total raw token length this phase
+  liveEtokStats.last_etoken_tokens = baseEids.length;          // how many otokens it becomes
   // HIERARCHICAL pass — fuse repeated subsequences into nested parent e-tokens.
   // Bounded + only fires when repeats actually exist (minRepeat>=2), so it is
   // cheap on unique token runs.
