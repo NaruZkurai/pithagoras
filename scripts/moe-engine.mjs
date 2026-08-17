@@ -282,39 +282,59 @@ export function updateLosingExperts() {
 function moeScoresSize() { return _moeState ? Object.keys(_moeState.expertValues).length : 0; }
 
 /**
- * WINNER-SIMILARITY / SOFT-ATTRACTION (user question): when a losing expert is
- * refreshed or decays, do we just harshly re-seed/fresh-random it (which can
- * decay a previously-best expert that just got surpassed too much), or do we
- * pull it toward the top WINNING experts so it stays "similar" to the upper
- * nodes? This returns the blend target for a given expert:
+ * WINNER-SIMILARITY / SOFT-ATTRACTION (user question + refinement): when a
+ * losing expert is refreshed or decays, do we harshly re-seed/fresh-random it
+ * (decaying a previously-best expert that just got surpassed too much), or do
+ * we anchor it to the WINNING / UNCULLED experts so it stays similar to the
+ * upper nodes?
  *
- *   new = winner_mean*sim + old_value*(1-sim)    (sim in [0,1])
+ * USER REFINEMENT: "they should be based on the winning / unculled experts so
+ * something CAN overtake the winner but ONLY be based on ONE kept expert."
+ * So we do NOT blend toward the MEAN of several winners (that would produce a
+ * generic middle value that can't overtake). Instead each losing expert is
+ * anchored to a SINGLE kept (top_n_survive / unculled) expert — specifically
+ * the kept expert it is MOST SIMILAR TO (nearest value). Anchoring a challenger
+ * to one winner makes it a near-twin of that winner, so it can compete with and
+ * OVERTAKE it, while still inheriting that winner's shape.
+ *
+ *   new = keptVal*sim + base*(1-sim)    (sim in [0,1])  toward ONE kept expert
  *
  * sim = config expert_policy.winner_similarity:
- *   - 0 (default-ish, current behavior): keep the existing re-seed/random decay.
- *   - >0: soft-attract toward the top winners' mean value (similarity to upper
- *          nodes), so a surpassed best expert decays GENTLY toward the pack
- *          instead of collapsing. Higher = more like the winners.
+ *   - 0: keep the old re-seed/random decay (no attraction).
+ *   - >0: pull toward the nearest SINGLE kept/unculled expert.
  */
-function winnerMean(topN = 3) {
-  if (!_moeState) return null;
-  const names = Object.keys(_moeState.expertValues).filter(n => n !== "TEACHER");
-  if (!names.length) return null;
-  const ranked = names.slice().sort((a, b) => (_moeState.scores[b] || 0) - (_moeState.scores[a] || 0));
-  const top = ranked.slice(0, Math.max(1, topN));
-  const mean = top.reduce((a, n) => a + (Number(_moeState.expertValues[n]) || 0.5), 0) / top.length;
-  return { top, mean };
-}
 function winnerSimilarity() {
   return Number(loadConfig()?.expert_policy?.winner_similarity ?? 0);
 }
-/** Blend `base` toward the winners' mean by `sim` in [0,1]. */
+/** Which experts are KEPT / UNCULLED (top_n_survive by score, ex TEACHER). */
+function keptExperts() {
+  if (!_moeState) return [];
+  const policy = loadConfig()?.expert_policy || {};
+  const topSurvive = Math.max(1, Math.min(moeScoresSize(), Number(policy.top_n_survive ?? 3)));
+  const names = Object.keys(_moeState.expertValues).filter((n) => n !== "TEACHER");
+  const ranked = names.slice().sort((a, b) => (_moeState.scores[b] || 0) - (_moeState.scores[a] || 0));
+  return ranked.slice(0, topSurvive);
+}
+/** Nearest KEPT expert to `base` (by value). */
+function nearestKept(base) {
+  const kept = keptExperts();
+  if (!kept.length) return null;
+  let best = null, bestD = Infinity;
+  for (const k of kept) {
+    const kv = Number(_moeState.expertValues[k]) || 0.5;
+    const d = Math.abs(kv - base);
+    if (d < bestD) { bestD = d; best = { name: k, value: kv }; }
+  }
+  return best;
+}
+/** Blend `base` toward the SINGLE nearest kept/unculled expert by `sim`. */
 function blendTowardWinners(base, sim, noiseSeed) {
   if (!(sim > 0)) return base;
-  const w = winnerMean(3);
-  if (!w) return base;
+  if (!_moeState) return base;
+  const k = nearestKept(base);
+  if (!k) return base;
   const jitter = (noise01(noiseSeed) - 0.5) * 0.1; // tiny wobble so they don't become identical clones
-  return Math.min(0.9999, Math.max(0.0001, w.mean * sim + base * (1 - sim) + jitter));
+  return Math.min(0.9999, Math.max(0.0001, k.value * sim + base * (1 - sim) + jitter));
 }
 
 /**
