@@ -710,7 +710,13 @@ function renderExpertScores(d) {
       // otoken chunk. Only rendered when enabled.
       ((last?.moe?.otoken_sequence?.enabled)
         ? otokenPanelHtml(last) : "") +
-      esScores.map(e => {
+      // Show ONLY the ACTIVE experts (the ones being evaluated/trained this
+      // step) with their PER-STEP temp score — inactive/frozen base experts are
+      // excluded so the list reflects what's actually being scored right now.
+      esScores
+        .filter(e => e.active)
+        .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
+        .map(e => {
       const c = expColor(e.expert);
       const pct = Math.max(2, Math.min(100, (e.score / (d.total_score || 1)) * 100));
       // Tag a perfect otoken-sequence winner.
