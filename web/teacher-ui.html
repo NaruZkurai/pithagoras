@@ -160,7 +160,7 @@
         <div class="stat"><div class="label">Student · emit top-p</div><input id="sTPs" type="number" min="0.5" max="1" step="0.01" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Student · temperature</div><input id="sTemps" type="number" min="0" max="2" step="0.05" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Noise → layer per output token</div><input id="sNz" type="number" min="0" max="1" step="0.01" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
-        <div class="stat"><div class="label">Tokens in chunk to train with (student step)</div><input id="sStep" type="number" min="1" max="64" step="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+        <div class="stat"><div class="label">Tokens in chunk to train with (student step)</div><input id="sStepIn" type="number" min="1" max="64" step="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Pts per student CHOSEN token in teacher's emitted top-k</div><input id="sEm" type="number" min="0" max="20" step="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
       </div>
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
@@ -944,7 +944,7 @@ function renderSampling(d) {
   set("sTemps", Number(e.student?.temperature ?? 0.7).toFixed(2));
   set("sNz", Number(d.noise_to_layer ?? 0.05).toFixed(2));
   set("sEm", d.per_teacher_emit_match ?? 2);
-  set("sStep", d.student_step_tokens ?? 5);
+  set("sStepIn", d.student_step_tokens ?? 5);
   set("nPhaseTokens", d.next_phase?.max_tokens ?? 2000);
   set("nPhaseTopK", d.view_top_k ?? 100);
   set("nPhaseDispTopK", d.topk_display_per_pos ?? 5);
@@ -977,7 +977,7 @@ function bindSampling() {
           student: { top_k: Number(document.getElementById("sTKs").value), top_p: Number(document.getElementById("sTPs").value), temperature: Number(document.getElementById("sTemps").value) },
         },
         noise_to_layer: Number(document.getElementById("sNz").value),
-        student_step: Number(document.getElementById("sStep").value || 5),
+        student_step: Number(document.getElementById("sStepIn").value || 5),
       },
       scoring: { base: { per_teacher_emit_match: Number(document.getElementById("sEm").value || 2) } },
     }, "sampling");

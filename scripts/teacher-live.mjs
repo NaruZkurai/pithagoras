@@ -263,14 +263,16 @@ const compareN = () => {
   // STUDENT_STEP chunk (like the teacher chunk) gives the student a diverse
   // sequence whose top-k CAN overlap the teacher's coherent top-k. Same for the
   // teacher (fixes the " the" degenerate window anchor).
-  return Number(process.env.COMPARE_N || STUDENT_STEP || SAMPLING().emit?.student?.top_k || 5);
+  return Number(process.env.COMPARE_N || studentStep() || SAMPLING().emit?.student?.top_k || 5);
 }; // tokens to generate per head
 const noiseToLayer = () => Number(SAMPLING().noise_to_layer ?? 0.05);
 // "Number of tokens in chunk to train with" = STUDENT_STEP (the per-head chunk
 // length the student generates, and the teacher chunk the experts score against).
 // Config-driven via sampling.student_step so the UI "Apply sampling" control can
-// set it live; env STUDENT_STEP overrides.
-const STUDENT_STEP = Number(process.env.STUDENT_STEP || SAMPLING().student_step || 5);
+// set it LIVE (re-read each call); env STUDENT_STEP overrides. Previously a
+// `const` captured once at startup, so applying student_step never took effect
+// until a restart — now a live function that reflects config changes immediately.
+const studentStep = () => Number(process.env.STUDENT_STEP || SAMPLING().student_step || 5);
 // The STUDENT model runs with a small context (-c 16384). It also has a SMALLER
 // vocab than the teacher: the teacher = 27B MoE variant (n_vocab 248320),
 // the running 4B dense student has its native vocab (default 151669). Teacher
@@ -281,7 +283,7 @@ const STUDENT_STEP = Number(process.env.STUDENT_STEP || SAMPLING().student_step 
 // never 400s. (Proper fix later: run the 4B with the teacher's embedded vocab.)
 const STUDENT_CTX = Number(process.env.STUDENT_CTX || 16384);
 const STUDENT_CTX_MARGIN = Number(process.env.STUDENT_CTX_MARGIN || 512);
-const studentCtxCap = () => Math.max(64, STUDENT_CTX - STUDENT_CTX_MARGIN - (STUDENT_STEP || 5));
+const studentCtxCap = () => Math.max(64, STUDENT_CTX - STUDENT_CTX_MARGIN - (studentStep() || 5));
 // The STUDENT's own vocab size — a property of the RUNNING 4B dense student, NOT
 // model.n_vocab. model.n_vocab reflects the teacher/30B target vocab (248320);
 // the 4B student actually serves 151669 tokens, so teacher-only ids >151668
@@ -1085,7 +1087,7 @@ function startServer() {
 async function run() {
   fs.mkdirSync(LIVE, { recursive: true });
   console.log("=== TEACHER-LIVE: 27B teacher -> 4B student, continuous scoring ===");
-  console.log(`  teacher ${TEACHER_URL} | student ${STUDENT_URL} | view-top-${viewTopK()} emit teacher tK${emitFor("teacher").top_k}/tP${emitFor("teacher").top_p} student tK${emitFor("student").top_k}/tP${emitFor("student").top_p} | student step ${STUDENT_STEP}`);
+  console.log(`  teacher ${TEACHER_URL} | student ${STUDENT_URL} | view-top-${viewTopK()} emit teacher tK${emitFor("teacher").top_k}/tP${emitFor("teacher").top_p} student tK${emitFor("student").top_k}/tP${emitFor("student").top_p} | student step ${studentStep()}`);
   startServer();
 
   // ---- E-TOKEN SYSTEM INIT (corrected "new token" feature) ----
@@ -1626,7 +1628,7 @@ async function run() {
       if (cfgRew.compression?.enabled !== false) {
         const textLen = student.reduce((a, s) => a + String(s.chosen.token ?? "").length, 0);
         compressRw = compressionReward({
-          emittedTokens: STUDENT_STEP,
+          emittedTokens: studentStep(),
           perTokenEmitted: (studentIdNums.length ? studentIdNums : studentIds).map(String),
           textLengthGenerated: textLen,
           newTokenSet,
@@ -2352,7 +2354,7 @@ async function run() {
       base_model: loadConfig()?.model?.base_gguf ?? STUDENT_URL,
       expert_policy: loadConfig()?.expert_policy || {},
       per_teacher_emit_match: Number(loadConfig()?.scoring?.base?.per_teacher_emit_match ?? 2),
-      student_step_tokens: STUDENT_STEP,
+      student_step_tokens: studentStep(),
       step, base_score: stepRec.step_points ?? 0, bonus_score: bonusTotal,
       // total = this token's points BEFORE the expert was updated; resets each token.
       total_score: stepRec.step_points ?? 0,
@@ -2410,7 +2412,7 @@ async function run() {
       new_token_system: {
         how: "Each step, the student's STUDENT_STEP output tokens are COMPRESSED into ONE new token whose VALUE = the sum of their token ids, folded into the valid vocab range (sum % n_vocab) so it is a MEANINGFUL, in-vocab token the model can actually emit. A fixed sentinel (COMPRESS_AS_TOKEN) marks the compression; when that new token appears in the model's top-k of the space AND a match is in the top-100 of the emitted tokens, it counts as a 500x value generation.",
         sentinel: COMPRESS_AS_TOKEN,
-        per_step: STUDENT_STEP,
+        per_step: studentStep(),
         create_rule: "new_token = sum(input tokens)",
         code_baseline: CODE_BASELINE ? {
           loaded: true,
