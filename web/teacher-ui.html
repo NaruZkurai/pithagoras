@@ -331,48 +331,37 @@ function renderCharts(d) {
   const recent = d.recent || [];
   const steps = recent.map(r => r.step);
   const last = recent[recent.length - 1];
-  // ALL experts — exclude only the TEACHER reference from the per-expert chart
-  // (it is not a trained expert; it renders separately as the 1.0 ceiling).
-  const experts = last?.moe?.cumulative_scores
-    ? Object.keys(last.moe.cumulative_scores)
-        .filter((k) => k !== "TEACHER")
-        .sort((a, b) => (parseInt(a.replace(/\D/g,"")||0) - parseInt(b.replace(/\D/g,"")||0)))
-    : [];
-  // Which experts are actually BEING TRAINED this step (non-zero training
-  // delta). The FROZEN / not-trained experts (base E1..E5 + any expert whose
-  // weight did not move) are still SHOWN, but as thin gray dashed lines so you
-  // can see BOTH the ones getting trained (colored solid) and the ones we aren't
-  // (gray dashed) instead of dropping the untrained ones off the chart.
+  // ONLY the experts being TRAINED / modified — since we are training just a
+  // small chunk of the model, the frozen base experts (E1..E5) and non-active
+  // specialists are EXCLUDED from the chart. We keep only experts that actually
+  // moved this step (non-zero training delta), plus the TEACHER reference is
+  // skipped here (it renders separately as the 1.0 ceiling).
   const deltas = (last?.moe?.training_per_expert || []).reduce((acc, e) => {
     acc[e.expert] = Math.abs(Number(e.delta) || 0);
     return acc;
   }, {});
   const trained = new Set(Object.keys(deltas).filter(k => deltas[k] > 0));
+  const experts = last?.moe?.cumulative_scores
+    ? Object.keys(last.moe.cumulative_scores)
+        .filter((k) => k !== "TEACHER" && trained.has(k))
+        .sort((a, b) => (parseInt(a.replace(/\D/g,"")||0) - parseInt(b.replace(/\D/g,"")||0)))
+    : [];
 
-  // ---- SCORE CHART: one line PER EXPERT (no more "Total" line) ----
+  // ---- SCORE CHART: one line PER TRAINED EXPERT (no more "Total" line) ----
   scoreChart.data.labels = steps;
   const kept = new Set(experts);
   // Create datasets for experts we haven't seen yet.
   for (const name of experts) {
     if (!expertChartDatasets[name]) {
       const color = expColor(name);
-      expertChartDatasets[name] = { label: name, data: [], borderColor: color, backgroundColor: color + "22", tension: .3, pointRadius: 0, borderWidth: 1.5 };
+      expertChartDatasets[name] = { label: name, data: [], borderColor: color, backgroundColor: color + "22", tension: .3, pointRadius: 0, borderWidth: 2 };
     }
   }
   scoreChart.data.datasets = Object.values(expertChartDatasets).filter(ds => kept.has(ds.label));
   scoreChart.data.datasets.forEach(ds => {
     ds.data = recent.map(r => (r.moe?.cumulative_scores || {})[ds.label] ?? null);
-    // Style by training state: being trained → colored solid; not trained → thin
-    // gray dashed (still VISIBLE so we show the ones we aren't training too).
-    if (trained.has(ds.label)) {
-      ds.borderColor = expColor(ds.label);
-      ds.borderDash = [];
-      ds.borderWidth = 2;
-    } else {
-      ds.borderColor = "#6e7681";
-      ds.borderDash = [3, 3];
-      ds.borderWidth = 1;
-    }
+    ds.borderColor = expColor(ds.label);
+    ds.borderDash = [];
   });
   // TEACHER reference: the teacher always overlaps its OWN top-k 100% (it is
   // the perfect reference), so this is a constant 1.0 ceiling line. HIDDEN when
