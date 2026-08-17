@@ -688,7 +688,7 @@ function renderExpertScores(d) {
   const recent = d.recent || [];
   const last = recent[recent.length - 1];  const esScores = (last?.moe?.expert_scores) || [];
   const sb = last?.score_breakdown || {};
-  const sig = sigOf((esScores||[]).map(e=>[e.expert,e.score,e.active]), d.total_score, last?.step, sb);
+  const sig = sigOf((esScores||[]).map(e=>[e.expert,e.score,e.active,e.rounds_survived]), d.total_score, last?.step, sb);
   memoRender("expertScores", sig, () => {
     if (!esScores.length) { el.innerHTML = '<div style="color:#8b949e">waiting for expert scores…</div>'; return; }
     // TEACHER is pinned at the TOP of the expert column with its TRUE self-
@@ -732,11 +732,18 @@ function renderExpertScores(d) {
       // Tag a perfect otoken-sequence winner.
       const otokLine = (e.otoken_perfect || (last?.moe?.otoken_sequence?.perfect_winner?.expert === e.expert))
         ? `<span style="color:#3fb950;font-size:10px"> · PERFECT ✓</span>` : "";
+      // Rounds survived: how many round-resets this expert was KEPT through.
+      // Reset to 0 the moment the expert is updated/re-seeded ('reset on updated
+      // moe').
+      const surv = Number(e.rounds_survived ?? 0);
+      const survLine = surv > 0
+        ? `<span style="color:#3fb950;font-size:10px" title="rounds this expert survived (kept through resets)">🛡 ${surv}</span>`
+        : `<span style="color:#f85149;font-size:10px" title="was just updated/re-seeded — survived-rounds reset">↻0</span>`;
       return `<div class="token-row">
       <span class="chip" style="background:${c}">${e.expert}${e.active ? " ★" : ""}</span>
       <div class="token-bar" style="background:${c};width:${pct * 1.6}px"></div>
       <div class="token-val" style="color:${c};width:auto">+${e.score}</div>
-      <div style="font-size:10px;color:#8b949e;flex:1">${e.mutation || e.role || ""}${otokLine}</div>
+      <div style="font-size:10px;color:#8b949e;flex:1">${e.mutation || e.role || ""}${otokLine} · ${survLine}</div>
     </div>`;
     }).join("") +
   `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #30363d;display:flex;gap:8px;align-items:center">

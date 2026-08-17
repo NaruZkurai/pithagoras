@@ -117,6 +117,9 @@ export function initMoeState(expertNames = ["E1","E2","E3","E4","E5"], layerCoun
     output: {},     // per-expert output signal history (persisted)
     matchScore: {}, // per-expert CUMULATIVE teacher top-k match count (own score)
     scores: {},     // per-expert CUMULATIVE points across this round (all experts, not just top-2)
+    roundsSurvived: {}, // per-expert ROUNDS SURVIVED (how many round-resets this expert
+                        // has been KEPT through). RESET to 0 when the expert is ever
+                        // updated/re-seeded (loses and gets refreshed).
     noise: 0,       // running noise accumulator
     step: 0,
     round: 1,
@@ -171,6 +174,7 @@ export function maybeResetMoeState() {
     expertValues: { ..._moeState.expertValues },
     layerSizes: _moeState.layerSizes.slice(),
     scores: { ..._moeState.scores },
+    roundsSurvived: { ...(_moeState.roundsSurvived || {}) },
     topP: { ..._moeState.topP },
     kl: { ..._moeState.kl },
     output: { ..._moeState.output },
@@ -212,6 +216,10 @@ export function maybeResetMoeState() {
         : 0.5 + 0.4 * noise01((+new Date()) + nm.length * 3);
       seeded = blendTowardWinners(seeded, winnerSimilarity(), (+new Date()) + nm.length * 31);
       setExpertValue(nm, seeded);
+      // ROUNDS SURVIVED RESET: the expert was UPDATED (re-seeded) — it no longer
+      // survives; reset its survived-rounds counter to 0.
+      if (!_moeState.roundsSurvived) _moeState.roundsSurvived = {};
+      _moeState.roundsSurvived[nm] = 0;
       refreshed.push(nm);
       continue;
     }
@@ -220,6 +228,15 @@ export function maybeResetMoeState() {
       _moeState.expertValues[nm] = setExpertValue(nm,
         (_moeState.expertValues[nm] || 0.5) + (noise01((+new Date()) + nm.length * 7) - 0.5) * 0.04);
     }
+  }
+  // ROUNDS SURVIVED INCREMENT: every expert that KEPT its value (survived the
+  // reset — the top_n_survive set and any not-refreshed) has survived ONE more
+  // round. Updated/refreshed experts were reset to 0 above.
+  if (!_moeState.roundsSurvived) _moeState.roundsSurvived = {};
+  for (const nm of names) {
+    if ((_moeState.roundsSurvived[nm] ?? 0) === 0 && refreshed.includes(nm)) continue; // was just refreshed
+    _moeState.roundsSurvived[nm] = (_moeState.roundsSurvived[nm] ?? 0);
+    if (!refreshSet.has(nm)) _moeState.roundsSurvived[nm] = (_moeState.roundsSurvived[nm] ?? 0) + 1;
   }
 
   // Clear per-token accumulators, keep per-expert keys. The TEACHER baseline
@@ -273,6 +290,10 @@ export function updateLosingExperts() {
     seeded = blendTowardWinners(seeded, winnerSimilarity(), (+new Date()) + nm.length * 37);
     setExpertValue(nm, seeded);
     _moeState.scores[nm] = 0; // reset the losing expert's score
+    // ROUNDS SURVIVED RESET: this expert was UPDATED (re-seeded) -> it no longer
+    // survives; reset its survived-rounds counter to 0.
+    if (!_moeState.roundsSurvived) _moeState.roundsSurvived = {};
+    _moeState.roundsSurvived[nm] = 0;
   }
   console.log(`  >> update losing experts (every ${every} steps, auto=${auto}, count ${losingCount}): [${losing.join(",") || "none"}]`);
   return losing;
@@ -585,6 +606,8 @@ export function routeExperts(topKTokens, layerNoise) {
   if (!_moeState) initMoeState(names, layerCount);
   // Keep the persistent state in sync if experts were added.
   for (const nm of names) if (_moeState.expertValues[nm] === undefined) _moeState.expertValues[nm] = 0.5 + 0.4 * noise01(seed + nm.length);
+  if (!_moeState.roundsSurvived) _moeState.roundsSurvived = {};
+  for (const nm of names) if (_moeState.roundsSurvived[nm] === undefined) _moeState.roundsSurvived[nm] = 0;
   while (_moeState.layerSizes.length < layerCount) _moeState.layerSizes.push(Math.round(100 + noise01(seed + _moeState.layerSizes.length + 3) * 400));
   _moeState.layerSizes = _moeState.layerSizes.slice(0, layerCount);
 
@@ -663,6 +686,7 @@ export function routeExperts(topKTokens, layerNoise) {
       output: _moeState.output,
       matchScore: { ..._moeState.matchScore },
       scores: { ..._moeState.scores },
+      roundsSurvived: { ...(_moeState.roundsSurvived || {}) },
       lastRound: _moeState.lastRound,
       expertValues: { ..._moeState.expertValues },
       layerSizes: _moeState.layerSizes.slice(),

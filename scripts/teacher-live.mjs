@@ -1891,11 +1891,12 @@ async function run() {
             recon_overlap: pi.reconOverlap || 0,
             decomp_hit: pi.decompHit || 0,
             emitted_new_token: !!pi.newTok,
+            rounds_survived: route.state?.roundsSurvived?.[r.name] ?? 0, // how many round-resets it was KEPT through (0 = was updated/re-seeded)
           };
         });
         expertScores.push({
           expert: "TEACHER", active: true, role: "teacher", mutation: "reference (baseline)",
-          weight: 1, match: 0, score: teacherStepPts,
+          weight: 1, match: 0, score: teacherStepPts, rounds_survived: null,
         });
         // Accumulate each expert's score into the persistent round state so all
         // experts build cumulative points (visible across resets via lastRound).
