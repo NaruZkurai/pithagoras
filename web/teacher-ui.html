@@ -359,7 +359,14 @@ function renderCharts(d) {
   }
   scoreChart.data.datasets = Object.values(expertChartDatasets).filter(ds => kept.has(ds.label));
   scoreChart.data.datasets.forEach(ds => {
-    ds.data = recent.map(r => (r.moe?.cumulative_scores || {})[ds.label] ?? null);
+    // Plot each expert's PER-STEP score (moe.expert_scores[].score), NOT the
+    // cumulative total. Per-step scores are the actual points the expert earned
+    // that step — they don't get reset by round restarts and aren't distorted by
+    // the runaway TEACHER accumulator, so the graph reflects real scoring.
+    ds.data = recent.map(r => {
+      const es = (r.moe?.expert_scores || []).find(e => e.expert === ds.label);
+      return es ? Number(es.score ?? 0) : null;
+    });
     ds.borderColor = expColor(ds.label);
     ds.borderDash = [];
   });
