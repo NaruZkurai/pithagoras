@@ -155,6 +155,48 @@ function hasTeacherTopKFromFile() {
   return !!rows.length && Array.isArray(rows[rows.length - 1]?.top_k) && rows[rows.length - 1].top_k.length;
 }
 
+// LIVE-TEACHER CHUNK CACHE: the teacher can generate a LARGE reasoned chunk
+// (up to live_teacher_gen_cap ~1000 tokens) ONCE per prompt, store it to disk,
+// and we evaluate ONLY the first N tokens. Cache avoids regenerating the big
+// chunk every tier (it's slow on CPU). Keyed by the prompt text it was built for.
+let _teacherChunkPrompt = null; // the (truncated) prompt the chunk was generated for
+let _teacherChunkRows = null;   // full generated rows [{chosen:{id,token},top:[{id,token,logprob}]}]
+let _teacherGenPending = false; // true while a background 1k-token gen is running
+
+// BACKGROUND teacher-chunk generator (non-blocking): fire-and-forget so the
+// harness keeps TRAINING on the static/current window while the slow CPU teacher
+// produces the large reasoned chunk. When done, the full chunk is written to
+// topk-curve.jsonl; the window loop then reads MORE of it as `n` grows
+// ('generate it while training on static data; if the chunk increases just use
+//  the data').
+function teacherChunkBackground(prompt, genCap) {
+  if (_teacherGenPending || (_teacherChunkPrompt === prompt && _teacherChunkRows && _teacherChunkRows.length)) return;
+  _teacherGenPending = true;
+  profileRetry(TEACHER_URL, prompt, genCap, "teacher", 1, null)
+    .then((tRes) => {
+      if (tRes && tRes.length) {
+        _teacherChunkPrompt = prompt;
+        _teacherChunkRows = tRes;
+        try {
+          const tmp = TOP_K_CURVE + ".tmp";
+          const lines = tRes.map((r, i) => JSON.stringify({
+            step: i + 1, ctx: prompt.slice(0, 400),
+            teacher_token: r.chosen?.token, teacher_id: r.chosen?.id,
+            top_k: (r.top || []).map((x) => ({ id: x.id, token: x.token, logprob: Number.isFinite(x.logprob) ? x.logprob : 0 })),
+            top_k_size: (r.top || []).length, ts: Date.now() + i,
+          }));
+          fs.writeFileSync(tmp, lines.join("\n") + "\n");
+          fs.renameSync(tmp, TOP_K_CURVE); // atomic
+          _teacherTopKFile = null; _teacherTopKLoadedAt = 0;
+        } catch (e) { /* best-effort */ }
+        console.log(`  >> [teacher-live][bg] teacher reasoned ${tRes.length} tokens — ${
+          _teacherChunkRows.length} cap ${genCap} stored to disk (evaluate first N while training on static data)`);
+      }
+    })
+    .catch((e) => console.log(`  >> [teacher-live][bg] failed (${(e && e.message) || e}); keeping static data`))
+    .finally(() => { _teacherGenPending = false; });
+}
+
 const PORT = Number(process.env.LIVE_PORT || 4199);
 
 const TEACHER_URL = process.env.TEACHER_URL || "http://127.0.0.1:41001"; // 27B
@@ -1044,6 +1086,8 @@ async function run() {
       saveNewTokens(newTokens);  // persist before clearing (etokens only)
       newTokens.length = 0;      // clear the created new-token list on a new prompt
       layerNoiseState = null;
+      // New prompt -> the big teacher chunk must be regenerated (it's prompt-specific).
+      _teacherChunkPrompt = null; _teacherChunkRows = null;
       // NOTE: the MoE expert/layer state is INTENTIONALLY NOT reset here — we
       // are TRAINING the model and want expert values / layer sizes to persist
       // and keep accumulating across prompts and rounds.
@@ -1119,43 +1163,39 @@ async function run() {
         const winCfg = loadConfig()?.windowing || {};
         const liveT = winCfg.live_teacher !== false; // LIVE teacher mode (user: 'why isn't the teacher thinking')
 
-        // LIVE mode: the teacher ACTUALLY generates the window reference
-        // (thinks). Generate as if it had NO token limit — request a generous
-        // chunk (TEACHER_BATCH / a large cap) so it can freely reason, then we
-        // STOP PREMATURELY at the window length `n` (tier.tokens). One
-        // /v1/completions on a TRUNCATED prompt copy (the CPU 27B is too slow
-        // on the full prompt). The full generation is persisted to topk-curve
-        // so it survives for etokens + otoken scoring.
+        // LIVE mode: the teacher thinks/generates a LARGE reasoned chunk
+        // (~live_teacher_gen_cap tokens, default 1000) with per-token top-k. The
+        // big generation runs in the BACKGROUND (non-blocking) so the harness
+        // keeps TRAINING on the static/current window chunk; when it completes
+        // it's stored to disk, and as the window `n` grows we just read MORE of
+        // the already-generated data (user: 'generate it while training on static
+        // data and if the chunk increases just use the data').
         if (liveT) {
           const chars = Math.max(64, Number(winCfg.live_teacher_chars ?? 800));
           const teacherIn = String(shared ?? PROMPT ?? "").slice(0, chars) || PROMPT.slice(0, chars);
-          try {
-            // "generate as if it didn't have a limit": ask for a large generation
-            // (unbounded-ish), we take the first baseLen tokens (stop prematurely).
-            const genCap = Math.max(baseLen, Number(process.env.TEACHER_GEN_CAP || TEACHER_BATCH * 2 || 24));
-            const tRes = await profileRetry(TEACHER_URL, teacherIn, genCap, "teacher", 2, null);
-            if (tRes && tRes.length) {
-              // The FULL reason/generation the teacher produced (all tokens).
-              const fullToks = tRes.map((r) => (r.chosen?.token != null ? String(r.chosen.token) : String(r.chosen?.id ?? "")));
-              // Stop prematurely: the window reference = the FIRST n tokens.
-              const n = Math.min(baseLen, tRes.length);
-              winRefTopKPerPos = tRes.slice(0, n).map((r) => (r.top || []).map((x) => ({ id: x.id, token: x.token, logprob: Number.isFinite(x.logprob) ? x.logprob : 0 })));
-              winRefIds = tRes.slice(0, n).map((r) => Number(r.chosen?.id)).filter((v) => Number.isFinite(v));
-              winRefToks = tRes.slice(0, n).map((r) => (r.chosen?.token != null ? String(r.chosen.token) : String(r.chosen?.id ?? "")));
-              winRefTopK = (winRefTopKPerPos && winRefTopKPerPos[0]) ? winRefTopKPerPos[0] : null;
-              teacherOutput.length = 0;
-              teacherOutput.push(...winRefToks);
-              // Persist the FULL generated chunk (not just n) so the reasoning
-              // is available; also feed Etokens from the full generation.
-              tRes.forEach((r, i) => {
-                saveTopKCurve({ step: step + i, promptCtx: teacherIn, teacherToken: r.chosen?.token, teacherId: r.chosen?.id, top: r.top || [] });
-              });
-              console.log(`  >> [teacher-live] teacher reasoned ${fullToks.length} tokens (stopped at window n=${n}): ${winRefToks.join(" ")}`);
-            }
-          } catch (e) {
-            console.log(`  >> [teacher-live] failed (${(e && e.message) || e}); falling back to file`);
+          const genCap = Math.min(4000, Math.max(baseLen, Number(winCfg.live_teacher_gen_cap ?? process.env.TEACHER_GEN_CAP ?? 1000)));
+          // Kick off (once per prompt) the background generation — never block.
+          teacherChunkBackground(teacherIn, genCap);
+          // EVALUATE ONLY THE FIRST N tokens of whatever chunk data we have right
+          // now (background may still be generating → use static/loaded rows so
+          // training never stalls; as it grows on disk we consume more).
+          const rows = _teacherChunkRows || (hasTeacherTopKFromFile() ? loadTeacherTopKRows() : null) || [];
+          if (rows && rows.length) {
+            const n = Math.min(baseLen, rows.length);
+            const dRows = rows.map((r) => ({
+              chosen: { id: r.chosen?.id ?? r.teacher_id, token: r.chosen?.token ?? r.teacher_token },
+              top: r.top || r.top_k || [],
+            }));
+            winRefTopKPerPos = dRows.slice(0, n).map((r) => (r.top || []).map((x) => ({ id: x.id, token: x.token, logprob: Number.isFinite(x.logprob) ? x.logprob : 0 })));
+            const ids = dRows.slice(0, n).map((r) => Number(r.chosen?.id ?? 0)).filter((v) => Number.isFinite(v));
+            const toks = dRows.slice(0, n).map((r) => r.chosen?.token != null ? String(r.chosen.token) : String(r.chosen?.id ?? ""));
+            if (ids.length) { winRefIds = ids; winRefToks = toks; teacherOutput.length = 0; teacherOutput.push(...winRefToks); }
+            winRefTopK = (winRefTopKPerPos && winRefTopKPerPos[0]) ? winRefTopKPerPos[0] : null;
+            winRefTopKSource = "teacher";
+            console.log(`  >> [teacher-live] evaluating ONLY first n=${n} of available ${rows.length}-token chunk${_teacherGenPending ? " (bg still generating...)" : ""}: ${winRefToks.join(" ")}`);
+          } else {
+            console.log(`  >> [teacher-live] no teacher chunk yet; waiting for background gen (training holds on static)`);
           }
-          winRefTopKSource = "teacher";
         }
         // FILE-ONLY fallback (or strict file mode): load the teacher's recorded
         // top-k from output/live/topk-curve.jsonl and use it as the reference.
@@ -1843,7 +1883,11 @@ async function run() {
           const savedChunk = savedEtoks.slice(0, n || savedEtoks.length).map(String);
           const rtRows = route.rows || [];
           otokenPerExpert = rtRows.map((r, i) => {
-            if (!(isNewNetwork(r.name) || isCompressorExpert(r.name))) return null; // only the new-3B experts
+            // Only score/show the experts being TRAINED (active new-3B addon
+            // experts), not every routed row — user: 'we only want to score /
+            // show trained experts', not 97 routed experts vs the chunk.
+            if (!(isNewNetwork(r.name) || isCompressorExpert(r.name))) return null;
+            if (!r.active) return null;
             if (!savedChunk.length) return null;
             // The expert's GENERATED otoken sequence = its per-position etoken
             // guesses (what the new-3B expert is producing across its positions).
