@@ -1235,11 +1235,22 @@ async function run() {
         try { sharedIds = await tokenizeShared(PROMPT); } catch (e) { sharedIds = []; }
         teacherOutput.length = 0;
       }
-      if (!winRefTopK || winRefIds.length < (tier.tokens || 1)) {
+      // --- TEACHER WINDOW REFERENCE LENGTH (live "chunk to train with") ----
+      // Keep growing the reference toward the configured "Tokens in chunk to
+      // train with" (student_step), so setting it live loads more reference
+      // tokens as the background teacher produces them (the CHUNK header and
+      // the output panel then agree). The tier remains the floor.
+      if (!winRefTopK || winRefIds.length < Math.max(1, Number(studentStep() || 8))) {
         // ---- TEACHER WINDOW REFERENCE ----
-        const baseLen = Math.max(1, (tier.tokens || 8));
+        // The reference length = the configured "Tokens in chunk to train with"
+        // (student_step), so setting it live actually grows how many teacher
+        // reference tokens are loaded into the training reference (matching the
+        // CHUNK header). The window tier remains the floor/progression; the
+        // background teacher keeps producing until the reference reaches it.
         const winCfg = loadConfig()?.windowing || {};
         const liveT = winCfg.live_teacher !== false; // LIVE teacher mode (user: 'why isn't the teacher thinking')
+        const targetLen = Math.max(1, Number(studentStep() || tier.tokens || 8));
+        const baseLen = Math.max(targetLen, Math.max(1, (tier.tokens || 8)));
 
         // LIVE mode: the teacher thinks/generates a LARGE reasoned chunk
         // (~live_teacher_gen_cap tokens, default 1000) with per-token top-k. The
