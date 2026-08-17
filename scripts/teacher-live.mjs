@@ -247,8 +247,12 @@ function sharedToModelInput(ids) {
 // to strictly one-token-per-step (not recommended on 1-bit models).
 const TEACHER_BATCH = Math.max(1, Number(process.env.TEACHER_BATCH || 8));
 const STEPS = Number(process.env.STEPS || 0); // 0 = run forever
+// Prompt precedence: env PROMPT (one-shot override) > persisted config prompt
+// (training.prompt, set live via the UI "Set prompt") > built-in default.
+const _cfgPrompt = String(loadConfig()?.training?.prompt ?? "").trim();
 let PROMPT =
   process.env.PROMPT ||
+  _cfgPrompt ||
   "Consider the Pithagoras portal: the pi model picker sends provider and modelId. The issue is that";
 let promptChanged = false; // set true by a /prompt POST to reseed shared next step
 let paused = false;        // true = skip training steps (UI keeps serving)
@@ -792,6 +796,16 @@ function startServer() {
           }
           PROMPT = p;
           promptChanged = true;
+          // Persist the prompt in config (training.prompt) so it survives a
+          // harness restart (the [Header]/shader-style prompts are long and
+          // would otherwise be lost to the env/default fallback).
+          try {
+            const cfgPath = path.join(REPO, "config", "moe-config.json");
+            const cfg = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, "utf8")) : {};
+            cfg.training = cfg.training || {};
+            cfg.training.prompt = p;
+            fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+          } catch (e) { /* non-fatal */ }
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, prompt: PROMPT }));
         } catch (e) {
