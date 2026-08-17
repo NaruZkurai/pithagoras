@@ -2003,6 +2003,14 @@ async function run() {
             // with larger text outputs'. The parent's content = the saved etoken
             // ids of the run it covered itself (a real nested 'contains etokens'
             // compression node in the disjoint parent range).
+            //
+            // 'IT SHOULD COUNT AS CORRECT' (user): converting the last token
+            // series into an etoken with a LARGER CHUNK is a VALID completion of
+            // that run — the compressed etoken DELIVERS all those tokens in one
+            // step, SAVING otoken generation time. So the compressed run:
+            //   - COUNTS AS CORRECT (compressedTokens added to correct-credit),
+            //   - earns a compress_reward scaled by the CHUNK SAVINGS (bigger
+            //     chunk per etoken = more generation time saved = higher bonus).
             const compressPoints = [];
             let runStart = -1;
             for (let p = 0; p <= n; p++) {
@@ -2014,12 +2022,21 @@ async function run() {
               }
             }
             let compressed = compressPoints.length > 0;
+            let compressedTokens = 0, compressSavings = 0, compressRewardStep = 0;
+            const compressBonus = Number(otokCfg.compress_bonus ?? otokCfg.compress_credit ?? 8); // per-chunk-size bonus
             for (const cp of compressPoints) {
               let ce = cp; while (ce < n && modes[ce] === "self") ce++;
               const runIds = savedChunk.slice(cp, ce).map(Number).filter((v) => Number.isFinite(v));
               if (runIds.length >= 2) {
                 const par = superEtokenFromItems(runIds, { live: true, audit: `otok-compress@${r.name}@step${step}`, save: false });
                 if (par) liveEtokStats.e_tokenized++;
+                // The run is DELIVERED CORRECT by one etoken: count every token
+                // in the run as correct, and add generation-time-savings reward
+                // proportional to how much LARGER the chunk is vs the base
+                // chunk_size (more tokens bundled into one etoken = more saved).
+                compressedTokens += runIds.length;
+                compressSavings += runIds.length;       // tokens saved from re-generation
+                compressRewardStep += compressBonus * (runIds.length / Math.max(1, chunkSize()));
               }
             }
             const topKPerPos = savedChunk.map((_, p) => {
@@ -2036,7 +2053,13 @@ async function run() {
             // everything scores HALF of doing it yourself).
             const selfFrac = n ? selfCount / n : 0;
             const delegateScale = 1 - (1 - dW) * (delegatedCount / (n || 1));
-            let rewardScaled = Number(rw?.reward || 0) * delegateScale;
+            // COMPRESS COUNTS AS CORRECT (user): converting the last token run
+            // into a LARGER-CHUNK etoken delivers those tokens correctly in one
+            // step (saving otoken generation time). We ADD the compressed-token
+            // count into the correct credit AND add a compress_reward scaled by
+            // the chunk savings, so an expert that bundles a big run into one
+            // etoken is rewarded for the generation-time it saved.
+            let rewardScaled = (Number(rw?.reward || 0) * delegateScale) + compressRewardStep;
             rw.reward = Number(rewardScaled.toFixed(2));
             rw.modes = modes;
             rw.delegated = delegatedCount > 0;
@@ -2046,6 +2069,9 @@ async function run() {
             rw.delegate_weight = dW;
             rw.compress_decision = compressed; // it built a new kv-compression etoken this step
             rw.compress_points = compressPoints.length;
+            rw.compressed_tokens = compressedTokens;   // tokens delivered CORRECT via a larger-chunk etoken
+            rw.compress_savings = compressSavings;      // otoken generation steps saved by bundling
+            rw.compress_reward = Number(compressRewardStep.toFixed(2)); // generation-time-savings bonus
 
             // ---- ARRAY-INDICATOR TRUMP CARD (the "funny math" promise) ----
             // "a token indicator to say that the following n tokens are stored
