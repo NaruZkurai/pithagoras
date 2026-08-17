@@ -160,6 +160,7 @@
         <div class="stat"><div class="label">Student · emit top-p</div><input id="sTPs" type="number" min="0.5" max="1" step="0.01" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Student · temperature</div><input id="sTemps" type="number" min="0" max="2" step="0.05" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Noise → layer per output token</div><input id="sNz" type="number" min="0" max="1" step="0.01" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
+        <div class="stat"><div class="label">Tokens in chunk to train with (student step)</div><input id="sStep" type="number" min="1" max="64" step="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
         <div class="stat"><div class="label">Pts per student CHOSEN token in teacher's emitted top-k</div><input id="sEm" type="number" min="0" max="20" step="1" style="width:100%;margin-top:6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px;"></div>
       </div>
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
@@ -607,9 +608,43 @@ function renderTeacher(d) {
       </div>`;
     }).join("\n");
     el.innerHTML =
-      `<div style="color:#8b949e;margin-bottom:2px">— output tokens (${out.length}${shown.length < out.length ? `, showing last ${shown.length}` : ""}) with top-k per token emitted:</div>${html}`;
+      `<div style="color:#8b949e;margin-bottom:2px">— output tokens (${out.length}${shown.length < out.length ? `, showing last ${shown.length}` : ""}) with top-k per token emitted:</div>${html}` +
+      targetToGenerateHtml(d);
     el.scrollTop = el.scrollHeight;
   });
+}
+
+// Show the CHUNK the student/experts should generate NEXT: how many tokens are
+// in the chunk to train with, and the etoken/otoken targets (the "new correct
+// tokens to generate"). Surfaced from teacher_topk_per_pos / otoken_sequence.
+function targetToGenerateHtml(d) {
+  const n = Number(d.student_step_tokens ?? d.windowing?.tokens ?? 5);
+  const o = d.otoken_sequence || {};
+  const perExpert = o.per_expert || [];
+  // The etoken targets the experts are being trained to emit (their per-expert
+  // reserved-id guesses = deterministic handles to the teacher's top-k at pos).
+  const targets = (o.enabled && perExpert.length) ? perExpert : null;
+  let targetStr = "";
+  if (targets) {
+    const uniq = [];
+    for (const p of targets) {
+      if (p && !uniq.includes(p.expert)) uniq.push(p.expert);
+    }
+    const sample = uniq.slice(0, 8).join(", ");
+    const perfect = o.perfect_winner;
+    targetStr = `<div style="margin-top:6px;padding:5px;border:1px solid #30363d;border-radius:6px;font-size:11px;color:#58a6ff">
+      <b>CHUNK to train with: ${n} tokens</b> · target etokens ← ${sample || "…"}
+      ${perfect ? ` · <span style="color:#3fb950;font-weight:700">FIRST PERFECT: ${perfect.expert}</span>` : ""}
+    </div>`;
+  } else {
+    const topk = Array.isArray(d.teacher_topk_per_pos) ? d.teacher_topk_per_pos : [];
+    const firstToks = topk[0] || [];
+    const sample = firstToks.slice(0, 8).map((x) => (x.token != null ? String(x.token) : "?")).join(" ");
+    targetStr = `<div style="margin-top:6px;padding:5px;border:1px solid #30363d;border-radius:6px;font-size:11px;color:#8b949e">
+      <b>CHUNK to train with: ${n} tokens</b> · target top-k @pos0: ${sample || "…"}
+    </div>`;
+  }
+  return targetStr;
 }
 
 // O-TOKEN SEQUENCE panel (harsher env): per-expert score vs the saved teacher
@@ -873,6 +908,7 @@ function renderSampling(d) {
   set("sTemps", Number(e.student?.temperature ?? 0.7).toFixed(2));
   set("sNz", Number(d.noise_to_layer ?? 0.05).toFixed(2));
   set("sEm", d.per_teacher_emit_match ?? 2);
+  set("sStep", d.student_step_tokens ?? 5);
   set("nPhaseTokens", d.next_phase?.max_tokens ?? 2000);
   set("nPhaseTopK", d.view_top_k ?? 100);
   set("nPhaseDispTopK", d.topk_display_per_pos ?? 5);
@@ -905,6 +941,7 @@ function bindSampling() {
           student: { top_k: Number(document.getElementById("sTKs").value), top_p: Number(document.getElementById("sTPs").value), temperature: Number(document.getElementById("sTemps").value) },
         },
         noise_to_layer: Number(document.getElementById("sNz").value),
+        student_step: Number(document.getElementById("sStep").value || 5),
       },
       scoring: { base: { per_teacher_emit_match: Number(document.getElementById("sEm").value || 2) } },
     }, "sampling");

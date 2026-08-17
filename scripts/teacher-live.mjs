@@ -193,7 +193,11 @@ const compareN = () => {
   return Number(process.env.COMPARE_N || STUDENT_STEP || SAMPLING().emit?.student?.top_k || 5);
 }; // tokens to generate per head
 const noiseToLayer = () => Number(SAMPLING().noise_to_layer ?? 0.05);
-const STUDENT_STEP = Number(process.env.STUDENT_STEP || 5);
+// "Number of tokens in chunk to train with" = STUDENT_STEP (the per-head chunk
+// length the student generates, and the teacher chunk the experts score against).
+// Config-driven via sampling.student_step so the UI "Apply sampling" control can
+// set it live; env STUDENT_STEP overrides.
+const STUDENT_STEP = Number(process.env.STUDENT_STEP || SAMPLING().student_step || 5);
 // The STUDENT model runs with a small context (-c 16384). It also has a SMALLER
 // vocab than the teacher: the teacher = 27B MoE variant (n_vocab 248320),
 // the running 4B dense student has its native vocab (default 151669). Teacher
