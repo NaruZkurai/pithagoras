@@ -218,6 +218,27 @@
         <span id="cfgStatus" style="font-size:12px;color:#8b949e;align-self:center"></span>
       </div>
     </div>
+    <div class="card">
+      <h2>Config as JSON (edit everything — bypasses the buggy UI)</h2>
+      <div class="label" style="font-size:11px;color:#8b949e;margin-bottom:4px">
+        Full config/moe-config.json. Edit directly here (or in the file) and apply.
+        <b style="color:#e6edf3">"Apply JSON"</b> writes it (live next step for sampling;
+        structural params like experts/layers need a <b style="color:#e6edf3">Cancel round + restart</b>).
+      </div>
+      <textarea id="cfgJson" rows="14" spellcheck="false"
+        style="width:100%;background:#0d1117;color:#7ee787;border:1px solid #30363d;border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:11px;white-space:pre;overflow:auto;"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button id="bCfgRefresh" style="background:#6e7681;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">Refresh JSON from disk</button>
+        <button id="bCfgApply" style="background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer">Apply JSON</button>
+        <button id="bCfgRestart" style="background:#f85149;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer" title="Write this JSON, cancel the current round, and restart  training fresh with these parameters">Cancel round + restart with these params</button>
+        <span id="cfgJsonStatus" style="font-size:11px;color:#8b949e;align-self:center"></span>
+      </div>
+      <div style="margin-top:6px;font-size:10px;color:#8b949e">
+        Tip: the harness re-reads config/moe-config.json from disk on every step, so
+        editing the file directly (or via this box) takes effect automatically — no
+        UI apply needed for values the harness reads each step.
+      </div>
+    </div>
   </div>
 </div>
 <div class="footer" id="models"></div>
@@ -282,6 +303,7 @@ function connect() {
     } catch (e) { /* ignore partial */ }
   };
   pollFallback(); // immediate first paint, even before SSE connects
+  cfgJsonLoadInto(); // pre-fill the Config-as-JSON editor once from disk
 }
 connect();
 
@@ -938,6 +960,55 @@ async function postCfg(patch, note) {
     document.getElementById("cfgStatus").textContent = (j.ok ? "saved ✓ " : "err ✗ ") + (note || "");
   } catch (e) { document.getElementById("cfgStatus").textContent = "offline"; document.getElementById("cfgStatus").textContent += " (config server on :4199)"; }
 }
+
+// ---- Config-as-JSON editor (bypasses the buggy individual controls) ----
+// Fills the textarea with the FULL config from disk, and lets the user Apply it
+// (live next step) or Cancel-round + restart fresh with these params.
+let _cfgJsonLoaded = false;
+function cfgJsonLoadInto() {
+  const ta = document.getElementById("cfgJson");
+  if (!ta) return;
+  fetch(CONFIG_URL)
+    .then((r) => r.json())
+    .then((cfg) => { ta.value = JSON.stringify(cfg, null, 2); _cfgJsonLoaded = true; })
+    .catch(() => { ta.placeholder = "could not load config (server offline)"; });
+}
+document.getElementById("bCfgRefresh")?.addEventListener("click", () => {
+  document.getElementById("cfgJsonStatus").textContent = "loading…";
+  fetch(CONFIG_URL)
+    .then((r) => r.json())
+    .then((cfg) => {
+      const ta = document.getElementById("cfgJson");
+      ta.value = JSON.stringify(cfg, null, 2);
+      document.getElementById("cfgJsonStatus").textContent = "loaded from disk ✓";
+    })
+    .catch(() => { document.getElementById("cfgJsonStatus").textContent = "load failed ✗"; });
+});
+document.getElementById("bCfgApply")?.addEventListener("click", async () => {
+  const ta = document.getElementById("cfgJson");
+  const st = document.getElementById("cfgJsonStatus");
+  st.textContent = "parsing…";
+  let cfg; try { cfg = JSON.parse(ta.value); } catch (e) { st.textContent = "INVALID JSON ✗"; return; }
+  st.textContent = "applying…";
+  try {
+    const r = await fetch(CONFIG_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(cfg) });
+    const j = await r.json();
+    st.textContent = (j.ok ? "applied ✓ (live next step)" : "err ✗");
+  } catch (e) { st.textContent = "offline ✗"; }
+});
+document.getElementById("bCfgRestart")?.addEventListener("click", async () => {
+  const ta = document.getElementById("cfgJson");
+  const st = document.getElementById("cfgJsonStatus");
+  st.textContent = "parsing…";
+  let cfg; try { cfg = JSON.parse(ta.value); } catch (e) { st.textContent = "INVALID JSON ✗"; return; }
+  st.textContent = "cancel round + restarting…";
+  try {
+    const r = await fetch(CONFIG_URL + "/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(cfg) });
+    const j = await r.json();
+    st.textContent = (j.ok && j.reset ? "round reset ✓ fresh start with these params" : "err ✗");
+  } catch (e) { st.textContent = "offline ✗"; }
+});
+
 
 // Set the sampling number-input defaults ONCE from the first payload, then
 // NEVER touch them again (like the config controls: they hold what the user

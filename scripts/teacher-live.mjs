@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, otokenSequenceReward, bumpMoeStep, rewireLayers, expertStructure, noteAttachedFitness, segmentSummary, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk } from "./moe-engine.mjs";
+import { loadConfig, saveConfig, routeExperts, trainStep, scoreStep, saveModel, narrowTokenSet, addLayerNoise, maybeResetMoeState, accumulateExpertScores, updateLosingExperts, curveReward, compressionReward, otokenSequenceReward, bumpMoeStep, rewireLayers, expertStructure, noteAttachedFitness, segmentSummary, listSnapshots, loadSnapshot, diffRecentCheckpoint, clearCheckpointCache, chunkTokenIds, tokenToChunk, resetMoeForNewPrompt, getMoeState } from "./moe-engine.mjs";
 // E-TOKEN COMPRESSION SYSTEM (the corrected "new token" feature). Provides the
 // recallable etoken(e1) function stored in data/Etokens.json, the e-tokenizer
 // (touple), the base build from the pre-tokenized token DB, and the
@@ -335,6 +335,7 @@ let PROMPT =
   "Consider the Pithagoras portal: the pi model picker sends provider and modelId. The issue is that";
 let promptChanged = false; // set true by a /prompt POST to reseed shared next step
 let paused = false;        // true = skip training steps (UI keeps serving)
+let restartRequested = false; // set true by /config/reset: cancel the current round and start fresh with the set params
 
 // ---- LOOP-AND-INCREMENT windowing (user spec) ----
 // "each of the experts and mtp's must have identical top k's while training,
@@ -813,6 +814,37 @@ function startServer() {
       return;
     }
 
+    // /config/reset POST: CANCEL THE CURRENT ROUND and START FRESH with the set
+    // parameters. Optionally accepts a full config body (apply params AND reset);
+    // if no body / omitted fields, the existing config on disk is used. Re-reads
+    // the config, resets the MoE expert/layer state (fresh round 1) and the
+    // window reference / step counter, then resumes on the next loop iteration.
+    if (url === "/config/reset" && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        try {
+          const cfgPath = path.join(REPO, "config", "moe-config.json");
+          const existing = fs.existsSync(cfgPath)
+            ? JSON.parse(fs.readFileSync(cfgPath, "utf8"))
+            : {};
+          const patchRaw = (body || "").trim();
+          if (patchRaw) {
+            const patch = JSON.parse(patchRaw);
+            const merged = deepMerge(existing, patch);
+            fs.writeFileSync(cfgPath, JSON.stringify(merged, null, 2));
+          }
+          restartRequested = true; // training loop picks this up and starts fresh
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, reset: true, restart_requested: true }));
+        } catch (e) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+        }
+      });
+      return;
+    }
+
     // /checkpoint GET: list saved per-expert checkpoints (newest first) + the
     // in-RAM delta cache stats.
     if (url === "/checkpoint" && req.method === "GET") {
@@ -1172,6 +1204,29 @@ async function run() {
       recent.length = 0;
       step = 0;
       console.log(`  >> prompt changed to: ${JSON.stringify(PROMPT.slice(0, 80))}... (restarting generation)`);
+    }
+    // CANCEL CURRENT ROUND + START WITH SET PARAMETERS (from /config/reset): the
+    // user edited params (often by hand in the JSON file) and wants a fresh round
+    // with them. Re-read the config (loadConfig is disk-fresh), RESET the MoE
+    // expert/layer state to a new round 1, clear the window reference + step, and
+    // let the scheme rebuild from the new parameters.
+    if (restartRequested) {
+      restartRequested = false;
+      const fresh = (typeof resetMoeForNewPrompt === "function") ? resetMoeForNewPrompt() : null;
+      shared = PROMPT;
+      try { sharedIds = await tokenizeShared(PROMPT); } catch (e) { sharedIds = []; }
+      teacherOutput.length = 0;
+      saveNewTokens(newTokens); // persist before clearing (etokens only)
+      newTokens.length = 0;
+      layerNoiseState = null;
+      _teacherChunkPrompt = null; _teacherChunkRows = null;
+      recent.length = 0;
+      step = 0;
+      winTierIdx = 0; winStepInTier = 0;
+      winRefIds = []; winRefToks = []; winRefTopK = null; winRefTopKPerPos = null; winRefTopKSource = "teacher";
+      lastFpId = null; lastConvergedStep = -1;
+      const cfg = loadConfig() || {};
+      console.log(`  >> ROUND CANCELLED + RESTARTED with set parameters (round ${getMoeState()?.round ?? 1}, experts ${Object.keys(cfg.moe?.experts || {}).length}, layer-count ${cfg.layers?.count ?? 5})`);
     }
     // Pause: skip training steps but keep the UI (SSE/JSON) alive and reflect
     // the paused state so the browser stays connected.
