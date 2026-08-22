@@ -41,3 +41,6 @@ __pycache__/
 # Generated USDT wallet-tracer risk report (wallet_tracer.py --html output)
 scripts/report.html
 *.report.html
+
+# llama-teacher is its own public repo (like llama-direct-token-input).
+gitrepos/llama-teacher/
